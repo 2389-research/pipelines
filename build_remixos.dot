@@ -1,0 +1,931 @@
+digraph build_remixos {
+    graph [
+        goal="Working RemixOS CRM platform with DB layer, HTTP server, 6 server-rendered views, REST API, Claude-powered command bar — all with tests passing, ruff clean, mypy clean",
+        label="Build RemixOS CRM",
+        retry_target="implement_db",
+        default_max_retry=3,
+        model_stylesheet="
+            * { llm_model: claude-sonnet-4-5; llm_provider: anthropic; }
+            .code { llm_model: claude-opus-4-6; llm_provider: anthropic; }
+            .review { llm_model: claude-opus-4-6; reasoning_effort: high; }
+        ",
+        rankdir=TB
+    ]
+
+    // ==============================
+    // START + RESUME SUPPORT
+    // ==============================
+    start [shape=Mdiamond, label="Start"]
+
+    check_existing [shape=parallelogram,
+        label="Check Existing Plans",
+        tool_command="#!/bin/sh\nif [ -f docs/plans/plan.md ] && grep -q '^- \\[ \\]' docs/plans/plan.md 2>/dev/null; then\n  printf 'resume'\nelse\n  printf 'fresh'\nfi"]
+
+    // ==============================
+    // SCOPE ANALYSIS
+    // ==============================
+    scope_analysis [shape=box, class="review",
+        goal_gate=true, retry_target="scope_analysis",
+        label="Scope Analysis",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Read the RemixOS spec and identify what is strictly needed for a working v1 CRM.
+
+## Tech Stack
+Python 3.12, stdlib http.server.ThreadingHTTPServer, SQLite 3, vanilla HTML/CSS/JS, Anthropic Claude API, pytest, ruff, mypy.
+
+## Scope Rules — Apply YAGNI Ruthlessly
+The spec describes 20 sections. For v1, we need the CORE CRM:
+- Database layer (schema for all core tables, CRUD helpers, migration)
+- HTTP server (ThreadingHTTPServer on port 8765, route dispatch, static serving)
+- 6 views: Briefing, Pipeline, Clients, Offers, Tasks, Client Detail (all server-rendered HTML)
+- Shared UI: sidebar navigation, CSS design tokens, client-side JavaScript
+- REST API endpoints (CRUD for companies, deals, engagements, deliverables, people, offers)
+- Command bar (Claude-powered NLP on every view)
+
+CUT for v1 (integration work requiring external credentials):
+- Nightly Sync (Google Drive contract detection)
+- Calendar Integration (Google Calendar OAuth)
+- LaunchAgents (depends on Nightly + Calendar)
+- Chief of Staff Integration
+- Staged Companies BD signal detection
+- Skills System, Google Drive Integration, Agent Coordination (BBS)
+
+## Deliverables
+Write docs/plans/scope.md with IN/OUT sections listing every component and justification.
+
+## Success Criteria
+- docs/plans/scope.md exists with clear IN/OUT lists
+- Commit: git add -A && git commit -m 'docs(scope): v1 scope analysis — core CRM only'
+"]
+
+    // ==============================
+    // PLAN
+    // ==============================
+    plan [shape=box, class="code",
+        goal_gate=true, retry_target="plan",
+        label="Plan Architecture",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Plan the architecture for RemixOS v1 CRM. Read docs/plans/scope.md for what's in scope.
+
+## Tech Stack
+Python 3.12, stdlib http.server.ThreadingHTTPServer on port 8765, SQLite 3 (data/remix_crm.db), vanilla HTML/CSS/JS (server-rendered, no framework), Anthropic Claude API (for command bar), pytest, ruff, mypy. Use uv for package management.
+
+## Deliverables
+Write docs/plans/plan.md with:
+1. Directory structure: src/remixos/ with modules for db.py, server.py, views/, api.py, command_bar.py, styles.py, scripts.py
+2. Implementation order with task checkboxes in format: - [ ] task-N: description
+3. Dependency graph showing build order
+4. Test strategy per module (what to test, how to mock)
+
+## Success Criteria
+- docs/plans/plan.md exists with task checkboxes
+- No handwaving — every task must be specific and actionable
+- Commit: git add -A && git commit -m 'docs(plan): architecture plan for RemixOS v1'
+"]
+
+    // ==============================
+    // VALIDATE PLAN FORMAT
+    // ==============================
+    validate_plan [shape=parallelogram,
+        label="Validate Plan Format",
+        tool_command="#!/bin/sh\nset -eu\nPLAN='docs/plans/plan.md'\nif [ ! -s \"$PLAN\" ]; then printf 'fail_no_plan'; exit 0; fi\ncount=$(grep -c '^- \\[ \\] task-[0-9]\\+:' \"$PLAN\" || true)\nif [ \"$count\" -eq 0 ]; then printf 'fail_no_checkboxes'; exit 0; fi\nhandwaves=$(grep -ciE '(write a complete implementation|add appropriate|add validation logic|add error handling logic|add the logic)' \"$PLAN\" || true)\nif [ \"$handwaves\" -gt 0 ]; then printf 'fail_handwaves'; exit 0; fi\nprintf 'format_ok'"]
+
+    // ==============================
+    // SETUP
+    // ==============================
+    setup [shape=box, class="code",
+        goal_gate=true, retry_target="setup",
+        label="Setup Project",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Initialize the RemixOS Python project with all tooling and pre-commit hooks.
+
+## Tech Stack
+Python 3.12, uv for package management. Dependencies: anthropic. Dev deps: pytest, pytest-cov, ruff, mypy, pre-commit.
+
+## Process
+1. Run: uv init (if no pyproject.toml exists)
+2. Run: uv add anthropic
+3. Run: uv add --dev pytest pytest-cov ruff mypy pre-commit
+4. Configure ruff in pyproject.toml: line-length=120, target-version='py312'
+5. Configure mypy in pyproject.toml: strict mode, python_version='3.12'
+6. Create .pre-commit-config.yaml with hooks for ruff check, ruff format, mypy
+7. Run: uv run pre-commit install
+8. Run: uv run pre-commit run --all-files
+9. Create directory structure:
+   - src/remixos/ (with __init__.py)
+   - src/remixos/views/ (with __init__.py)
+   - tests/
+   - data/
+   - templates/
+   - static/css/
+   - static/js/
+   - docs/
+10. Create .gitignore with: __pycache__, .mypy_cache, .ruff_cache, .pytest_cache, data/*.db, .venv, *.pyc
+11. Commit: git add -A && git commit -m 'chore(setup): initialize project with deps and pre-commit hooks'
+
+## Success Criteria
+- pyproject.toml exists with all deps
+- Pre-commit hooks installed and passing
+- Directory structure created
+- ruff and mypy configured
+"]
+
+    // ==============================
+    // FOUNDATION: DB LAYER
+    // ==============================
+    implement_db [shape=box, class="code",
+        goal_gate=true, retry_target="implement_db",
+        label="Implement DB Layer",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the SQLite database layer.
+
+## Tech Stack
+Python 3.12, SQLite 3 (database file: data/remix_crm.db), pytest, ruff, mypy.
+
+## Schema (core tables)
+Implement these tables with proper types, constraints, and foreign keys:
+- companies (id TEXT PK, name TEXT NOT NULL, domain, industry, description, city, state, country, drive_folder_path, created_at)
+- people (id TEXT PK, company_id FK, first_name, last_name, name, email, phone, job_title, created_at)
+- offers (id TEXT PK slug, name TEXT NOT NULL UNIQUE, creates_engagement BOOLEAN DEFAULT 1, description, created_at)
+- deals (id TEXT PK, name TEXT NOT NULL, company_id FK, offer_id FK, value REAL, stage TEXT NOT NULL, owner TEXT CHECK IN justin/jason, target_close_date, last_contact_date, notes, next_steps_text, sort_order INTEGER, created_at, closed_at)
+- engagements (id TEXT PK, deal_id FK, company_id FK, offer_id FK, name, start_date, end_date, status TEXT CHECK IN active/completed/paused/cancelled DEFAULT active, owner, created_at)
+- deliverables (id TEXT PK, engagement_id FK, name TEXT NOT NULL, description, due_date, owner, status TEXT CHECK IN not_started/in_progress/complete DEFAULT not_started, deliverable_type TEXT CHECK IN meeting/artifact, created_at)
+- staged_engagements (id TEXT PK, company_id FK, offer_id FK, name, start_date, end_date, contract_value REAL, source_file_path, proposed_deliverables TEXT JSON, status TEXT DEFAULT pending, created_at)
+- contractors (id TEXT PK, name TEXT NOT NULL, email, specialty, hourly_rate REAL, created_at)
+
+## Modules to Implement
+1. src/remixos/db.py:
+   - get_connection() -> sqlite3.Connection (to data/remix_crm.db)
+   - db_connection() context manager
+   - migrate_database() — creates all tables if not exist, adds indexes
+   - CRUD helpers: get_companies(), get_company(id), create_company(**kwargs), update_company(id, **kwargs)
+   - Same pattern for: deals, engagements, deliverables, people, offers, staged_engagements
+   - Seed offers with standard set (kickstart, aiba, subscription, design_sprints, etc.)
+
+## Process
+1. Write failing tests in tests/test_db.py covering: schema creation, CRUD for each entity, foreign key constraints, seed data
+2. Run: uv run pytest tests/test_db.py -v — confirm tests FAIL
+3. Implement src/remixos/db.py minimally to pass tests
+4. Run: uv run ruff check . --fix && uv run ruff format .
+5. Run: uv run mypy src/
+6. Fix all issues
+
+## Success Criteria
+- All DB tests pass
+- ruff and mypy clean
+- Schema matches spec
+- CRUD helpers work for all entities
+"]
+
+    verify_db [shape=diamond,
+        label="DB Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run:
+1. uv run pytest tests/test_db.py -v --tb=short
+2. uv run ruff check .
+3. uv run mypy src/
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    commit_db [shape=box, class="code",
+        goal_gate=true, retry_target="implement_db",
+        label="Commit DB",
+        prompt="You are working in `run.working_dir`.
+Review changes with git diff. Stage all relevant files.
+git add -A && git commit -m 'feat(db): implement SQLite schema with CRUD helpers and seed data'
+Do NOT commit data/*.db files.
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // FOUNDATION: HTTP SERVER
+    // ==============================
+    implement_server [shape=box, class="code",
+        goal_gate=true, retry_target="implement_server",
+        label="Implement HTTP Server",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the HTTP server with route dispatch.
+
+## Tech Stack
+Python 3.12, stdlib http.server.ThreadingHTTPServer on port 8765, pytest, ruff, mypy.
+
+## Modules to Implement
+1. src/remixos/server.py:
+   - RemixOSHandler(BaseHTTPRequestHandler) with do_GET() and do_POST()
+   - Route dispatch: map URL paths to handler functions
+   - Static file serving for /static/* paths
+   - JSON response helpers: send_json(data, status=200), send_error(message, status)
+   - HTML response helper: send_html(content)
+   - Query string parsing for page parameters (week_offset, etc.)
+   - main() function: migrate_database(), start ThreadingHTTPServer on port 8765
+   - REMIXOS_NO_BROWSER env var support
+
+2. GET routes (return placeholder HTML for now — views come later):
+   / -> briefing, /clients -> clients, /clients/{id} -> client detail,
+   /pipeline -> pipeline, /offers -> offers, /tasks -> tasks
+
+3. POST routes (wire up to DB CRUD):
+   /api/command -> placeholder, /api/deal/{id}/update, /api/deal/create,
+   /api/deliverable/{id}/update, /api/staged/{id}/activate, /api/staged/{id}/reject
+
+## Process
+1. Write failing tests in tests/test_server.py: route dispatch, static serving, JSON/HTML responses, API endpoints
+2. Run: uv run pytest tests/test_server.py -v — confirm FAIL
+3. Implement server.py
+4. Run: uv run ruff check . --fix && uv run ruff format .
+5. Run: uv run mypy src/
+
+## Success Criteria
+- Server starts on port 8765
+- All routes dispatch correctly
+- API endpoints return proper JSON
+- Tests pass, ruff clean, mypy clean
+"]
+
+    verify_server [shape=diamond,
+        label="Server Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run:
+1. uv run pytest tests/test_server.py -v --tb=short
+2. uv run ruff check .
+3. uv run mypy src/
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    commit_server [shape=box, class="code",
+        goal_gate=true, retry_target="implement_server",
+        label="Commit Server",
+        prompt="You are working in `run.working_dir`.
+git add -A && git commit -m 'feat(server): implement ThreadingHTTPServer with route dispatch and API endpoints'
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // FOUNDATION VERIFICATION
+    // ==============================
+    verify_foundation [shape=diamond,
+        label="Foundation Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run the full test suite for foundation components:
+1. uv run pytest tests/test_db.py tests/test_server.py -v --tb=short
+2. uv run ruff check .
+3. uv run mypy src/
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    // ==============================
+    // SHARED ASSETS: CSS + JS
+    // ==============================
+    implement_styles [shape=box, class="code",
+        goal_gate=true, retry_target="implement_styles",
+        label="Implement CSS + JS",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the shared CSS design tokens and client-side JavaScript.
+
+## Tech Stack
+Python 3.12, vanilla CSS/JS (generated as Python strings, server-rendered inline), pytest, ruff, mypy.
+
+## Modules to Implement
+1. src/remixos/styles.py — get_base_styles() returns CSS string:
+   - Design tokens: colors (Remix blue #2563eb, grays, status colors), typography (system font stack), spacing scale
+   - Layout: sidebar (collapsible, 260px expanded / 60px collapsed), main content area
+   - Component styles: cards, tables, badges, buttons, modals, forms
+   - Pipeline kanban columns, Gantt chart rows, briefing 3-column layout
+   - Responsive breakpoints
+   - Command bar fixed at bottom
+
+2. src/remixos/scripts.py — get_base_scripts() returns JS string:
+   - Sidebar toggle (localStorage.sidebarCollapsed persistence)
+   - Command bar: input handling, POST to /api/command, response display, conversation history
+   - Modal open/close logic
+   - Fetch helpers for API calls (POST JSON, handle errors)
+   - Form submission handlers
+
+3. src/remixos/views/sidebar.py — get_sidebar_html(active_view) returns sidebar HTML:
+   - Remix Partners logo (SVG)
+   - Navigation links: Briefing(/), Pipeline(/pipeline), Clients(/clients), Tasks(/tasks), Offers(/offers)
+   - Active state highlighting
+   - Collapse toggle button
+   - Shutdown button
+
+## Process
+1. Write tests in tests/test_styles.py: verify CSS contains required tokens, JS contains required functions, sidebar renders with correct active state
+2. Run: uv run pytest tests/test_styles.py -v — confirm FAIL
+3. Implement modules
+4. Run: uv run ruff check . --fix && uv run ruff format .
+5. Run: uv run mypy src/
+
+## Success Criteria
+- CSS has all design tokens and component styles
+- JS has sidebar toggle, command bar, modal, and fetch helpers
+- Sidebar renders with correct navigation and active state
+- Tests pass, ruff clean, mypy clean
+"]
+
+    verify_styles [shape=diamond,
+        label="Styles/JS Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run:
+1. uv run pytest tests/test_styles.py -v --tb=short
+2. uv run ruff check .
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    commit_styles [shape=box, class="code",
+        goal_gate=true, retry_target="implement_styles",
+        label="Commit Styles + JS",
+        prompt="You are working in `run.working_dir`.
+git add -A && git commit -m 'feat(ui): implement CSS design tokens, client-side JS, and sidebar navigation'
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // FAN-OUT: 6 INDEPENDENT VIEWS
+    // ==============================
+    fan_out_views [shape=component, label="Fan Out: 6 Views"]
+
+    // --- VIEW 1: BRIEFING ---
+    implement_briefing [shape=box, class="code",
+        goal_gate=true, retry_target="implement_briefing",
+        label="Implement Briefing View",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Briefing (home dashboard) view.
+
+## Tech Stack
+Python 3.12, server-rendered HTML, SQLite via src/remixos/db.py helpers, pytest, ruff, mypy.
+
+## Module: src/remixos/views/briefing.py
+Function: generate_briefing_html() -> str
+
+Layout: Three-column with header bar
+- Header: Sync buttons (Calendar + Drive), last-updated timestamp
+- Column 1 (Overall): Capacity section showing per-person weekly hours (BD, Billable, Open)
+- Column 2 (Clients): Active engagements with next 3 deliverables, status indicators
+- Column 3 (Pipeline): Deals needing attention (stale deals), pipeline stats by stage, staged engagement cards with Activate/Reject buttons
+
+Data functions needed: get_briefing_data() in db.py — queries active engagements, upcoming deliverables, pipeline stats, staged engagements count
+
+Uses: get_base_styles(), get_sidebar_html('briefing'), get_base_scripts()
+
+## Process
+1. Write tests in tests/test_views/test_briefing.py
+2. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Briefing renders with all 3 columns, correct data from DB, sidebar with 'briefing' active
+"]
+
+    // --- VIEW 2: PIPELINE ---
+    implement_pipeline [shape=box, class="code",
+        goal_gate=true, retry_target="implement_pipeline",
+        label="Implement Pipeline View",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Pipeline (deal kanban board) view.
+
+## Tech Stack
+Python 3.12, server-rendered HTML, SQLite via db.py, pytest, ruff, mypy.
+
+## Module: src/remixos/views/pipeline.py
+Function: generate_pipeline_html() -> str
+
+Kanban board with columns for each pipeline stage:
+Prospecting+Holding -> Qualifying -> Discussing -> Negotiating -> Procuring -> Won -> Lost -> On Hold
+
+Each deal card shows: company name, deal name, value, owner, days in stage, stale indicator (red if past threshold), last contact date, next steps
+
+Data: get_pipeline_data() in db.py — queries deals grouped by stage with company info
+
+Uses: get_base_styles(), get_sidebar_html('pipeline'), get_base_scripts()
+
+## Process
+1. Write tests in tests/test_views/test_pipeline.py
+2. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Pipeline renders kanban columns with deal cards, staleness indicators, correct stage grouping
+"]
+
+    // --- VIEW 3: CLIENTS ---
+    implement_clients [shape=box, class="code",
+        goal_gate=true, retry_target="implement_clients",
+        label="Implement Clients View",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Clients (Gantt-style engagement list) view.
+
+## Tech Stack
+Python 3.12, server-rendered HTML, SQLite via db.py, pytest, ruff, mypy.
+
+## Module: src/remixos/views/clients.py
+Function: generate_clients_html(week_offset=0) -> str
+
+Gantt-style view showing engagements as horizontal bars across weekly columns.
+- Week navigation (prev/next buttons, query param ?week=N)
+- Each row: company name, engagement name, offer badge, deliverables positioned on timeline
+- Deliverable status colors: not_started (gray), in_progress (blue), complete (green)
+- Ghost rows for staged engagements (pending review)
+
+Data: get_clients_gantt_data(week_offset) in db.py
+
+Uses: get_base_styles(), get_sidebar_html('clients'), get_base_scripts()
+
+## Process
+1. Write tests in tests/test_views/test_clients.py
+2. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Clients view renders Gantt chart with week navigation, engagement bars, deliverable markers
+"]
+
+    // --- VIEW 4: OFFERS ---
+    implement_offers [shape=box, class="code",
+        goal_gate=true, retry_target="implement_offers",
+        label="Implement Offers View",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Offers (service catalog) view.
+
+## Tech Stack
+Python 3.12, server-rendered HTML, SQLite via db.py, pytest, ruff, mypy.
+
+## Module: src/remixos/views/offers.py
+Function: generate_offers_html() -> str
+
+Card grid showing each offer type with:
+- Offer name, color-coded badge, description
+- Count of active deals using this offer
+- Count of active engagements using this offer
+- creates_engagement flag indicator
+
+Data: get_offers_data() in db.py — queries offers with deal/engagement counts
+
+Uses: get_base_styles(), get_sidebar_html('offers'), get_base_scripts()
+
+## Process
+1. Write tests in tests/test_views/test_offers.py
+2. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Offers view renders card grid with all offers, counts, and badges
+"]
+
+    // --- VIEW 5: TASKS ---
+    implement_tasks [shape=box, class="code",
+        goal_gate=true, retry_target="implement_tasks",
+        label="Implement Tasks View",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Tasks (deliverable tracker) view.
+
+## Tech Stack
+Python 3.12, server-rendered HTML, SQLite via db.py, pytest, ruff, mypy.
+
+## Module: src/remixos/views/tasks.py
+Function: generate_tasks_html() -> str
+
+Table view of all deliverables grouped by engagement:
+- Columns: Task name, type (meeting/artifact), due date, owner, status, engagement name, company name
+- Sortable by due date, status, owner
+- Status filters: All, Not Started, In Progress, Complete
+- Overdue highlighting (red) for past-due incomplete tasks
+
+Data: get_tasks_data() in db.py — queries deliverables with engagement and company info
+
+Uses: get_base_styles(), get_sidebar_html('tasks'), get_base_scripts()
+
+## Process
+1. Write tests in tests/test_views/test_tasks.py
+2. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Tasks view renders table with all deliverables, correct grouping, overdue highlighting
+"]
+
+    // --- VIEW 6: CLIENT DETAIL ---
+    implement_client_detail [shape=box, class="code",
+        goal_gate=true, retry_target="implement_client_detail",
+        label="Implement Client Detail View",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Client Detail (per-client dashboard) view.
+
+## Tech Stack
+Python 3.12, server-rendered HTML, SQLite via db.py, pytest, ruff, mypy.
+
+## Module: src/remixos/views/client_detail.py
+Function: generate_client_dashboard_html(company_id: str) -> str
+
+Single-client deep dive:
+- Company header: name, industry, domain, contacts list
+- Active engagements with full deliverable timeline
+- Deal history (all deals for this company across stages)
+- People at this company with contact info
+- Links: Google Chat, Drive folder, LinkedIn
+
+Data: get_client_dashboard(company_id) in db.py — queries company with all related entities
+
+Uses: get_base_styles(), get_sidebar_html('clients'), get_base_scripts()
+
+## Process
+1. Write tests in tests/test_views/test_client_detail.py
+2. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Client detail renders company info, engagements, deals, people for a given company_id
+"]
+
+    // ==============================
+    // FAN-IN VIEWS
+    // ==============================
+    fan_in_views [shape=tripleoctagon, label="Join: All Views"]
+
+    verify_views [shape=diamond,
+        label="All View Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run:
+1. uv run pytest tests/test_views/ -v --tb=short
+2. uv run ruff check src/remixos/views/
+3. uv run mypy src/
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    commit_views [shape=box, class="code",
+        goal_gate=true, retry_target="implement_briefing",
+        label="Commit Views",
+        prompt="You are working in `run.working_dir`.
+git add -A && git commit -m 'feat(views): implement all 6 views — briefing, pipeline, clients, offers, tasks, client detail'
+Do NOT commit __pycache__ or data/*.db.
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // API ENDPOINTS (parallel with views)
+    // ==============================
+    implement_api [shape=box, class="code",
+        goal_gate=true, retry_target="implement_api",
+        label="Implement API Endpoints",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement REST API endpoints. Wire them into the server's do_POST handler.
+
+## Tech Stack
+Python 3.12, stdlib http.server, SQLite via db.py, pytest, ruff, mypy.
+
+## Module: src/remixos/api.py
+Endpoint handlers that the server's do_POST dispatches to:
+
+1. process_command(text, view_context) -> dict — placeholder for now (command bar comes later)
+2. update_deal(deal_id, fields) -> dict — update deal fields (stage, value, owner, notes, etc.)
+3. create_deal(fields) -> dict — create new deal
+4. update_deliverable(deliverable_id, fields) -> dict — update deliverable (status, dates, owner)
+5. activate_staged_engagement(staged_id) -> dict — move staged -> real engagement + deliverables
+6. reject_staged_engagement(staged_id, reason) -> dict — mark staged as rejected
+
+Each returns {'success': True/False, ...} dict. Server converts to JSON response.
+
+## Process
+1. Write tests in tests/test_api.py covering each endpoint with valid/invalid inputs
+2. Confirm FAIL, implement, integrate with server.py do_POST routes
+3. Run: uv run ruff check . --fix && uv run ruff format .
+4. Run: uv run mypy src/
+
+## Success Criteria
+- All API tests pass
+- Server correctly dispatches POST routes to API handlers
+- ruff + mypy clean
+"]
+
+    verify_api [shape=diamond,
+        label="API Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run:
+1. uv run pytest tests/test_api.py -v --tb=short
+2. uv run ruff check .
+3. uv run mypy src/
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    commit_api [shape=box, class="code",
+        goal_gate=true, retry_target="implement_api",
+        label="Commit API",
+        prompt="You are working in `run.working_dir`.
+git add -A && git commit -m 'feat(api): implement REST API endpoints for deals, deliverables, staged engagements'
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // JOIN: VIEWS + API -> COMMAND BAR
+    // ==============================
+    join_command_bar [shape=tripleoctagon, label="Join: Views + API Ready"]
+
+    implement_command_bar [shape=box, class="code",
+        goal_gate=true, retry_target="implement_command_bar",
+        label="Implement Command Bar",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write failing tests FIRST, then implement the Claude-powered natural language command bar.
+
+## Tech Stack
+Python 3.12, Anthropic Claude API (anthropic SDK), REST API layer (src/remixos/api.py), pytest, ruff, mypy.
+
+## Module: src/remixos/command_bar.py
+Function: process_command(text: str, view_context: dict) -> dict
+
+The command bar is the primary input mechanism. Users type natural language like:
+- 'move Acme to Won' -> update deal stage
+- 'mark the kickoff complete' -> update deliverable status
+- 'add a deal for Globex, qualifying, 50k' -> create deal
+- 'delete it' -> understands from conversation context
+
+Implementation:
+1. Build a system prompt that describes available actions and current view context
+2. Send user text + conversation history to Claude API
+3. Claude returns structured tool calls (update_deal, create_deal, update_deliverable, etc.)
+4. Execute the tool calls via api.py functions
+5. Return result summary to display in command bar
+
+Conversation memory: maintain list of recent messages (in-memory per request, passed from client JS).
+
+Wire into server: update api.py process_command() to call command_bar.process_command().
+
+## Process
+1. Write tests in tests/test_command_bar.py: test command parsing, tool call execution, error handling
+2. Mock the Anthropic API in tests (use unittest.mock to patch anthropic client)
+3. Confirm FAIL, implement, run ruff + mypy
+
+## Success Criteria
+- Command bar correctly interprets natural language commands
+- Tool calls map to API functions
+- Conversation context maintained
+- Tests pass with mocked Claude API
+- ruff + mypy clean
+"]
+
+    verify_command_bar [shape=diamond,
+        label="Command Bar Tests Pass?",
+        prompt="You are working in `run.working_dir`.
+Run:
+1. uv run pytest tests/test_command_bar.py -v --tb=short
+2. uv run ruff check .
+3. uv run mypy src/
+If ALL pass: outcome=success
+If ANY fail: outcome=fail"]
+
+    commit_command_bar [shape=box, class="code",
+        goal_gate=true, retry_target="implement_command_bar",
+        label="Commit Command Bar",
+        prompt="You are working in `run.working_dir`.
+git add -A && git commit -m 'feat(cmdbar): implement Claude-powered NLP command bar with tool calling'
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // BUDGET TRACKING
+    // ==============================
+    check_budget [shape=parallelogram,
+        label="Check Retry Budget",
+        tool_command="#!/bin/sh\nset -eu\nmkdir -p .tracker\nCOUNTER='.tracker/e2e_count'\ncount=0\n[ -f \"$COUNTER\" ] && count=$(cat \"$COUNTER\")\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"$COUNTER\"\nif [ \"$count\" -gt 5 ]; then\n  printf 'budget_exhausted'\nelse\n  printf 'budget_ok'\nfi"]
+
+    // ==============================
+    // E2E TESTS
+    // ==============================
+    e2e_tests [shape=box, class="code",
+        goal_gate=true, retry_target="e2e_tests",
+        label="E2E Tests",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Write and run end-to-end tests that exercise the full stack.
+
+## Tech Stack
+Python 3.12, pytest, all RemixOS modules, SQLite (test database).
+
+## Tests to Write (tests/test_e2e.py)
+1. Server startup: start server, verify it responds on port 8765
+2. View rendering: GET each route (/,/pipeline,/clients,/offers,/tasks), verify HTML contains expected elements
+3. API CRUD flow: POST create deal -> GET pipeline (verify deal appears) -> POST update deal stage -> verify stage changed
+4. Staged engagement flow: create staged engagement in DB -> POST activate -> verify engagement + deliverables created
+5. Sidebar navigation: verify all views have sidebar with correct active state
+6. CSS/JS inclusion: verify views include design tokens and required JS functions
+
+## Process
+1. Write tests using a test client that starts the server in a thread with a test DB
+2. Run: uv run pytest tests/test_e2e.py -v --tb=long
+3. Run: uv run ruff check . && uv run mypy src/
+4. Fix all failures
+
+## Success Criteria
+- Full user flows work end-to-end
+- All 6 views render correctly with data from DB
+- API endpoints create/update/delete correctly
+- Tests pass, ruff clean, mypy clean
+"]
+
+    // ==============================
+    // LANGUAGE-AWARE BUILD VALIDATION
+    // ==============================
+    validate_build [shape=parallelogram,
+        label="Validate Full Build",
+        tool_command="set -eu\nif [ -f pyproject.toml ]; then\n  uv run pytest -v 2>&1 || exit 1\n  uv run ruff check . 2>&1 || exit 1\n  printf 'validation-pass'\nelse\n  printf 'validation-unknown'\nfi"]
+
+    commit_final [shape=box, class="code",
+        goal_gate=true, retry_target="e2e_tests",
+        label="Commit Final",
+        prompt="You are working in `run.working_dir`.
+git add -A && git commit -m 'test(e2e): add end-to-end tests for full RemixOS stack'
+Verify: git log --oneline -1"]
+
+    // ==============================
+    // FINAL REVIEW (IRON LAW)
+    // ==============================
+    review [shape=box, class="review",
+        goal_gate=true, retry_target="e2e_tests",
+        label="Final Review",
+        prompt="You are working in `run.working_dir`.
+
+## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+Run commands. Read output. Check exit codes. THEN make claims.
+
+## Context (MANDATORY — do this FIRST)
+1. Get the full diff: git log --oneline --all
+2. Read every changed source file in src/remixos/
+3. Run the test suite: uv run pytest -v --tb=short
+4. Run linting: uv run ruff check . && uv run mypy src/
+DO NOT trust the implementer's claims. Verify independently.
+
+## Checklist
+- [ ] DB layer: schema matches spec (all core tables, correct types, FKs, indexes)
+- [ ] Server: routes dispatch correctly, static serving works
+- [ ] All 6 views render with correct data and sidebar
+- [ ] CSS has design tokens, JS has command bar + sidebar toggle
+- [ ] API endpoints handle CRUD for deals, deliverables, staged engagements
+- [ ] Command bar processes natural language via Claude API
+- [ ] All tests pass (unit, integration, e2e)
+- [ ] ruff clean, mypy clean
+- [ ] Pre-commit hooks working
+- [ ] No hardcoded paths, no secrets in code
+
+If all checks pass: outcome=success
+If any issues found: outcome=fail
+"]
+
+    // ==============================
+    // GRADUATED ESCALATION
+    // ==============================
+    debug_investigate [shape=box, class="code",
+        goal_gate=true, retry_target="debug_investigate",
+        label="Debug Investigation",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+The build or tests failed. Investigate the root cause systematically.
+
+## Tech Stack
+Python 3.12, pytest, ruff, mypy.
+
+## Process
+1. Read the FULL test output — don't skim
+2. Identify which specific test(s) failed and why
+3. Read the relevant source files
+4. Check for common issues: import errors, missing DB migrations, route mismatches, template rendering bugs
+5. Apply targeted fix — do NOT rewrite working code
+6. Run: uv run pytest -v --tb=long
+7. Run: uv run ruff check . && uv run mypy src/
+
+If fixed: outcome=success
+If cannot fix after thorough investigation: outcome=fail
+"]
+
+    replan_task [shape=box, class="review",
+        goal_gate=true, retry_target="replan_task",
+        label="Replan Approach",
+        prompt="You are working in `run.working_dir`.
+
+## Task
+Debug investigation failed to fix the issue. Step back and replan.
+
+## Process
+1. Read all test failures and error logs
+2. Identify if the approach is fundamentally wrong (architecture issue vs bug)
+3. If architecture issue: revise the module structure in docs/plans/plan.md
+4. If integration issue: identify which components aren't wiring together correctly
+5. Apply the revised approach
+6. Run: uv run pytest -v
+
+If replanned and fixed: outcome=success
+If still stuck: outcome=fail
+"]
+
+    // ==============================
+    // DONE
+    // ==============================
+    done [shape=Msquare, label="Done"]
+
+    // ==============================
+    // EDGES
+    // ==============================
+
+    // Start -> Resume check
+    start -> check_existing;
+    check_existing -> scope_analysis [label="fresh start", condition="context.tool_stdout=fresh"];
+    check_existing -> e2e_tests [label="resume", condition="context.tool_stdout=resume", weight=2];
+
+    // Scope -> Plan -> Validate -> Setup
+    scope_analysis -> plan;
+    plan -> validate_plan;
+    validate_plan -> setup [label="format ok", condition="context.tool_stdout=format_ok", weight=2];
+    validate_plan -> plan [label="fix plan", condition="context.tool_stdout!=format_ok"];
+
+    // Foundation: DB -> Server (sequential — server depends on DB)
+    setup -> implement_db;
+    implement_db -> verify_db;
+    verify_db -> commit_db [label="pass", condition="outcome=success", weight=2];
+    verify_db -> implement_db [label="fix", condition="outcome=fail"];
+
+    commit_db -> implement_server;
+    implement_server -> verify_server;
+    verify_server -> commit_server [label="pass", condition="outcome=success", weight=2];
+    verify_server -> implement_server [label="fix", condition="outcome=fail"];
+
+    // Foundation verification
+    commit_server -> verify_foundation;
+    verify_foundation -> implement_styles [label="pass", condition="outcome=success", weight=2];
+    verify_foundation -> implement_db [label="fix foundation", condition="outcome=fail"];
+
+    // Styles (must come before views — views depend on get_base_styles/get_sidebar_html)
+    implement_styles -> verify_styles;
+    verify_styles -> commit_styles [label="pass", condition="outcome=success", weight=2];
+    verify_styles -> implement_styles [label="fix", condition="outcome=fail"];
+
+    // Fan-out: 6 views in parallel (all depend on DB + Server + Styles, not on each other)
+    commit_styles -> fan_out_views;
+    fan_out_views -> implement_briefing;
+    fan_out_views -> implement_pipeline;
+    fan_out_views -> implement_clients;
+    fan_out_views -> implement_offers;
+    fan_out_views -> implement_tasks;
+    fan_out_views -> implement_client_detail;
+
+    // Fan-in: all views complete
+    implement_briefing -> fan_in_views;
+    implement_pipeline -> fan_in_views;
+    implement_clients -> fan_in_views;
+    implement_offers -> fan_in_views;
+    implement_tasks -> fan_in_views;
+    implement_client_detail -> fan_in_views;
+
+    fan_in_views -> verify_views;
+    verify_views -> commit_views [label="pass", condition="outcome=success", weight=2];
+    verify_views -> implement_briefing [label="fix views", condition="outcome=fail"];
+
+    // API (parallel with views — both depend on DB + Server, not on each other)
+    commit_styles -> implement_api;
+    implement_api -> verify_api;
+    verify_api -> commit_api [label="pass", condition="outcome=success", weight=2];
+    verify_api -> implement_api [label="fix", condition="outcome=fail"];
+
+    // Join: Views + API -> Command Bar
+    commit_views -> join_command_bar;
+    commit_api -> join_command_bar;
+    join_command_bar -> implement_command_bar;
+
+    implement_command_bar -> verify_command_bar;
+    verify_command_bar -> commit_command_bar [label="pass", condition="outcome=success", weight=2];
+    verify_command_bar -> implement_command_bar [label="fix", condition="outcome=fail"];
+
+    // E2E with budget tracking
+    commit_command_bar -> check_budget;
+    check_budget -> e2e_tests [label="budget ok", condition="context.tool_stdout=budget_ok", weight=2];
+    check_budget -> replan_task [label="budget exhausted", condition="context.tool_stdout=budget_exhausted"];
+
+    // E2E -> Validate -> Review
+    e2e_tests -> validate_build;
+    validate_build -> commit_final [label="pass", condition="context.tool_stdout=validation-pass", weight=2];
+    validate_build -> debug_investigate [label="fail", condition="context.tool_stdout!=validation-pass"];
+
+    commit_final -> review;
+    review -> done [label="all good", condition="outcome=success", weight=2];
+    review -> debug_investigate [label="issues found", condition="outcome=fail"];
+
+    // Graduated escalation
+    debug_investigate -> e2e_tests [label="fixed", condition="outcome=success"];
+    debug_investigate -> replan_task [label="can't fix", condition="outcome=fail"];
+    replan_task -> e2e_tests [label="replanned", condition="outcome=success"];
+    replan_task -> done [label="stuck — ship what works", condition="outcome=fail"];
+}
