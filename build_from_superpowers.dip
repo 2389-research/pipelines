@@ -7,7 +7,7 @@ workflow BuildFromSuperpowers
   exit: done
 
   defaults
-    model: claude-sonnet-4-5
+    model: claude-sonnet-4-6
     provider: anthropic
     max_retries: 3
 
@@ -16,17 +16,21 @@ workflow BuildFromSuperpowers
   # ==========================
   tool find_superpowers
     label: "Find Superpowers Spec + Plan"
+    timeout: 30s
     command:
       #!/bin/sh
-      set -eu
       spec=""
       plan=""
-      for f in docs/superpowers/specs/*.md; do
-        [ -f "$f" ] && spec="$f" && break
-      done
-      for f in docs/superpowers/plans/*.md; do
-        [ -f "$f" ] && plan="$f" && break
-      done
+      if [ -d docs/superpowers/specs ]; then
+        for f in docs/superpowers/specs/*.md; do
+          [ -f "$f" ] && spec="$f" && break
+        done
+      fi
+      if [ -d docs/superpowers/plans ]; then
+        for f in docs/superpowers/plans/*.md; do
+          [ -f "$f" ] && plan="$f" && break
+        done
+      fi
       if [ -z "$spec" ] || [ -z "$plan" ]; then
         printf 'missing_files'
       else
@@ -42,6 +46,8 @@ workflow BuildFromSuperpowers
     reasoning_effort: high
     goal_gate: true
     retry_target: setup_project
+    max_retries: 3
+    fallback_target: done
     prompt:
       You are working in `run.working_dir`.
 
@@ -83,9 +89,9 @@ workflow BuildFromSuperpowers
   # ==========================
   tool check_setup
     label: "Check Setup Complete"
+    timeout: 30s
     command:
       #!/bin/sh
-      set -eu
       if [ -f docs/plans/progress.md ] && grep -q '\[x\]' docs/plans/progress.md; then
         printf 'setup_done'
       else
@@ -97,19 +103,17 @@ workflow BuildFromSuperpowers
   # ==========================
   tool find_next_task
     label: "Find Next Uncompleted Task"
+    timeout: 30s
     command:
       #!/bin/sh
-      set -eu
       if [ ! -f docs/plans/progress.md ]; then
-        printf 'no_progress_file'
+        printf 'all_tasks_done'
         exit 0
       fi
-      # Find first unchecked task
-      next=$(grep -n '^\- \[ \] Task' docs/plans/progress.md | head -1)
+      next=$(grep -n '^\- \[ \] Task' docs/plans/progress.md | head -1 || true)
       if [ -z "$next" ]; then
         printf 'all_tasks_done'
       else
-        # Extract task number
         task_num=$(echo "$next" | sed 's/.*Task \([0-9]*\).*/\1/')
         printf 'task_%s' "$task_num"
       fi
@@ -122,6 +126,7 @@ workflow BuildFromSuperpowers
     model: claude-opus-4-6
     goal_gate: true
     retry_target: implement_task
+    max_retries: 3
     prompt:
       You are working in `run.working_dir`.
 
@@ -166,6 +171,7 @@ workflow BuildFromSuperpowers
     auto_status: true
     goal_gate: true
     retry_target: implement_task
+    max_retries: 3
     prompt:
       You are working in `run.working_dir`.
 
@@ -201,8 +207,10 @@ workflow BuildFromSuperpowers
   # ==========================
   agent commit_task
     label: "Commit and Mark Task Done"
+    model: claude-sonnet-4-6
     goal_gate: true
     retry_target: commit_task
+    max_retries: 3
     prompt:
       You are working in `run.working_dir`.
 
@@ -230,6 +238,7 @@ workflow BuildFromSuperpowers
     reasoning_effort: high
     goal_gate: true
     retry_target: diagnose_failure
+    max_retries: 3
     prompt:
       You are working in `run.working_dir`.
 
@@ -260,9 +269,9 @@ workflow BuildFromSuperpowers
   # ==========================
   tool check_diagnose_budget
     label: "Check Diagnose Budget"
+    timeout: 30s
     command:
       #!/bin/sh
-      set -eu
       mkdir -p .tracker
       COUNTER='.tracker/diagnose_count'
       count=0
@@ -281,9 +290,9 @@ workflow BuildFromSuperpowers
   # ==========================
   tool reset_diagnose_budget
     label: "Reset Diagnose Budget"
+    timeout: 30s
     command:
       #!/bin/sh
-      set -eu
       mkdir -p .tracker
       printf '0' > .tracker/diagnose_count
       printf 'reset'
@@ -297,6 +306,8 @@ workflow BuildFromSuperpowers
     reasoning_effort: high
     goal_gate: true
     retry_target: final_review
+    max_retries: 3
+    fallback_target: done
     prompt:
       You are working in `run.working_dir`.
 
@@ -336,8 +347,10 @@ workflow BuildFromSuperpowers
   # ==========================
   agent skip_and_continue
     label: "Skip Stuck Task and Continue"
+    model: claude-sonnet-4-6
     goal_gate: true
     retry_target: skip_and_continue
+    max_retries: 3
     prompt:
       You are working in `run.working_dir`.
 
@@ -363,6 +376,7 @@ workflow BuildFromSuperpowers
   # ==========================
   agent done
     label: "Exit"
+    model: claude-sonnet-4-6
     prompt:
       Build from superpowers plan complete.
 
@@ -373,6 +387,7 @@ workflow BuildFromSuperpowers
     # Find superpowers output
     find_superpowers -> setup_project  when ctx.tool_stdout = ready  label: "found"  weight: 2
     find_superpowers -> done  when ctx.tool_stdout = missing_files  label: "no superpowers output"
+    find_superpowers -> done  label: "fallback"
 
     # Setup and first check
     setup_project -> check_setup
@@ -382,18 +397,22 @@ workflow BuildFromSuperpowers
     # Task loop: find → implement → verify → commit → find next
     find_next_task -> implement_task  when ctx.tool_stdout startswith task_  label: "next task"  weight: 2
     find_next_task -> final_review  when ctx.tool_stdout = all_tasks_done  label: "all done"
+    find_next_task -> done  label: "fallback"
 
     implement_task -> verify_task
 
     # Verify pass → commit → reset budget → find next
     verify_task -> commit_task  when ctx.outcome = success  label: "pass"  weight: 2
+    verify_task -> check_diagnose_budget  when ctx.outcome = fail  label: "fail"
+    verify_task -> check_diagnose_budget  label: "fallback"
+
     commit_task -> reset_diagnose_budget
     reset_diagnose_budget -> find_next_task  restart: true
 
-    # Verify fail → diagnose loop with budget
-    verify_task -> check_diagnose_budget  when ctx.outcome = fail  label: "fail"
+    # Diagnose loop with budget
     check_diagnose_budget -> diagnose_failure  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
     check_diagnose_budget -> skip_and_continue  when ctx.tool_stdout = budget_exhausted  label: "stuck"
+    check_diagnose_budget -> skip_and_continue  label: "fallback"
 
     diagnose_failure -> verify_task  restart: true
 
