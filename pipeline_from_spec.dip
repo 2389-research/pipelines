@@ -613,7 +613,7 @@ workflow PipelineFromSpec
 
     analyze_spec -> check_analysis
     check_analysis -> generate_dip  when ctx.tool_stdout = analysis_ready  label: "analysis ready"  weight: 2
-    check_analysis -> analyze_spec  when ctx.tool_stdout != analysis_ready  label: "analysis missing — retry"
+    check_analysis -> analyze_spec  when ctx.tool_stdout != analysis_ready  label: "analysis missing — retry"  restart: true
 
     # Generate and validate
     generate_dip -> run_validate
@@ -625,8 +625,8 @@ workflow PipelineFromSpec
     # Fix loop with budget
     check_fix_budget -> fix_validation  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
     check_fix_budget -> regenerate_dip  when ctx.tool_stdout = budget_exhausted  label: "too many fixes — start fresh"
-    fix_validation -> run_validate
-    regenerate_dip -> run_validate
+    fix_validation -> run_validate  restart: true
+    regenerate_dip -> run_validate  restart: true
 
     # Quality scoring (the autoresearch measure step)
     score_quality -> done  when ctx.tool_stdout = quality_high  label: "quality high"  weight: 2
@@ -635,4 +635,4 @@ workflow PipelineFromSpec
     # Refine loop with budget (the autoresearch improve-measure loop)
     check_refine_budget -> refine_pipeline  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
     check_refine_budget -> done  when ctx.tool_stdout = budget_exhausted  label: "best effort — budget exhausted"
-    refine_pipeline -> run_validate
+    refine_pipeline -> run_validate  restart: true

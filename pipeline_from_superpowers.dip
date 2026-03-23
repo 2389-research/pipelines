@@ -538,7 +538,7 @@ workflow PipelineFromSuperpowers
     # Analyze task structure
     analyze_tasks -> check_analysis
     check_analysis -> generate_dip  when ctx.tool_stdout = analysis_ready  label: "analysis ready"  weight: 2
-    check_analysis -> analyze_tasks  when ctx.tool_stdout != analysis_ready  label: "analysis missing — retry"
+    check_analysis -> analyze_tasks  when ctx.tool_stdout != analysis_ready  label: "analysis missing — retry"  restart: true
 
     # Generate and validate
     generate_dip -> run_validate
@@ -550,8 +550,8 @@ workflow PipelineFromSuperpowers
     # Fix loop with budget
     check_fix_budget -> fix_validation  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
     check_fix_budget -> regenerate_dip  when ctx.tool_stdout = budget_exhausted  label: "start fresh"
-    fix_validation -> run_validate
-    regenerate_dip -> run_validate
+    fix_validation -> run_validate  restart: true
+    regenerate_dip -> run_validate  restart: true
 
     # Quality scoring
     score_quality -> done  when ctx.tool_stdout = quality_high  label: "quality high"  weight: 2
@@ -560,4 +560,4 @@ workflow PipelineFromSuperpowers
     # Refine loop with budget
     check_refine_budget -> refine_pipeline  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
     check_refine_budget -> done  when ctx.tool_stdout = budget_exhausted  label: "best effort"
-    refine_pipeline -> run_validate
+    refine_pipeline -> run_validate  restart: true

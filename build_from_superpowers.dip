@@ -393,7 +393,6 @@ workflow BuildFromSuperpowers
     setup_project -> check_setup
     check_setup -> find_next_task  when ctx.tool_stdout = setup_done  weight: 2
     check_setup -> setup_project  when ctx.tool_stdout != setup_done  label: "retry setup"  restart: true
-    check_setup -> find_next_task  when ctx.tool_stdout = setup_done  label: "fallback"
 
     # Task loop: find → implement → verify → commit → find next
     find_next_task -> implement_task  when ctx.tool_stdout startswith task_  label: "next task"  weight: 2
