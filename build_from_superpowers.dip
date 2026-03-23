@@ -387,25 +387,25 @@ workflow BuildFromSuperpowers
     # Find superpowers output
     find_superpowers -> setup_project  when ctx.tool_stdout = ready  label: "found"  weight: 2
     find_superpowers -> done  when ctx.tool_stdout = missing_files  label: "no superpowers output"
-    find_superpowers -> done  label: "fallback"
+    find_superpowers -> done  when ctx.tool_stdout != ready  label: "fallback"
 
     # Setup and first check
     setup_project -> check_setup
     check_setup -> find_next_task  when ctx.tool_stdout = setup_done  weight: 2
     check_setup -> setup_project  when ctx.tool_stdout != setup_done  label: "retry setup"  restart: true
-    check_setup -> find_next_task  label: "fallback"
+    check_setup -> find_next_task  when ctx.tool_stdout = setup_done  label: "fallback"
 
     # Task loop: find → implement → verify → commit → find next
     find_next_task -> implement_task  when ctx.tool_stdout startswith task_  label: "next task"  weight: 2
     find_next_task -> final_review  when ctx.tool_stdout = all_tasks_done  label: "all done"
-    find_next_task -> done  label: "fallback"
+    find_next_task -> done  when ctx.tool_stdout != all_tasks_done  label: "fallback"
 
     implement_task -> verify_task
 
     # Verify pass → commit → reset budget → find next
     verify_task -> commit_task  when ctx.outcome = success  label: "pass"  weight: 2
     verify_task -> check_diagnose_budget  when ctx.outcome = fail  label: "fail"
-    verify_task -> check_diagnose_budget  label: "fallback"
+    verify_task -> check_diagnose_budget  when ctx.outcome != success  label: "fallback"
 
     commit_task -> reset_diagnose_budget
     reset_diagnose_budget -> find_next_task  restart: true
@@ -413,7 +413,7 @@ workflow BuildFromSuperpowers
     # Diagnose loop with budget
     check_diagnose_budget -> diagnose_failure  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
     check_diagnose_budget -> skip_and_continue  when ctx.tool_stdout = budget_exhausted  label: "stuck"
-    check_diagnose_budget -> skip_and_continue  label: "fallback"
+    check_diagnose_budget -> skip_and_continue  when ctx.tool_stdout != budget_ok  label: "fallback"
 
     diagnose_failure -> verify_task  restart: true
 
