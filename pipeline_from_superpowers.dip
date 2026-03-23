@@ -1,0 +1,563 @@
+# ABOUTME: Generates a Dippin build pipeline from superpowers spec + plan output.
+# ABOUTME: Skips analysis/generation — superpowers already produced the spec and task plan.
+
+workflow PipelineFromSuperpowers
+  goal: "A validated, high-quality pipeline .dip file exists in the working directory, built from the superpowers spec and plan, scoring quality_high on pattern and coverage metrics"
+  start: find_superpowers
+  exit: done
+
+  defaults
+    model: claude-sonnet-4-5
+    provider: anthropic
+    max_retries: 3
+
+  # ==========================
+  # FIND SUPERPOWERS OUTPUT
+  # ==========================
+  tool find_superpowers
+    label: "Find Superpowers Spec + Plan"
+    command:
+      #!/bin/sh
+      set -eu
+      spec=""
+      plan=""
+      # Look for spec
+      for f in docs/superpowers/specs/*.md; do
+        if [ -f "$f" ]; then
+          spec="$f"
+          break
+        fi
+      done
+      # Look for plan
+      for f in docs/superpowers/plans/*.md; do
+        if [ -f "$f" ]; then
+          plan="$f"
+          break
+        fi
+      done
+      if [ -z "$spec" ] || [ -z "$plan" ]; then
+        printf 'missing_files'
+      else
+        printf 'ready'
+      fi
+
+  # ==========================
+  # ANALYZE TASK STRUCTURE
+  # ==========================
+  agent analyze_tasks
+    label: "Analyze Task Structure"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    retry_target: analyze_tasks
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the superpowers spec and plan, then produce a structured task analysis for pipeline generation.
+
+      ## Process
+      1. Find the spec file in docs/superpowers/specs/ and the plan file in docs/superpowers/plans/
+      2. Read both files completely
+      3. Extract and write to docs/plans/task_analysis.md:
+
+      ### Project Name
+      [name from spec]
+
+      ### Tech Stack
+      Extract from the spec:
+      - Language, Framework, Database, Test framework, Linter, Package manager, Other deps
+
+      ### Infrastructure Dependencies (for testing)
+      List any services that need local emulators or daemons for tests to run:
+      - [e.g., SQLite — no emulator needed, uses temp files]
+      - [e.g., Firestore emulator on localhost:8080]
+      Include the start command and health check for each.
+
+      ### Tasks (from superpowers plan)
+      For each ## Task N heading in the plan, extract:
+      - Task number and name
+      - Files created/modified
+      - Dependencies: which other tasks must complete first (infer from imports, file references, and package dependencies)
+      - Can be parallelized with: which tasks are independent
+
+      ### Dependency Graph
+      Draw the task dependency graph:
+      - Which tasks can run in parallel (same layer)
+      - Which tasks must be sequential (one blocks another)
+      - Group into layers: L0 (no deps), L1 (depends on L0), L2 (depends on L1), etc.
+
+      ### Pipeline Topology
+      Based on task count and dependencies, recommend:
+      - LINEAR: 1-5 tasks, simple chain
+      - FAN_OUT: 6+ tasks with shared foundation and independent features
+      - DAG: Complex cross-dependencies between tasks
+
+      4. Commit: git add -A && git commit -m 'docs(analysis): task structure analysis from superpowers plan'
+
+      ## Success Criteria
+      - docs/plans/task_analysis.md exists with all sections
+      - Every task from the plan is listed with dependencies mapped
+      - Dependency graph accurately reflects which tasks can parallelize
+
+  # ==========================
+  # CHECK ANALYSIS EXISTS
+  # ==========================
+  tool check_analysis
+    label: "Check Analysis File"
+    command:
+      #!/bin/sh
+      set -eu
+      if [ -f docs/plans/task_analysis.md ] && [ -s docs/plans/task_analysis.md ]; then
+        printf 'analysis_ready'
+      else
+        printf 'analysis_missing'
+      fi
+
+  # ==========================
+  # GENERATE DIP FILE
+  # ==========================
+  agent generate_dip
+    label: "Generate Pipeline Dip"
+    model: claude-opus-4-6
+    goal_gate: true
+    retry_target: generate_dip
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read docs/plans/task_analysis.md and the original superpowers plan, then generate a pipeline .dip file that will build the project task-by-task.
+
+      ## Key Difference from Generic Pipeline Generation
+      The superpowers plan already contains:
+      - Detailed step-by-step instructions for each task
+      - Exact file paths and code snippets
+      - Test code to write
+      - Commit messages
+
+      Your job is to translate each task into implement/verify/commit nodes, wiring them according to the dependency graph. Each implement node's prompt should reference the superpowers plan task by number and instruct the agent to follow the steps exactly.
+
+      ## Dippin Syntax Reference
+
+      ### Structure
+      ```
+      workflow <Name>
+        goal: "<text>"
+        start: <NodeID>
+        exit: <NodeID>
+
+        defaults
+          model: <string>
+          provider: <string>
+
+        <kind> <NodeID>
+          <field>: <value>
+          <multiline_field>:
+            <indented content>
+
+        parallel <ID> -> <Target1>, <Target2>[, ...]
+        fan_in <ID> <- <Source1>, <Source2>[, ...]
+
+        edges
+          <From> -> <To> [when <condition>] [label: <text>] [weight: <int>]
+      ```
+
+      ### Node Kinds
+      | Kind | Purpose | Required Fields | Optional Fields |
+      |------|---------|----------------|-----------------|
+      | agent | LLM coding/review tasks | prompt | model, provider, goal_gate, retry_target, max_retries, reasoning_effort, fidelity, max_turns, system_prompt, auto_status |
+      | human | Human gate | mode (freeform or choice) | default |
+      | tool | Shell command | command | timeout (e.g. 30s, 2m, 120s) |
+      | parallel | Fan-out | -> Target1, Target2 (inline) | — |
+      | fan_in | Fan-in | <- Source1, Source2 (inline) | — |
+
+      All kinds also accept: label, reads, writes, retry_policy, max_retries, base_delay, retry_target, fallback_target.
+
+      ### Edge Condition Syntax
+      ```
+      when ctx.outcome = success
+      when ctx.outcome = fail
+      when ctx.tool_stdout = value
+      when ctx.tool_stdout != value
+      ```
+      Variables MUST be namespace-qualified: ctx.outcome, ctx.tool_stdout, ctx.status
+
+      ### Validation
+      Use `dippin check pipeline.dip` to validate.
+
+      ## MANDATORY PATTERNS — Include ALL of These
+
+      ### 1. Resume Support (first node after start)
+      ```
+      tool check_existing
+        label: "Check Existing Progress"
+        command:
+          #!/bin/sh
+          if [ -f docs/plans/progress.md ]; then
+            printf 'resume'
+          else
+            printf 'fresh'
+          fi
+      ```
+
+      ### 2. Per-Task Implementation Pattern
+      For EVERY task in the superpowers plan, create this triplet:
+      ```
+      agent implement_X
+        goal_gate: true
+        retry_target: implement_X
+        label: "Implement [Task Name]"
+        prompt:
+          You are working in `run.working_dir`.
+
+          ## Task
+          Implement Task N from the superpowers plan.
+
+          ## Instructions
+          Read the superpowers plan at [plan path].
+          Find "## Task N: [Name]" and follow ALL steps exactly.
+
+          ## Tech Stack
+          [from task_analysis.md]
+
+          ## Process
+          TDD: Write failing tests FIRST, then implement to make them pass.
+          Follow each step in the plan sequentially.
+
+          ## Success Criteria
+          [from the plan's task description]
+
+      tool verify_X
+        label: "X Tests Pass?"
+        timeout: 120s
+        command:
+          #!/bin/sh
+          set +e
+          fail=0
+          [language-specific test + lint commands, all >&2]
+          if [ "$fail" -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+
+      agent commit_X
+        goal_gate: true
+        retry_target: implement_X
+        label: "Commit X"
+        prompt:
+          ...git add -A && git commit -m '[message from plan]'...
+      ```
+      With edges:
+      ```
+      implement_X -> verify_X
+      verify_X -> commit_X  when ctx.tool_stdout = pass  weight: 2
+      verify_X -> implement_X  when ctx.tool_stdout = fail
+      ```
+
+      ### 3. Stdout Hygiene for ALL tool command Scripts
+      The pipeline engine matches ctx.tool_stdout EXACTLY. Rules:
+      - ALL command output (tests, linters, builds) MUST go to stderr via >&2
+      - stdout MUST contain ONLY the routing token (e.g., printf 'pass', printf 'fail')
+      - NEVER use 2>&1 — it merges noisy output into stdout and breaks routing
+
+      ### 4. Timeout Budget for Verify Nodes
+      Set explicit timeouts based on tech stack:
+      - Go (go test + golangci-lint): timeout: 120s
+      - TypeScript/Node (vitest + tsc + eslint): timeout: 120s
+      - Rust (cargo test + clippy): timeout: 180s
+      - Python (pytest + ruff/mypy): timeout: 60s
+
+      ### 5. Infrastructure Prerequisites for Testing
+      If the tech stack needs local services (SQLite is fine — no emulator needed), every verify tool command MUST start or verify services are running BEFORE tests. Each verify node must be self-contained.
+
+      ### 6. Graduated Escalation (at the end)
+      ```
+      debug_investigate -> final_verify  when ctx.outcome = success
+      debug_investigate -> replan  when ctx.outcome = fail
+      replan -> final_verify  when ctx.outcome = success
+      replan -> done  when ctx.outcome = fail
+      ```
+
+      ### 7. Language-Aware Build Validation (before final review)
+      validate_build tool node with full test + lint + build. Uses >&2 for output, printf for routing token. Set timeout: 120s+.
+
+      ### 8. Review That Reads Code (final review prompt must include)
+      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+      Run commands. Read output. Check exit codes. THEN make claims.
+      DO NOT trust implementer claims. Verify independently.
+
+      ## Prompt Requirements for EVERY agent Node
+      1. Start with: You are working in `run.working_dir`.
+      2. Include ## Tech Stack from task_analysis.md
+      3. Reference the specific superpowers plan task by number
+      4. Include ## Process with TDD instruction
+      5. Include ## Success Criteria
+      6. Every agent node MUST have goal_gate: true and retry_target
+
+      ## Topology Rules (from task_analysis.md)
+      - Use the dependency graph from task_analysis.md to determine parallelism
+      - Tasks in the same layer use parallel / fan_in
+      - Tasks with cross-dependencies have explicit edge ordering
+      - Scaffolding (Task 1) is always sequential and first
+
+      ## Output
+      Write the workflow file to pipeline.dip in the working directory root.
+      Name the workflow Build_[ProjectName] (PascalCase).
+
+      ## Worklog
+      Append a generation summary to docs/plans/generation_worklog.md:
+      - Timestamp, topology chosen, number of nodes/edges
+      - How superpowers tasks were mapped to pipeline nodes
+      - Which tasks were parallelized and why
+
+      ## DO NOT
+      - Invent fields not in the Dippin reference
+      - Use bare variable names in conditions (use ctx.outcome, not outcome)
+      - Leave agent nodes without goal_gate + retry_target
+      - Create human gates unless explicitly requested
+      - Write prompts that assume context from other nodes (each prompt is self-contained)
+      - Use 'exit 1' in tool commands — output a routable string instead
+      - Use '2>&1' in tool commands — use >&2 for noisy output
+      - Use parallel without a matching fan_in
+      - Skip tasks from the superpowers plan — every task must have implement + verify + commit nodes
+      - Rewrite the superpowers plan steps — reference them by task number and follow exactly
+
+      ## Success Criteria
+      - pipeline.dip exists in working directory root
+      - dippin check pipeline.dip reports valid
+      - Every superpowers plan task has implement + verify + commit nodes
+      - Dependency ordering matches task_analysis.md
+      - All mandatory patterns present
+
+  # ==========================
+  # VALIDATE
+  # ==========================
+  tool run_validate
+    label: "Run Dippin Check"
+    command:
+      #!/bin/sh
+      set -eu
+      if [ ! -f pipeline.dip ]; then
+        printf 'no_dip_file'
+        exit 0
+      fi
+      result=$(dippin check pipeline.dip 2>/dev/null)
+      if echo "$result" | grep -q '"valid":true'; then
+        printf 'valid'
+      else
+        printf 'invalid'
+      fi
+
+  # ==========================
+  # FIX BUDGET CHECK
+  # ==========================
+  tool check_fix_budget
+    label: "Check Fix Budget"
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      COUNTER='.tracker/fix_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 3 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  # ==========================
+  # FIX VALIDATION ERRORS
+  # ==========================
+  agent fix_validation
+    label: "Fix Validation Errors"
+    model: claude-opus-4-6
+    goal_gate: true
+    retry_target: fix_validation
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The pipeline.dip file failed validation. Fix the errors.
+
+      ## Process
+      1. Run: dippin check pipeline.dip
+      2. Read the FULL JSON output — look at diagnostics[].message and diagnostics[].line
+      3. Common fixes:
+         - Missing start: or exit: -> add them referencing declared node IDs
+         - Edge references undeclared node -> declare the node or fix the name
+         - parallel without matching fan_in -> add fan_in with same sources
+         - Bare variable names in conditions -> use ctx.outcome, not outcome
+         - Agent node with empty prompt -> add prompt content
+      4. Save fixed pipeline.dip
+      5. Run: dippin check pipeline.dip — confirm it passes
+
+      ## Success Criteria
+      - dippin check pipeline.dip reports valid
+
+  # ==========================
+  # REGENERATE
+  # ==========================
+  agent regenerate_dip
+    label: "Regenerate Pipeline Dip"
+    model: claude-opus-4-6
+    goal_gate: true
+    retry_target: regenerate_dip
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Previous fix attempts failed. Regenerate pipeline.dip from scratch.
+
+      ## Process
+      1. Read docs/plans/task_analysis.md and the superpowers plan
+      2. Read docs/plans/generation_worklog.md if it exists
+      3. Identify what kept failing — simplify the approach
+      4. Delete pipeline.dip and regenerate with a SIMPLER topology
+      5. Focus on correctness: start/exit declared, all edges reference real nodes, ctx. prefixes on conditions
+      6. Run: dippin check pipeline.dip
+
+      ## Success Criteria
+      - pipeline.dip exists and passes dippin check
+
+  # ==========================
+  # SCORE QUALITY
+  # ==========================
+  tool score_quality
+    label: "Score Pipeline Quality"
+    command:
+      #!/bin/sh
+      set -eu
+      score=0
+      total=7
+      # Pattern 1: Resume support
+      grep -qi 'check_existing\|Check Existing' pipeline.dip && score=$((score + 1))
+      # Pattern 2: Per-task coverage (verify nodes for each task)
+      verify_count=$(grep -c 'verify_' pipeline.dip 2>/dev/null || echo 0)
+      [ "$verify_count" -gt 2 ] && score=$((score + 1))
+      # Pattern 3: Graduated escalation
+      grep -qi 'debug_investigate\|debug\|replan' pipeline.dip && score=$((score + 1))
+      # Pattern 4: Build validation
+      grep -qi 'validate_build' pipeline.dip && score=$((score + 1))
+      # Pattern 5: Review reads code (IRON LAW)
+      grep -qi 'IRON LAW' pipeline.dip && score=$((score + 1))
+      # Pattern 6: References superpowers plan
+      grep -qi 'superpowers' pipeline.dip && score=$((score + 1))
+      # Pattern 7: Timeout on verify nodes
+      grep -qi 'timeout:' pipeline.dip && score=$((score + 1))
+      # Task coverage
+      impl_count=$(grep -c 'implement_' pipeline.dip 2>/dev/null || echo 0)
+      printf 'score=%s/%s impl=%s ' "$score" "$total" "$impl_count" >&2
+      if [ "$score" -ge 6 ]; then
+        printf 'quality_high'
+      elif [ "$score" -ge 4 ]; then
+        printf 'quality_medium'
+      else
+        printf 'quality_low'
+      fi
+
+  # ==========================
+  # REFINE BUDGET CHECK
+  # ==========================
+  tool check_refine_budget
+    label: "Check Refine Budget"
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      COUNTER='.tracker/refine_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 3 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  # ==========================
+  # REFINE PIPELINE
+  # ==========================
+  agent refine_pipeline
+    label: "Refine Pipeline Quality"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    retry_target: refine_pipeline
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The generated pipeline.dip is valid but scored below quality_high. Improve it.
+
+      ## Process
+      1. Read pipeline.dip, docs/plans/task_analysis.md, and the superpowers plan
+      2. Check each quality dimension:
+
+      ### Checklist
+      - [ ] Resume support — check_existing tool node
+      - [ ] Per-task coverage — every superpowers task has implement + verify + commit nodes
+      - [ ] Graduated escalation — debug -> replan -> done chain
+      - [ ] Build validation — validate_build tool node with >&2 and timeout
+      - [ ] Review reads code — IRON LAW in final review prompt
+      - [ ] Superpowers plan reference — implement prompts reference the plan by task number
+      - [ ] Timeouts — verify tool nodes have explicit timeout based on tech stack
+      - [ ] Infrastructure — verify tool commands start any needed services
+      - [ ] Parallelism — independent tasks use parallel/fan_in per dependency graph
+
+      ### Task Coverage
+      For every task in the superpowers plan:
+      - implement_X agent node (goal_gate, retry_target, references plan task N)
+      - verify_X tool node with pass/fail routing and timeout
+      - commit_X agent node
+
+      3. After fixes, run: dippin check pipeline.dip
+      4. If a fix breaks validation, revert it
+
+      ## Success Criteria
+      - All 7 quality patterns present
+      - All superpowers tasks covered
+      - pipeline.dip still validates
+
+  # ==========================
+  # EXIT
+  # ==========================
+  agent done
+    label: "Exit"
+    prompt:
+      Pipeline generation from superpowers output complete.
+
+  # ==========================
+  # EDGES
+  # ==========================
+  edges
+    # Find superpowers output
+    find_superpowers -> analyze_tasks  when ctx.tool_stdout = ready  label: "spec + plan found"  weight: 2
+    find_superpowers -> done  when ctx.tool_stdout = missing_files  label: "missing superpowers output"
+
+    # Analyze task structure
+    analyze_tasks -> check_analysis
+    check_analysis -> generate_dip  when ctx.tool_stdout = analysis_ready  label: "analysis ready"  weight: 2
+    check_analysis -> analyze_tasks  when ctx.tool_stdout != analysis_ready  label: "analysis missing — retry"
+
+    # Generate and validate
+    generate_dip -> run_validate
+
+    # Validation routing
+    run_validate -> score_quality  when ctx.tool_stdout = valid  label: "valid"  weight: 2
+    run_validate -> check_fix_budget  when ctx.tool_stdout != valid  label: "invalid"
+
+    # Fix loop with budget
+    check_fix_budget -> fix_validation  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
+    check_fix_budget -> regenerate_dip  when ctx.tool_stdout = budget_exhausted  label: "start fresh"
+    fix_validation -> run_validate
+    regenerate_dip -> run_validate
+
+    # Quality scoring
+    score_quality -> done  when ctx.tool_stdout = quality_high  label: "quality high"  weight: 2
+    score_quality -> check_refine_budget  when ctx.tool_stdout != quality_high  label: "needs refinement"
+
+    # Refine loop with budget
+    check_refine_budget -> refine_pipeline  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
+    check_refine_budget -> done  when ctx.tool_stdout = budget_exhausted  label: "best effort"
+    refine_pipeline -> run_validate
