@@ -26,3 +26,54 @@ workflow SpecToDip
       Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
 
       To use this pipeline, place a spec file in the working directory and re-run.
+
+  # ── Phase 1: Discovery ──────────────────────────
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  tool find_plan
+    label: "Find Superpowers Plan"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      spec=""
+      plan=""
+      if [ -d docs/superpowers/specs ]; then
+        for f in docs/superpowers/specs/*.md; do
+          [ -f "$f" ] && spec="$f" && break
+        done
+      fi
+      if [ -d docs/superpowers/plans ]; then
+        for f in docs/superpowers/plans/*.md; do
+          [ -f "$f" ] && plan="$f" && break
+        done
+      fi
+      if [ -n "$spec" ] || [ -n "$plan" ]; then
+        printf 'plan_found'
+      else
+        printf 'no_plan'
+      fi
+
+  edges
+    Start -> find_spec
+    find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
+    find_spec -> no_spec_exit      when ctx.tool_stdout = no_spec_found
+    find_plan -> analyze_spec
+    no_spec_exit -> Done
