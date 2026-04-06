@@ -397,6 +397,116 @@ workflow SpecToDip
 
   fan_in gen_join <- gen_claude, gen_gpt, gen_gemini
 
+  # ── Phase 5: Validation + Fix Loop ─────────────
+
+  tool validate_all
+    label: "Validate All Candidates"
+    timeout: 60s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .ai/candidates
+      errors=""
+      for name in claude gpt gemini; do
+        f=".ai/candidates/${name}.dip"
+        if [ ! -f "$f" ]; then
+          errors="${errors}${name}_missing "
+          continue
+        fi
+        result=$(dippin check --format json "$f" 2>&1)
+        printf '%s' "$result" > ".ai/candidates/${name}_check.json"
+        valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+        if [ -z "$valid" ]; then
+          errors="${errors}${name} "
+        fi
+      done
+      if [ -z "$errors" ]; then
+        printf 'all_valid'
+      else
+        count=$(printf '%s' "$errors" | wc -w | tr -d ' ')
+        if [ "$count" -gt 1 ]; then
+          printf 'multiple_errors'
+        else
+          printf '%s_errors' "$(printf '%s' "$errors" | tr -d ' ')"
+        fi
+      fi
+
+  agent fix_claude
+    label: "Fix Claude Candidate"
+    reads: candidate_claude
+    writes: candidate_claude
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/claude.dip.
+
+      ## Process
+      1. Read .ai/candidates/claude_check.json for the dippin check diagnostics
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/claude.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/claude.dip
+
+      ## Common Fixes
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
+
+  agent fix_gpt
+    label: "Fix GPT Candidate"
+    reads: candidate_gpt
+    writes: candidate_gpt
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/gpt.dip.
+
+      ## Process
+      1. Read .ai/candidates/gpt_check.json for the dippin check diagnostics
+      2. Read .ai/candidates/gpt.dip
+      3. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      4. Write the fixed version back to .ai/candidates/gpt.dip
+
+  agent fix_gemini
+    label: "Fix Gemini Candidate"
+    reads: candidate_gemini
+    writes: candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/gemini.dip.
+
+      ## Process
+      1. Read .ai/candidates/gemini_check.json for the dippin check diagnostics
+      2. Read .ai/candidates/gemini.dip
+      3. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      4. Write the fixed version back to .ai/candidates/gemini.dip
+
+  agent fix_all
+    label: "Fix All Candidates"
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Multiple candidates have validation errors. Fix all of them.
+
+      ## Process
+      For each of claude, gpt, gemini:
+      1. Read .ai/candidates/{name}_check.json
+      2. If errors exist, read .ai/candidates/{name}.dip
+      3. Fix the minimum necessary
+      4. Write fixed version back
+
+      Fix each candidate independently — do not merge or cross-pollinate.
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -413,3 +523,13 @@ workflow SpecToDip
     gen_claude -> gen_join
     gen_gpt -> gen_join
     gen_gemini -> gen_join
+    gen_join -> validate_all
+    validate_all -> compliance_parallel       when ctx.tool_stdout = all_valid
+    validate_all -> fix_claude                when ctx.tool_stdout = claude_errors
+    validate_all -> fix_gpt                   when ctx.tool_stdout = gpt_errors
+    validate_all -> fix_gemini                when ctx.tool_stdout = gemini_errors
+    validate_all -> fix_all                   when ctx.tool_stdout = multiple_errors
+    fix_claude -> validate_all                restart: true
+    fix_gpt -> validate_all                   restart: true
+    fix_gemini -> validate_all                restart: true
+    fix_all -> validate_all                   restart: true
