@@ -159,6 +159,39 @@ workflow SpecToDip
       done
       printf 'analysis_ok'
 
+  # ── Phase 3: Perspective Generation (Jam) ──────
+
+  agent identify_perspectives
+    label: "Identify Perspectives"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: perspectives
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read docs/plans/dip_analysis.md and identify 3-5 domain-specific perspectives relevant to this project's pipeline design.
+
+      These are NOT hardcoded personas. Generate them fresh based on the problem domain in the spec.
+
+      ## Process
+      1. Read the spec analysis, especially Tech Stack, Components, and Architectural Slots
+      2. Identify which professional perspectives would produce the most diverse pipeline designs
+      3. Write .ai/perspectives.md with 3-5 perspectives, each containing:
+         - Role title (e.g., "QA engineer focused on test coverage and edge cases")
+         - What this perspective prioritizes in pipeline design
+         - What this perspective would critique in a pipeline
+         - Specific architectural slots this perspective has strong opinions about
+
+      ## Examples by domain
+      Web app: full-stack architect, QA engineer, DevOps engineer, security engineer
+      Data pipeline: data engineer, ML engineer, SRE, data quality analyst
+      CLI tool: developer experience engineer, test engineer, release manager
+      API: API design specialist, performance engineer, integration specialist
+
+      Pick perspectives that will produce genuinely different pipeline designs, not slight variations of the same approach.
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -168,3 +201,4 @@ workflow SpecToDip
     analyze_spec -> check_analysis
     check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
     check_analysis -> analyze_spec           when ctx.tool_stdout = analysis_missing  restart: true
+    identify_perspectives -> gen_parallel
