@@ -192,6 +192,211 @@ workflow SpecToDip
 
       Pick perspectives that will produce genuinely different pipeline designs, not slight variations of the same approach.
 
+  # ── Phase 4: Generation Tournament ─────────────
+
+  parallel gen_parallel -> gen_claude, gen_gpt, gen_gemini
+
+  agent gen_claude
+    label: "Claude Generation"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_claude
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference
+      - workflow <Name> with goal:, start:, exit: header
+      - defaults block for model, provider, max_retries, max_restarts
+      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
+      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
+      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
+      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
+      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
+      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+
+      ## Common LLM Mistakes to Avoid
+      1. Missing start: or exit: field
+      2. Edge references undeclared node
+      3. parallel targets without matching fan_in sources
+      4. Bare variable names in conditions (use ctx.outcome, not outcome)
+      5. Agent node with empty prompt
+      6. Missing tool timeout
+      7. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+
+      ## Generation Emphasis: THOROUGHNESS
+      Your strength is exhaustive edge conditions and spec compliance. Make sure:
+      - Every requirement from the Spec Requirements Checklist maps to at least one node
+      - All conditional edges are exhaustive (success/fail pairs) or have fallback edges
+      - All tool nodes have timeouts
+      - All back-edges have restart: true
+      - Use auto_status: true on decision-point agents
+      - Use goal_gate: true on critical quality checks
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/claude.dip
+      mkdir -p .ai/candidates first.
+
+  agent gen_gpt
+    label: "GPT Generation"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_gpt
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference
+      - workflow <Name> with goal:, start:, exit: header
+      - defaults block for model, provider, max_retries, max_restarts
+      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
+      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
+      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
+      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
+      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
+      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+
+      ## Common LLM Mistakes to Avoid
+      1. Missing start: or exit: field
+      2. Edge references undeclared node
+      3. parallel targets without matching fan_in sources
+      4. Bare variable names in conditions (use ctx.outcome, not outcome)
+      5. Agent node with empty prompt
+      6. Missing tool timeout
+      7. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+      - TDD Loop: write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass/fail]
+      - Security Review: security_scan (tool) -> security_review (agent, goal_gate) -> [pass/fail]
+      - Code Quality Gates: lint, type_check, format_check (all tool nodes with timeouts)
+      - Scenario Testing: real dependencies only, no mocks, scenario_setup -> scenario_run -> scenario_extract
+      - Fresh-Eyes Review: agent with goal_gate immediately before every commit node
+      - Human Review Gate: at least one, at a meaningful decision point
+      - Simmer Refinement: for complex output artifacts
+
+      ## Generation Emphasis: STRUCTURAL CLARITY
+      Your strength is clean topology and readable structure. Make sure:
+      - The pipeline reads top-to-bottom as a clear narrative
+      - Phase comments (# ── Phase N: Name ──) separate logical sections
+      - Node IDs are descriptive and consistent (PascalCase or snake_case, pick one)
+      - Parallel branches are symmetric and balanced
+      - Edge routing is immediately understandable
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/gpt.dip
+      mkdir -p .ai/candidates first.
+
+  agent gen_gemini
+    label: "Gemini Generation"
+    model: gemini-2.5-pro
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference
+      - workflow <Name> with goal:, start:, exit: header
+      - defaults block for model, provider, max_retries, max_restarts
+      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
+      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
+      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
+      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
+      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
+      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+
+      ## Common LLM Mistakes to Avoid
+      1. Missing start: or exit: field
+      2. Edge references undeclared node
+      3. parallel targets without matching fan_in sources
+      4. Bare variable names in conditions (use ctx.outcome, not outcome)
+      5. Agent node with empty prompt
+      6. Missing tool timeout
+      7. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+      - TDD Loop: write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass/fail]
+      - Security Review: security_scan (tool) -> security_review (agent, goal_gate) -> [pass/fail]
+      - Code Quality Gates: lint, type_check, format_check (all tool nodes with timeouts)
+      - Scenario Testing: real dependencies only, no mocks, scenario_setup -> scenario_run -> scenario_extract
+      - Fresh-Eyes Review: agent with goal_gate immediately before every commit node
+      - Human Review Gate: at least one, at a meaningful decision point
+      - Simmer Refinement: for complex output artifacts
+
+      ## Generation Emphasis: ROBUSTNESS
+      Your strength is error handling and edge case coverage. Make sure:
+      - Every decision point has explicit failure handling
+      - Retry loops are bounded with max_retries and fallback_target
+      - Tool commands use set -eu and handle failure gracefully
+      - Pipeline can recover from partial failures
+      - Fallback edges exist for every conditional routing point
+      - max_restarts is set appropriately for the number of loops
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/gemini.dip
+      mkdir -p .ai/candidates first.
+
+  fan_in gen_join <- gen_claude, gen_gpt, gen_gemini
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -202,3 +407,9 @@ workflow SpecToDip
     check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
     check_analysis -> analyze_spec           when ctx.tool_stdout = analysis_missing  restart: true
     identify_perspectives -> gen_parallel
+    gen_parallel -> gen_claude
+    gen_parallel -> gen_gpt
+    gen_parallel -> gen_gemini
+    gen_claude -> gen_join
+    gen_gpt -> gen_join
+    gen_gemini -> gen_join
