@@ -71,9 +71,100 @@ workflow SpecToDip
         printf 'no_plan'
       fi
 
+  # ── Phase 2: Spec Analysis ─────────────────────
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    max_retries: 3
+    retry_target: analyze_spec
+    writes: spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file and optional superpowers plan. Produce a structured analysis for pipeline generation.
+
+      ## Process
+      1. Find and read the spec file (the previous step confirmed one exists)
+      2. Check for superpowers artifacts in docs/superpowers/specs/*.md and docs/superpowers/plans/*.md
+      3. Write docs/plans/dip_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      [Name, purpose, one-paragraph description]
+
+      ### Tech Stack
+      - Language: [e.g., Python 3.12]
+      - Framework: [e.g., FastAPI]
+      - Database: [e.g., PostgreSQL]
+      - Test framework: [e.g., pytest]
+      - Linter: [e.g., ruff]
+      - Type checker: [e.g., mypy]
+      - Package manager: [e.g., uv]
+
+      ### Components (numbered)
+      For each component:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can run in parallel, which must be sequential.
+
+      ### Recommended Topology
+      Based on component count and dependencies:
+      - LINEAR: 1-3 components, simple deps
+      - FAN_OUT: 4-8 components, shared foundation, independent features
+      - DAG: 8+ components with cross-dependencies
+
+      ### Architectural Slots
+      Key design decisions where multiple valid approaches exist. For each slot:
+      - What the decision is
+      - 2-3 valid approaches
+      - Trade-offs
+
+      ### Pipeline Node Inventory
+      Which components need agent nodes, which need tool nodes, where human gates belong.
+
+      ### Edge Pattern Recommendations
+      Where to use conditional routing, retry loops, fallback paths.
+
+      ### Spec Requirements Checklist
+      Every discrete requirement extracted from the spec, numbered R1-Rn for compliance tracing.
+
+      4. Commit: git add -A && git commit -m 'docs(analysis): spec analysis for pipeline generation'
+
+      ## Success Criteria
+      - docs/plans/dip_analysis.md exists with ALL sections filled in
+      - Every component named, every dependency mapped
+      - Requirements numbered for traceability
+
+  tool check_analysis
+    label: "Check Analysis File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      if [ ! -f docs/plans/dip_analysis.md ]; then
+        printf 'analysis_missing'
+        exit 0
+      fi
+      for section in "Project Summary" "Tech Stack" "Components" "Dependency Graph" "Recommended Topology" "Architectural Slots" "Pipeline Node Inventory" "Edge Pattern" "Spec Requirements Checklist"; do
+        if ! grep -q "$section" docs/plans/dip_analysis.md; then
+          printf 'analysis_missing'
+          exit 0
+        fi
+      done
+      printf 'analysis_ok'
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
     find_spec -> no_spec_exit      when ctx.tool_stdout = no_spec_found
     find_plan -> analyze_spec
     no_spec_exit -> Done
+    analyze_spec -> check_analysis
+    check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
+    check_analysis -> analyze_spec           when ctx.tool_stdout = analysis_missing  restart: true
