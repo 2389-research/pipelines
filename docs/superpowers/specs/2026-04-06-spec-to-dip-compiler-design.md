@@ -16,6 +16,7 @@ A `.dip` pipeline (`spec_to_dip.dip`) that reads a spec (required) and optional 
 - **Review Squad:** Multi-perspective review dispatch with specialized reviewers
 - **Simmer:** Iterative refinement with investigation-first judge board — the final .dip goes through simmer-style refinement loops where judges investigate the artifact before scoring
 - **Scenario Testing:** Generated pipelines enforce the Iron Law: "NO FEATURE IS VALIDATED UNTIL A SCENARIO PASSES WITH REAL DEPENDENCIES" — no mocks allowed, real systems exercised
+- **Fresh-Eyes Review:** Mandatory final sanity check before commit — catches security vulnerabilities, logic errors, and design bugs that slip through tests and reviews
 
 The `dippin check` toolchain serves as the objective quality gate throughout.
 
@@ -460,13 +461,46 @@ The simmer loop runs up to 3 iterations (bounded by max_restarts). If the judge 
 
 ---
 
-## Phase 13: Publish
+## Phase 13: Fresh-Eyes Review (Fresh-Eyes Pattern)
+
+After simmer refinement, before anything gets committed — a deliberate re-read with psychological distance. This is not the same as the review panel (which compared candidates) or simmer (which refined iteratively). Fresh-eyes catches what passes through both: security vulnerabilities, logic errors in edge routing, and design bugs that tests don't surface.
+
+**"Passing tests prove the .dip works as designed. Fresh-eyes proves the design is correct."**
+
+### Nodes
+
+**`fresh_eyes`** (agent, claude-opus-4-6, reasoning_effort: high, goal_gate: true, auto_status: true) — Re-reads the final .dip file from scratch, as if seeing it for the first time. Systematically checks:
+
+1. **Security** — Do tool commands have injection risks? Are shell scripts using `set -eu`? Are API keys or secrets hardcoded in prompts?
+2. **Logic errors** — Can edge conditions deadlock? Are there unreachable nodes the validator missed? Do restart loops have bounded retries?
+3. **Spec fidelity** — Re-reads the original spec one more time. Is anything missing that slipped through the compliance matrix?
+4. **Prompt correctness** — Do prompts reference context variables (`${ctx.*}`) that upstream nodes actually produce? Are instructions contradictory?
+5. **Operational safety** — Are tool timeouts realistic? Could any tool command cause data loss? Are fallback paths sensible?
+
+If issues found: fixes them directly, re-runs `dippin check`, outputs `STATUS: fail`.
+If clean: outputs `STATUS: success`.
+
+**`fresh_eyes_revalidate`** (tool, timeout: 30s) — `dippin check --format json` after fresh-eyes fixes, to ensure fixes didn't break structure.
+
+### Edges
+
+```
+simmer_judge -> fresh_eyes            when ctx.outcome = success
+fresh_eyes -> publish_output          when ctx.outcome = success
+fresh_eyes -> fresh_eyes_revalidate   when ctx.outcome = fail
+fresh_eyes_revalidate -> fresh_eyes   restart: true
+```
+
+---
+
+## Phase 14: Publish
 
 ### Nodes
 
 **`publish_output`** (agent, claude-sonnet-4-6) — Copies final .dip to working directory root with spec-derived name. Writes a summary including:
 - Final dippin doctor grade
 - Simmer judge scores (final iteration)
+- Fresh-eyes review result
 - Compliance matrix summary
 - Tournament results summary
 - Generation provenance (which model contributed what)
@@ -500,9 +534,10 @@ no_spec_exit -> Done
 | Rework | rework_feedback, rework_analysis | 1 human, 1 agent |
 | Final Validation | final_validate, final_fix | 1 tool, 1 agent |
 | Simmer | simmer_judge, simmer_refine, simmer_revalidate | 2 agent, 1 tool |
+| Fresh-Eyes | fresh_eyes, fresh_eyes_revalidate | 1 agent, 1 tool |
 | Publish | publish_output, Done | 2 agent |
 
-**Total:** ~45 nodes
+**Total:** ~47 nodes
 
 ---
 
@@ -640,6 +675,16 @@ Generated pipelines SHOULD include a simmer-style quality loop for their primary
 
 This pattern is especially valuable for pipelines producing complex artifacts (generated code, documentation, configurations).
 
+### Fresh-Eyes Review Before Commit
+
+Generated pipelines MUST include a fresh-eyes review agent node immediately before any commit node. This is distinct from code review or testing — it's a deliberate re-read with psychological distance after everything else has passed. The fresh-eyes node checks for:
+- Security vulnerabilities (injection, hardcoded secrets, path traversal)
+- Logic errors (off-by-one, race conditions, null handling)
+- Business rule bugs (does implementation match spec requirements?)
+- Input validation completeness
+
+The fresh-eyes node MUST be `goal_gate: true` — if it finds issues, they get fixed and tests re-run before commit proceeds. No rationalization ("tests pass," "partner is waiting") bypasses this gate.
+
 ### Human Review Gates
 
 Generated pipelines MUST include at least one human review gate at a meaningful decision point (not just at the end). The analysis phase determines where human input adds the most value — typically after initial implementation and before final shipping.
@@ -659,5 +704,6 @@ Generated pipelines MUST include at least one human review gate at a meaningful 
 9. Generated pipeline includes code quality gates (lint, type check, format)
 10. Generated pipeline includes scenario testing with real dependencies (no mocks)
 11. Generated pipeline includes integration tests when spec describes component interactions
-12. Generated pipeline includes at least one human review gate at a meaningful decision point
-13. Generated pipeline includes simmer-style refinement for primary output artifacts (when applicable)
+12. Generated pipeline includes fresh-eyes review (goal_gate) before every commit node
+13. Generated pipeline includes at least one human review gate at a meaningful decision point
+14. Generated pipeline includes simmer-style refinement for primary output artifacts (when applicable)
