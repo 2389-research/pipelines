@@ -1,0 +1,677 @@
+workflow doc_writer
+  goal: "Given an existing codebase, explore it thoroughly, audit existing documentation, plan a documentation structure, generate comprehensive docs (README, API reference, architecture guide, tutorials), verify all code examples work, review for accuracy, and create a PR -- fully headless."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 2
+    fidelity: summary:high
+    max_restarts: 20
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  agent ExploreCodebase
+    label: "Explore Codebase"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ExploreCodebase
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior technical writer performing a deep exploration of an existing codebase before writing documentation.
+
+      ## Task
+      Thoroughly explore every aspect of this codebase. Your goal is to build a complete mental model of the project so you can write accurate, comprehensive documentation.
+
+      ## Process
+      1. Start with the top-level directory structure:
+         - `find . -type f | head -200` to get a file listing
+         - `wc -l $(find . -type f -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.go' -o -name '*.rs' -o -name '*.java' -o -name '*.rb' 2>/dev/null) | tail -5` to gauge codebase size
+         - Read any existing README, CONTRIBUTING, CHANGELOG files
+
+      2. Identify the primary language and framework:
+         - Check for pyproject.toml, package.json, go.mod, Cargo.toml, pom.xml, Gemfile
+         - Read the build/config files to understand dependencies
+
+      3. Map the architecture:
+         - Read every source file (or at least the first 50 lines of each to get ABOUTME comments and imports)
+         - Identify entry points (main files, CLI entry, web routes, exported modules)
+         - Trace the dependency graph between modules
+         - Identify external service dependencies (databases, APIs, message queues)
+
+      4. Examine tests:
+         - Read test files to understand expected behavior
+         - Note test frameworks and patterns used
+         - Identify what is well-tested vs undertested
+
+      5. Check for configuration:
+         - Environment variables, config files, .env.example
+         - Docker/container setup
+         - CI/CD configuration
+
+      6. Look for existing documentation:
+         - docs/ directory, wiki references, inline docstrings
+         - API schemas (OpenAPI, GraphQL SDL, protobuf)
+         - Architecture decision records (ADRs)
+
+      ## Output
+      Write a comprehensive codebase analysis to docs/doc-writer/codebase-analysis.md with these sections:
+
+      - **Project Overview:** What this project does (1-2 paragraphs)
+      - **Language & Stack:** Primary language, framework, key dependencies
+      - **Architecture:** Component diagram in text, data flow, key abstractions
+      - **Entry Points:** How to run, test, build, deploy
+      - **Public API Surface:** Functions, classes, endpoints, CLI commands that users interact with
+      - **Configuration:** All config knobs and their defaults
+      - **Test Coverage:** What is tested, what testing patterns are used
+      - **Key Design Decisions:** Patterns, conventions, notable choices
+
+      Create the docs/doc-writer/ directory if it does not exist:
+      mkdir -p docs/doc-writer
+
+  agent AuditExistingDocs
+    label: "Audit Existing Docs"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: AuditExistingDocs
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a documentation quality auditor. Your job is to assess what documentation exists, what is accurate, what is stale, and what is missing.
+
+      ## Task
+      Perform a thorough audit of all existing documentation in this codebase.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md for your understanding of the codebase
+      2. Find all documentation files:
+         - `find . -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -not -path './.venv/*'`
+         - Check for docstrings in source files
+         - Look for man pages, wiki content, help text in CLI tools
+      3. For each piece of documentation found, assess:
+         - **Accuracy:** Does it match the current code? Are examples still valid?
+         - **Completeness:** Does it cover all the features it claims to?
+         - **Freshness:** Are there references to removed features or old APIs?
+         - **Quality:** Is it well-organized, clear, useful?
+      4. Identify critical gaps:
+         - No README or a skeletal one
+         - No API reference for a library/service
+         - No setup/installation guide
+         - No architecture overview for a complex project
+         - No examples or tutorials
+         - Missing CLI help documentation
+         - No contribution guide for an open-source project
+
+      ## Output
+      Write your audit results to docs/doc-writer/doc-audit.md with these sections:
+
+      - **Existing Documentation Inventory:** List every doc file with a 1-line summary
+      - **Accuracy Issues:** Specific inaccuracies found (quote the wrong text and what it should say)
+      - **Stale Content:** Docs referencing removed/changed features
+      - **Missing Documentation:** Ranked list of what documentation is needed, most critical first
+      - **Recommended Documentation Plan:** Which docs to write, in what order, and why
+
+  agent PlanDocStructure
+    label: "Plan Doc Structure"
+    goal_gate: true
+    max_retries: 3
+    retry_target: PlanDocStructure
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a documentation architect planning the complete documentation structure for this project.
+
+      ## Task
+      Design a documentation plan that addresses every gap identified in the audit and produces a cohesive, navigable documentation set.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md for codebase understanding
+      2. Read docs/doc-writer/doc-audit.md for the audit results and recommended plan
+      3. Design the documentation structure with these deliverables (skip any that already exist and are high quality):
+
+         a. **README.md** (root) -- Project overview, quick start, installation, basic usage, links to other docs
+         b. **docs/api-reference.md** -- Complete API reference for all public interfaces
+         c. **docs/architecture.md** -- System architecture, component relationships, data flow, design decisions
+         d. **docs/tutorials.md** -- Step-by-step tutorials with runnable code examples covering common use cases
+
+      4. For each document, plan:
+         - Target audience (new user, contributor, operator, API consumer)
+         - Sections and their approximate length
+         - Code examples needed (list each one with a description)
+         - Cross-references to other docs
+         - Information sources (which source files to reference)
+
+      5. Decide what existing docs to UPDATE vs REPLACE vs LEAVE ALONE
+         - If a README exists but is skeletal, plan to replace it
+         - If detailed docs exist and are accurate, plan to leave them
+         - If docs exist but have inaccuracies, plan to update them
+
+      ## Output
+      Write the documentation plan to docs/doc-writer/doc-plan.md with:
+
+      - **Documentation Map:** Table of all planned documents with status (create/update/skip)
+      - **Writing Order:** Sequence for writing docs (each builds on previous context)
+      - **Per-Document Plan:** For each doc to write/update, the sections, audience, and sources
+      - **Code Examples Inventory:** Every code example to write, with a description of what it demonstrates
+
+  agent CommitPlan
+    label: "Commit Plan"
+    goal_gate: true
+    max_retries: 3
+    retry_target: CommitPlan
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Create a feature branch and commit all planning artifacts.
+
+      ## Process
+      1. Create a feature branch for the documentation work:
+         git checkout -b docs/comprehensive-documentation 2>/dev/null || git checkout docs/comprehensive-documentation
+      2. Stage and commit planning artifacts:
+         git add docs/doc-writer/
+         git commit -m 'docs: add documentation analysis and plan'
+      3. Verify: git log --oneline -1
+
+  agent WriteREADME
+    label: "Write README"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteREADME
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior technical writer crafting the project README -- the most important piece of documentation.
+
+      ## Task
+      Write a comprehensive, polished README.md for this project.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md for codebase understanding
+      2. Read docs/doc-writer/doc-plan.md for the documentation plan and README sections
+      3. Read the existing README.md (if any) to preserve any content worth keeping
+
+      ## README Structure
+      Write the README with these sections (adapt based on project type):
+
+      ### For libraries/packages:
+      - **Title and badges** (build status, version, license if applicable)
+      - **One-paragraph description** -- what it does, who it is for, why it exists
+      - **Features** -- bullet list of key capabilities
+      - **Installation** -- exact commands for all supported methods
+      - **Quick Start** -- minimal working example (under 20 lines of code)
+      - **Usage Examples** -- 3-5 common use cases with code
+      - **API Overview** -- summary table of main functions/classes with links to full API docs
+      - **Configuration** -- environment variables, config files, defaults
+      - **Contributing** -- how to set up dev environment, run tests, submit changes
+      - **License**
+
+      ### For applications/services:
+      - **Title and description**
+      - **Prerequisites** -- what you need installed
+      - **Installation/Setup** -- step-by-step from clone to running
+      - **Usage** -- how to use the application, CLI flags, common workflows
+      - **Configuration** -- all config options documented
+      - **Architecture Overview** -- brief summary with link to full architecture doc
+      - **Development** -- how to set up dev environment, run tests
+      - **Deployment** -- how to deploy (if applicable)
+      - **Troubleshooting** -- common issues and solutions
+      - **License**
+
+      ## Rules
+      - Every code example MUST be copy-pasteable and actually work
+      - Use fenced code blocks with language tags
+      - Keep the README under 500 lines -- link to detailed docs for deep dives
+      - Do NOT use placeholder text like 'TODO' or 'TBD' -- either write it or omit the section
+      - If the project has a CLI, show `--help` output or key flags
+      - Include the actual project name, not a generic name
+
+      ## Output
+      Write (or overwrite) README.md at the project root.
+      If the existing README has valuable content not covered by your version, incorporate it.
+
+  agent WriteAPIReference
+    label: "Write API Reference"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteAPIReference
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a technical writer creating a complete API reference document.
+
+      ## Task
+      Write a comprehensive API reference covering every public interface in this project.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md for the public API surface inventory
+      2. Read docs/doc-writer/doc-plan.md for the API reference plan
+      3. Read the actual source files to extract accurate signatures, types, and behavior
+
+      ## Content Requirements
+      Document every public interface. For each, include:
+
+      ### Functions/Methods:
+      - **Signature** with full type annotations
+      - **Description** -- what it does (1-2 sentences)
+      - **Parameters** -- name, type, description, default value, whether required
+      - **Returns** -- type and description
+      - **Raises/Errors** -- what exceptions or error conditions
+      - **Example** -- minimal working code showing usage
+      - **Notes** -- edge cases, performance characteristics, thread safety
+
+      ### Classes/Types:
+      - **Description** -- purpose and when to use
+      - **Constructor** -- parameters and defaults
+      - **Properties/Fields** -- name, type, description
+      - **Methods** -- documented as above
+      - **Example** -- creating and using an instance
+
+      ### CLI Commands (if applicable):
+      - **Command syntax**
+      - **Arguments and flags** with descriptions and defaults
+      - **Examples** -- common invocations
+
+      ### REST/gRPC Endpoints (if applicable):
+      - **Method and path**
+      - **Request parameters/body** with types
+      - **Response format** with example
+      - **Error responses**
+      - **Authentication requirements**
+
+      ## Rules
+      - Extract signatures from ACTUAL CODE -- do not guess or approximate
+      - Group related items logically (by module, by domain, alphabetically within groups)
+      - Include a table of contents at the top
+      - Every example must be correct and runnable
+      - Note deprecations, experimental features, or planned changes if evident from code comments
+
+      ## Output
+      Write to docs/api-reference.md
+
+  agent WriteArchGuide
+    label: "Write Architecture Guide"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteArchGuide
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior architect writing an architecture guide for developers who need to understand and modify this codebase.
+
+      ## Task
+      Write a clear, detailed architecture guide that gives a developer everything they need to navigate and extend the codebase.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md for architecture details
+      2. Read docs/doc-writer/doc-plan.md for the architecture guide plan
+      3. Re-read key source files to verify your understanding of component interactions
+
+      ## Content Requirements
+
+      ### System Overview
+      - High-level description of what the system does and how
+      - ASCII diagram showing major components and their relationships
+      - Data flow: how does data enter, get processed, and exit the system
+
+      ### Component Deep Dives
+      For each major component/module:
+      - **Purpose** -- what problem it solves
+      - **Key abstractions** -- important classes, interfaces, data structures
+      - **Internal flow** -- how it processes work
+      - **Dependencies** -- what it depends on and what depends on it
+      - **Extension points** -- how to add new features or modify behavior
+
+      ### Design Decisions
+      - Key architectural choices and their rationale
+      - Trade-offs made and alternatives considered (if evident from code/comments)
+      - Patterns used (MVC, event-driven, pipeline, etc.) and why
+
+      ### Data Model
+      - Key data structures and their relationships
+      - Database schema (if applicable)
+      - State management approach
+
+      ### Error Handling
+      - Error handling strategy and patterns
+      - How errors propagate through the system
+      - Recovery mechanisms
+
+      ### Directory Structure
+      - Annotated tree showing what each directory/key file contains
+      - Where to find specific types of code (routes, models, utils, tests)
+
+      ## Rules
+      - Use ASCII diagrams for component relationships (no external diagram tools needed)
+      - Ground every claim in actual code -- reference specific files and line numbers where helpful
+      - Write for a developer who has never seen this codebase
+      - Do not speculate about intent -- describe what the code DOES, not what you think it SHOULD do
+      - Keep it under 400 lines -- link to source files for implementation details
+
+      ## Output
+      Write to docs/architecture.md
+
+  agent WriteTutorials
+    label: "Write Tutorials"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteTutorials
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a developer educator writing step-by-step tutorials for this project.
+
+      ## Task
+      Write practical, hands-on tutorials that teach users how to accomplish common tasks with this project.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md for capabilities and entry points
+      2. Read docs/doc-writer/doc-plan.md for the tutorials plan and code examples inventory
+      3. Read README.md for the quick start (tutorials should go deeper)
+      4. Read docs/api-reference.md so tutorials reference correct APIs
+
+      ## Tutorial Structure
+      Write 3-5 tutorials covering the most common use cases. Each tutorial must follow this format:
+
+      ### Tutorial N: [Title]
+      **What you will learn:** (1 sentence)
+      **Prerequisites:** (what the reader needs before starting)
+      **Time estimate:** (e.g., 10 minutes)
+
+      **Step 1: [Action]**
+      Explanation of what we are doing and why.
+      ```language
+      // Complete, runnable code
+      ```
+      Expected output:
+      ```
+      // What the user should see
+      ```
+
+      **Step 2: [Action]**
+      ...continue step by step...
+
+      **What you built:** (summary of the completed tutorial)
+      **Next steps:** (links to related tutorials or API reference)
+
+      ## Tutorial Topics (choose based on project type):
+      - **Getting Started** -- first use from zero to working (deeper than README quick start)
+      - **Common Workflow** -- the most frequent task users perform
+      - **Integration** -- connecting this project to other systems
+      - **Customization** -- extending or configuring for specific needs
+      - **Troubleshooting** -- debugging common problems step by step
+
+      ## Rules
+      - Every code block must be complete and runnable -- no ellipsis, no 'rest of code here'
+      - Show expected output after every meaningful step
+      - If a step could fail, explain what to do if it does
+      - Build complexity gradually -- each tutorial step builds on the previous
+      - Use realistic data and scenarios, not foo/bar/baz
+      - If the project requires setup (database, API keys), include those steps or explain how to use test/demo mode
+
+      ## Output
+      Write to docs/tutorials.md
+
+  tool CollectExamples
+    label: "Collect Code Examples"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      mkdir -p docs/doc-writer
+      # Extract all fenced code blocks from generated docs
+      for f in README.md docs/api-reference.md docs/architecture.md docs/tutorials.md; do
+        if [ -f "$f" ]; then
+          printf '\n=== %s ===\n' "$f"
+          # Count fenced code blocks
+          blocks=$(grep -c '^```' "$f" || true)
+          half=$((blocks / 2))
+          printf 'Found %s code blocks\n' "$half"
+        else
+          printf '\n=== %s === MISSING\n' "$f"
+        fi
+      done
+      printf '\ncollected'
+
+  agent VerifyExamples
+    label: "Verify Code Examples"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: VerifyExamples
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a QA engineer verifying that every code example in the documentation actually works.
+
+      ## Task
+      Extract and test every runnable code example from the generated documentation.
+
+      ## Process
+      1. Read each documentation file: README.md, docs/api-reference.md, docs/architecture.md, docs/tutorials.md
+      2. For each fenced code block that contains runnable code (not output blocks, not config snippets, not ASCII diagrams):
+         a. Identify the language and what the code does
+         b. Determine if it can be run standalone or needs the project to be set up first
+         c. Create a temporary test script that runs the example
+         d. Execute it and capture the output
+         e. Compare the output to any documented expected output
+
+      3. Categorize results:
+         - PASS: Code runs and produces expected output
+         - PASS_NO_OUTPUT: Code runs without error but has no documented expected output to compare
+         - FAIL: Code produces an error or wrong output
+         - SKIP: Code cannot be run in isolation (e.g., requires a running server, external API)
+         - For SKIP items, note WHY and whether the code at least looks syntactically correct
+
+      4. For any FAIL results:
+         - Record the exact error message
+         - Identify what is wrong (typo, wrong import, missing dependency, stale API)
+         - Fix the code example in the documentation file
+         - Re-run to verify the fix works
+
+      ## Rules
+      - Do NOT modify project source code -- only fix documentation examples
+      - If an example requires project setup, ensure the project is properly installed first (check if there is a virtual environment, node_modules, etc.)
+      - If too many examples fail (more than 50%), flag this as a documentation quality issue rather than fixing each one -- the doc writing phase likely had incorrect information
+      - Create a verification report even if all examples pass
+
+      ## Output
+      Write verification results to docs/doc-writer/example-verification.md with:
+      - **Summary:** X passed, Y failed, Z skipped out of N total
+      - **Details:** Each example with file, line number, language, result, and any fixes applied
+      - **Fixed Files:** List of documentation files that were modified to fix examples
+
+      outcome=success if no more than 2 examples FAIL after fixes
+      outcome=fail if more than 2 examples still FAIL after attempted fixes
+
+  agent ReviewDocs
+    label: "Review Documentation"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ReviewDocs
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior technical editor performing a final review of all generated documentation.
+
+      ## Task
+      Review every documentation file for accuracy, completeness, consistency, and quality.
+
+      ## Process
+      1. Read docs/doc-writer/codebase-analysis.md to ground your review in the actual codebase
+      2. Read docs/doc-writer/example-verification.md for the verification results
+      3. Review each documentation file against these criteria:
+
+      ### Accuracy
+      - Do all code examples match the current API? (cross-reference with source files)
+      - Are file paths, function names, class names correct?
+      - Are version numbers and dependency names accurate?
+      - Do installation instructions actually work?
+
+      ### Completeness
+      - Is every public API documented?
+      - Are common use cases covered in tutorials?
+      - Are error conditions and edge cases documented?
+      - Is the getting started guide sufficient for a new user?
+
+      ### Consistency
+      - Are terms used consistently across all docs? (same name for same concept)
+      - Is formatting consistent? (code style, heading levels, list formats)
+      - Do cross-references between docs work? (links to other doc files)
+      - Is the tone consistent? (formal/informal, second person/third person)
+
+      ### Quality
+      - Is the writing clear and concise?
+      - Are explanations at the right level of detail?
+      - Is the information organized logically?
+      - Are there any walls of text that need breaking up?
+
+      4. Make fixes directly in the documentation files for:
+         - Factual errors
+         - Inconsistent terminology
+         - Broken cross-references
+         - Formatting issues
+         - Unclear explanations
+
+      5. For larger issues (missing sections, wrong architecture description), note them but do not attempt major rewrites -- flag them for a future iteration.
+
+      ## Output
+      Write your review summary to docs/doc-writer/review-notes.md with:
+      - **Overall Assessment:** (1-2 sentence quality judgment)
+      - **Fixes Applied:** List of changes made during review
+      - **Outstanding Issues:** Problems too large to fix in review (if any)
+      - **Documentation Quality Score:** Rate each doc 1-5 on accuracy, completeness, clarity
+
+      outcome=success if all docs score 3 or higher on all dimensions
+      outcome=fail if any doc scores below 3 on any dimension
+
+  agent CommitDocs
+    label: "Commit Documentation"
+    goal_gate: true
+    max_retries: 3
+    retry_target: CommitDocs
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Stage and commit all documentation files.
+
+      ## Process
+      1. Stage all documentation changes:
+         git add README.md docs/
+
+      2. Check what is being committed:
+         git diff --cached --stat
+
+      3. Commit with a descriptive message:
+         git commit -m 'docs: add comprehensive project documentation
+
+         - README with installation, usage, and quick start
+         - API reference for all public interfaces
+         - Architecture guide with component deep dives
+         - Tutorials with runnable code examples
+         - All code examples verified working'
+
+      4. Verify the commit:
+         git log --oneline -1
+         git diff --stat HEAD~1
+
+      5. Push the branch:
+         git push -u origin docs/comprehensive-documentation
+
+  agent CreatePR
+    label: "Create PR"
+    goal_gate: true
+    max_retries: 3
+    retry_target: CreatePR
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Create a pull request for the documentation changes.
+
+      ## Process
+      1. Read docs/doc-writer/review-notes.md for the quality summary
+      2. Read docs/doc-writer/example-verification.md for verification results
+
+      3. Create the PR using the GitHub CLI:
+         gh pr create \
+           --title 'docs: add comprehensive project documentation' \
+           --body '## Documentation Added
+
+         This PR adds comprehensive documentation generated by the doc-writer pipeline.
+
+         ### Files
+         - **README.md** -- Project overview, installation, quick start, usage examples
+         - **docs/api-reference.md** -- Complete API reference for all public interfaces
+         - **docs/architecture.md** -- System architecture, components, design decisions
+         - **docs/tutorials.md** -- Step-by-step tutorials with verified code examples
+
+         ### Verification
+         All code examples in the documentation have been extracted and tested.
+         See docs/doc-writer/example-verification.md for full results.
+
+         ### Review Notes
+         See docs/doc-writer/review-notes.md for the documentation quality assessment.
+
+         ---
+         *Generated by doc-writer pipeline*'
+
+      4. If gh is not available, output the PR details so they can be created manually:
+         - Title, body, branch name, base branch
+
+      5. Verify: gh pr view --json number,title,url 2>/dev/null || echo 'PR details printed above for manual creation'
+
+  edges
+    Start -> ExploreCodebase  weight: 2
+    ExploreCodebase -> AuditExistingDocs  when ctx.outcome = success  weight: 2
+    ExploreCodebase -> ExploreCodebase  label: "retry explore"  restart: true
+    AuditExistingDocs -> PlanDocStructure  when ctx.outcome = success  weight: 2
+    AuditExistingDocs -> AuditExistingDocs  label: "retry audit"  restart: true
+    PlanDocStructure -> CommitPlan  when ctx.outcome = success  weight: 2
+    PlanDocStructure -> PlanDocStructure  label: "retry plan"  restart: true
+    CommitPlan -> WriteREADME  when ctx.outcome = success  weight: 2
+    CommitPlan -> CommitPlan  label: "retry commit"  restart: true
+    WriteREADME -> WriteAPIReference  when ctx.outcome = success  weight: 2
+    WriteREADME -> WriteREADME  label: "retry README"  restart: true
+    WriteAPIReference -> WriteArchGuide  when ctx.outcome = success  weight: 2
+    WriteAPIReference -> WriteAPIReference  label: "retry API ref"  restart: true
+    WriteArchGuide -> WriteTutorials  when ctx.outcome = success  weight: 2
+    WriteArchGuide -> WriteArchGuide  label: "retry arch guide"  restart: true
+    WriteTutorials -> CollectExamples  when ctx.outcome = success  weight: 2
+    WriteTutorials -> WriteTutorials  label: "retry tutorials"  restart: true
+    CollectExamples -> VerifyExamples  when ctx.tool_stdout = collected  weight: 2
+    CollectExamples -> CollectExamples  label: "retry collect"  restart: true
+    VerifyExamples -> ReviewDocs  when ctx.outcome = success  weight: 2
+    VerifyExamples -> VerifyExamples  label: "retry verification"  restart: true
+    ReviewDocs -> CommitDocs  when ctx.outcome = success  weight: 2
+    ReviewDocs -> ReviewDocs  label: "retry review"  restart: true
+    CommitDocs -> CreatePR  when ctx.outcome = success  weight: 2
+    CommitDocs -> CommitDocs  label: "retry commit"  restart: true
+    CreatePR -> Exit  weight: 2
+    CreatePR -> CreatePR  label: "retry PR"  restart: true

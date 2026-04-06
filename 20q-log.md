@@ -1,2 +1,3 @@
-Question 1: Is it a living thing?
-outcome=success
+# 20 Questions Log
+
+Question 1: Is it a physical, tangible object (something you can touch)?

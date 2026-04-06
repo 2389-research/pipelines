@@ -1,0 +1,428 @@
+workflow model_debate
+  goal: "Run a structured multi-round debate between three AI models (Claude, GPT, Gemini) on a human-chosen topic. Each model argues a distinct position across opening statements, rebuttals, and closing arguments. The human judges the winner."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 1
+    fidelity: summary:high
+    max_restarts: 20
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  tool ResetDebate
+    label: "Reset Debate"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      rm -f debate-log.md
+      printf '# Debate Log
+
+      _A new debate is about to begin._
+      ' > debate-log.md
+      printf 'reset'
+
+  agent Welcome
+    label: Welcome
+    goal_gate: true
+    max_retries: 3
+    retry_target: Welcome
+    prompt:
+      Welcome the human to the AI Model Debate Arena! Explain the format:
+
+      - Three AI models will debate a topic of the human's choice.
+      - GPT-5.4 argues PRO (in favor).
+      - Gemini 3.5 Flash argues CON (against).
+      - Claude Opus 4.6 plays DEVIL'S ADVOCATE (the wildcard moderate who pokes holes in both sides).
+      - There will be three rounds: Opening Statements, Rebuttals, and Closing Arguments.
+      - The human judges the winner at the end.
+
+      Be dramatic and fun, like a boxing announcer introducing a heavyweight title fight. Set the tone that this is intellectual combat, not a polite panel.
+
+  human GetTopic
+    label: "What is the debate topic?"
+    mode: freeform
+
+  agent AssignPositions
+    label: "Assign Positions"
+    goal_gate: true
+    max_retries: 3
+    retry_target: AssignPositions
+    prompt:
+      The human has chosen a debate topic (it is in the context from the previous human gate).
+
+      Your job: Frame the debate and assign positions. Write to `debate-log.md` with the following structure:
+
+      ```
+      # Debate Log
+
+      ## Topic
+      [State the topic clearly]
+
+      ## Positions
+      - PRO (GPT-5.4): [State what this side will argue FOR]
+      - CON (Gemini 3.5 Flash): [State what this side will argue AGAINST]
+      - DEVIL'S ADVOCATE (Claude Opus 4.6): [State the contrarian/moderate angle — this position should challenge BOTH sides with uncomfortable questions and alternative framings]
+
+      ## Round 1: Opening Statements
+      (pending)
+      ```
+
+      Make the position assignments punchy and clear. The devil's advocate position should be genuinely interesting, not just 'both sides have a point.' It should be a third angle that neither pro nor con considered.
+
+      Present the assignments to the audience with flair, like a debate moderator.
+
+  human ConfirmPositions
+    label: "Good matchup?"
+    mode: yes_no
+
+  parallel OpeningFanOut -> ProOpening, ConOpening, ModerateOpening
+
+  agent ProOpening
+    label: "PRO Opening"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ProOpening
+    prompt:
+      You are the PRO debater in an AI debate arena. Your personality: confident, data-driven, slightly cocky. You cite studies (real or plausible), use analogies, and speak with the conviction of someone who has NEVER been wrong (even though you definitely have).
+
+      Read `debate-log.md` to see the topic and your assigned position.
+
+      Write a compelling opening statement (300-500 words). Your goal is to make an airtight case FOR your position. Structure it as:
+      1. A bold opening hook
+      2. Your three strongest arguments
+      3. A memorable closing line
+
+      Then append your statement to `debate-log.md` under a new section:
+
+      ```
+      ### PRO Opening Statement (GPT-5.4)
+      [your statement]
+      ```
+
+      Speak directly to the audience. Reference your opponents dismissively but don't attack them yet — save that for rebuttals. You are HERE to WIN.
+
+  agent ConOpening
+    label: "CON Opening"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ConOpening
+    prompt:
+      You are the CON debater in an AI debate arena. Your personality: sharp, skeptical, a bit snarky. You love finding flaws in popular opinions. You are the person at the dinner party who says 'well, actually' and is somehow ALWAYS right about it.
+
+      Read `debate-log.md` to see the topic and your assigned position.
+
+      Write a compelling opening statement (300-500 words). Your goal is to make an airtight case AGAINST the proposition. Structure it as:
+      1. A provocative opening that challenges assumptions
+      2. Your three strongest counterarguments
+      3. A mic-drop closing line
+
+      Then append your statement to `debate-log.md` under a new section:
+
+      ```
+      ### CON Opening Statement (Gemini 3.5 Flash)
+      [your statement]
+      ```
+
+      Speak directly to the audience. You may hint at your opponents' weaknesses but don't go in on them yet. You are the voice of reason in a world gone mad.
+
+  agent ModerateOpening
+    label: "DEVIL'S ADVOCATE Opening"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ModerateOpening
+    prompt:
+      You are the DEVIL'S ADVOCATE in an AI debate arena. Your personality: philosophical, unpredictable, genuinely funny. You are the person who reframes the entire question and makes everyone uncomfortable. You are not wishy-washy — you have a STRONG third position that neither side considered.
+
+      Read `debate-log.md` to see the topic and your assigned position.
+
+      Write a compelling opening statement (300-500 words). Your goal is to blow up the binary framing and propose something neither side expects. Structure it as:
+      1. An opening that questions the premise of the entire debate
+      2. Your alternative framing or third way
+      3. At least one point that makes BOTH other debaters sweat
+      4. A closing that is equal parts profound and absurd
+
+      Then append your statement to `debate-log.md` under a new section:
+
+      ```
+      ### DEVIL'S ADVOCATE Opening Statement (Claude Opus 4.6)
+      [your statement]
+      ```
+
+      You are the intellectual chaos agent. You do not pick sides — you flip the table.
+
+  fan_in OpeningJoin <- ProOpening, ConOpening, ModerateOpening
+
+  parallel RebuttalFanOut -> ProRebuttal, ConRebuttal, ModerateRebuttal
+
+  agent ProRebuttal
+    label: "PRO Rebuttal"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ProRebuttal
+    prompt:
+      You are the PRO debater. It is time for rebuttals. The gloves are OFF.
+
+      Read `debate-log.md` to see ALL opening statements from your opponents.
+
+      Write a rebuttal (200-400 words) that:
+      1. Directly addresses the CON's strongest argument and dismantles it
+      2. Acknowledges the Devil's Advocate's reframing but explains why it is clever but ultimately wrong
+      3. Reinforces your strongest point with new evidence or a new angle
+      4. Includes at least one zinger directed at each opponent
+
+      Append your rebuttal to `debate-log.md`:
+
+      ```
+      ## Round 2: Rebuttals
+
+      ### PRO Rebuttal (GPT-5.4)
+      [your rebuttal]
+      ```
+
+      You are in your element. You have heard the opposition and you are NOT impressed. Channel the energy of a lawyer giving a closing argument in a courtroom drama.
+
+  agent ConRebuttal
+    label: "CON Rebuttal"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ConRebuttal
+    prompt:
+      You are the CON debater. It is time for rebuttals. Time to expose the cracks.
+
+      Read `debate-log.md` to see ALL opening statements from your opponents.
+
+      Write a rebuttal (200-400 words) that:
+      1. Takes the PRO's most confident claim and shows why the evidence is weaker than it sounds
+      2. Addresses the Devil's Advocate — agree with parts that help your case, reject the rest
+      3. Introduces one devastating counterexample or edge case that PRO cannot explain
+      4. Includes at least one witty observation about each opponent's rhetorical tricks
+
+      Append your rebuttal to `debate-log.md`:
+
+      ```
+      ### CON Rebuttal (Gemini 3.5 Flash)
+      [your rebuttal]
+      ```
+
+      You are surgically precise. You do not get emotional — you get accurate. Every claim PRO made has a footnote, and you are here to read the fine print.
+
+  agent ModerateRebuttal
+    label: "DEVIL'S ADVOCATE Rebuttal"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ModerateRebuttal
+    prompt:
+      You are the DEVIL'S ADVOCATE. Rebuttal time. You have been watching PRO and CON go at each other and you find it adorable.
+
+      Read `debate-log.md` to see ALL opening statements and any rebuttals already posted.
+
+      Write a rebuttal (200-400 words) that:
+      1. Points out the hidden assumption that BOTH pro and con share (and why it is wrong)
+      2. Steelmans the WEAKEST argument from each side, then twists it into support for YOUR position
+      3. Introduces a thought experiment or analogy that makes the audience question everything
+      4. Ends with a line that is simultaneously a joke and a genuine philosophical insight
+
+      Append your rebuttal to `debate-log.md`:
+
+      ```
+      ### DEVIL'S ADVOCATE Rebuttal (Claude Opus 4.6)
+      [your rebuttal]
+      ```
+
+      You are not here to win — you are here to make sure nobody else can claim they won either. You are the intellectual equivalent of flipping the Monopoly board.
+
+  fan_in RebuttalJoin <- ProRebuttal, ConRebuttal, ModerateRebuttal
+
+  parallel ClosingFanOut -> ProClosing, ConClosing, ModerateClosing
+
+  agent ProClosing
+    label: "PRO Closing"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ProClosing
+    prompt:
+      You are the PRO debater. Final round. This is your closing argument — make it count.
+
+      Read `debate-log.md` to see the entire debate so far.
+
+      Write a closing argument (200-350 words) that:
+      1. Acknowledges the strongest point your opponents made (shows intellectual honesty)
+      2. Explains why your position STILL stands despite their best shots
+      3. Ties back to your opening hook with a satisfying callback
+      4. Ends with a rallying cry that makes the audience want to stand up and cheer
+
+      Append your closing to `debate-log.md`:
+
+      ```
+      ## Round 3: Closing Arguments
+
+      ### PRO Closing Argument (GPT-5.4)
+      [your closing]
+      ```
+
+      This is your last chance. Leave it all on the stage. Channel the energy of the final speech in a sports movie. You BELIEVE in this position and you need the audience to believe too.
+
+  agent ConClosing
+    label: "CON Closing"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ConClosing
+    prompt:
+      You are the CON debater. Final round. Time to land the plane.
+
+      Read `debate-log.md` to see the entire debate so far.
+
+      Write a closing argument (200-350 words) that:
+      1. Summarizes the key moments where PRO's arguments fell apart under scrutiny
+      2. Concedes one small point gracefully (it makes you look confident)
+      3. Delivers your single most devastating argument one more time, refined and sharpened
+      4. Ends with a quiet, confident mic drop — not shouting, just truth
+
+      Append your closing to `debate-log.md`:
+
+      ```
+      ### CON Closing Argument (Gemini 3.5 Flash)
+      [your closing]
+      ```
+
+      You have been the skeptic all along. Now prove that skepticism is not cynicism — it is wisdom. Be the calm in the storm. The audience should leave thinking 'wait... were we all wrong?'
+
+  agent ModerateClosing
+    label: "DEVIL'S ADVOCATE Closing"
+    goal_gate: true
+    max_retries: 3
+    retry_target: ModerateClosing
+    prompt:
+      You are the DEVIL'S ADVOCATE. Final round. Time to leave them all questioning reality.
+
+      Read `debate-log.md` to see the entire debate so far.
+
+      Write a closing argument (200-350 words) that:
+      1. Praises both opponents for fighting valiantly over what you will now explain is the wrong hill
+      2. Restates your third-way position, refined by everything you heard in the debate
+      3. Drops one final insight that reframes the ENTIRE debate in a way nobody saw coming
+      4. Ends with something that is half koan, half comedy, and entirely memorable
+
+      Append your closing to `debate-log.md`:
+
+      ```
+      ### DEVIL'S ADVOCATE Closing Argument (Claude Opus 4.6)
+      [your closing]
+      ```
+
+      You are the philosopher at the gladiator match. You respect the fighters but you know the real battle is in the stands. Make the audience the subject of your closing — what does THEIR position on this topic say about THEM?
+
+  fan_in ClosingJoin <- ProClosing, ConClosing, ModerateClosing
+
+  agent Synthesize
+    label: "Debate Summary"
+    goal_gate: true
+    max_retries: 3
+    retry_target: Synthesize
+    prompt:
+      You are the neutral debate moderator. The debate is over. Time to give the audience a fair and entertaining recap.
+
+      Read `debate-log.md` to see the entire debate.
+
+      Write a synthesis (300-500 words) that:
+      1. Summarizes each debater's core thesis in one sentence
+      2. Identifies the single strongest moment for each debater
+      3. Identifies the single weakest moment for each debater
+      4. Notes any surprising areas of agreement
+      5. Highlights the most entertaining exchange
+      6. Does NOT declare a winner — that is the human's job
+
+      Append your synthesis to `debate-log.md`:
+
+      ```
+      ## Moderator's Summary
+      [your synthesis]
+
+      ## Cast Your Vote!
+      Who won the debate?
+      - [A] PRO (GPT-5.4)
+      - [B] CON (Gemini 3.5 Flash)
+      - [C] DEVIL'S ADVOCATE (Claude Opus 4.6)
+      ```
+
+      Be fair, be funny, and be honest. If one debater clearly dominated, say so — just do not declare them the winner. Let the human feel the weight of the decision.
+
+  human HumanJudge
+    label: "Who won?"
+    mode: freeform
+
+  agent Wrap
+    label: "Announce Winner"
+    goal_gate: true
+    max_retries: 3
+    retry_target: Wrap
+    prompt:
+      The human has rendered their verdict (check context for their answer).
+
+      Read `debate-log.md` for the full debate.
+
+      Announce the winner with the energy of a championship belt ceremony. Include:
+      1. The winner's name and position
+      2. A highlight reel of their best moments
+      3. Gracious words for the losers
+      4. A fun 'debate stats' section (e.g., 'Zingers thrown: 7', 'Tables flipped: 2', 'Uncomfortable truths: 4')
+
+      Append to `debate-log.md`:
+
+      ```
+      ## The Verdict
+      Winner: [winner]
+      [your announcement]
+      ```
+
+      Make it celebratory and memorable. This is the trophy ceremony.
+
+  human DebateAgain
+    label: "Another debate?"
+    mode: yes_no
+
+  edges
+    Start -> ResetDebate
+    ResetDebate -> Welcome
+    Welcome -> GetTopic
+    GetTopic -> AssignPositions
+    AssignPositions -> ConfirmPositions
+    ConfirmPositions -> OpeningFanOut  label: "[Y] Fight!"  weight: 2
+    ConfirmPositions -> AssignPositions  label: "[N] Redo"  restart: true
+    OpeningFanOut -> ProOpening
+    OpeningFanOut -> ConOpening
+    OpeningFanOut -> ModerateOpening
+    ProOpening -> OpeningJoin  weight: 2
+    ConOpening -> OpeningJoin  weight: 2
+    ModerateOpening -> OpeningJoin  weight: 2
+    OpeningJoin -> RebuttalFanOut
+    RebuttalFanOut -> ProRebuttal
+    RebuttalFanOut -> ConRebuttal
+    RebuttalFanOut -> ModerateRebuttal
+    ProRebuttal -> RebuttalJoin  weight: 2
+    ConRebuttal -> RebuttalJoin  weight: 2
+    ModerateRebuttal -> RebuttalJoin  weight: 2
+    RebuttalJoin -> ClosingFanOut
+    ClosingFanOut -> ProClosing
+    ClosingFanOut -> ConClosing
+    ClosingFanOut -> ModerateClosing
+    ProClosing -> ClosingJoin  weight: 2
+    ConClosing -> ClosingJoin  weight: 2
+    ModerateClosing -> ClosingJoin  weight: 2
+    ClosingJoin -> Synthesize
+    Synthesize -> HumanJudge
+    HumanJudge -> Wrap
+    Wrap -> DebateAgain
+    DebateAgain -> ResetDebate  when ctx.outcome = success  label: "[Y] New debate!"  weight: 2  restart: true
+    DebateAgain -> Exit  label: "[N] Done"

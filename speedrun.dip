@@ -1,0 +1,332 @@
+workflow speedrun
+  goal: "Given a project with a spec or description already present, produce working software as fast as possible: single-pass plan, bulk implementation, test, ship. Fully headless, no human gates."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 2
+    fidelity: summary:high
+    max_restarts: 20
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  agent ReadSpec
+    label: "Read Spec"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ReadSpec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read EVERYTHING in the working directory. Absorb all context — specs, READMEs, existing code, config files, idea docs, TODOs, anything.
+
+      ## Process
+      1. List all files recursively: find . -type f | grep -v '.git/' | head -100
+      2. Read every file that could describe the project (*.md, README*, SPEC*, idea*, *.txt, etc.)
+      3. Read any existing source code to understand current state
+      4. Determine: What are we building? What already exists? What needs to be done?
+
+      ## Output
+      Write a concise summary to docs/plans/spec-digest.md:
+      - **What we're building:** (1-3 sentences)
+      - **What already exists:** (list files and their purpose)
+      - **What needs to be done:** (bullet list of deliverables)
+      - **Tech stack:** (language, framework, key deps — infer from existing files or spec)
+      - **Test framework:** (infer or choose appropriate one)
+
+      mkdir -p docs/plans before writing.
+      Be ruthlessly concise. This is a speedrun.
+
+  agent QuickPlan
+    label: "Quick Plan"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: QuickPlan
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Create a minimal implementation plan. Single pass. No audit loop. Speed is everything.
+
+      ## Context
+      Read docs/plans/spec-digest.md for the project summary.
+
+      ## Plan Format
+      Start with a one-line goal and tech stack summary, then list tasks as checkboxes:
+
+      - [ ] task-001: Title
+        **Files:** paths to create/modify
+        **Do:** Complete description of what to implement (include test + implementation)
+
+      ## Rules
+      - Group related work into BIG tasks — aim for 3-6 tasks total, not 20 tiny ones
+      - Each task should be a meaningful chunk: 'implement the core module with tests' not 'create file X'
+      - Include setup as task-001 (project init, deps, tooling)
+      - Include a final 'wire everything together and verify' task
+      - Every task includes both tests AND implementation — no separate test tasks
+      - Be specific: exact file paths, exact dep names, exact commands
+      - YAGNI: only what the spec asks for, nothing more
+
+      ## Output
+      Write to docs/plans/plan.md.
+      git add docs/plans/ && git commit -m 'docs(plan): add speedrun implementation plan'
+
+  agent SetupProject
+    label: "Setup Project"
+    goal_gate: true
+    max_retries: 3
+    retry_target: SetupProject
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Initialize the project based on the plan's tech stack.
+
+      ## Process
+      1. Read docs/plans/plan.md — extract tech stack
+      2. Ensure git repo exists:
+         git rev-parse --git-dir >/dev/null 2>&1 || git init
+         branch_name="speedrun/$(basename $(pwd))"
+         git checkout -b "$branch_name" 2>/dev/null || echo "Already on branch"
+      3. Initialize for the language:
+         - Python: uv init (if no pyproject.toml), uv add deps, uv add --dev test/lint deps
+         - Node: npm init -y, npm install deps
+         - Go: go mod init
+         - Rust: cargo init
+      4. Set up linter/formatter (ruff for Python, biome for Node, etc.)
+      5. Create directory structure per plan
+      6. Ensure .gitignore covers: .env, .tracker/, __pycache__/, node_modules/, target/, *.bak
+      7. Run test command to verify setup (even 0 tests is fine)
+      8. git add -A && git commit -m 'chore(setup): initialize project'
+
+      ## Success Criteria
+      - Project initializes cleanly
+      - Test framework runs
+      - All committed
+
+  tool VerifySetup
+    label: "Verify Setup"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      if [ -f pyproject.toml ]; then
+        uv run pytest --co -q 2>/dev/null || echo 'no-tests-yet'
+        printf 'ready-python'
+      elif [ -f package.json ]; then
+        npm test 2>/dev/null || echo 'no-tests-yet'
+        printf 'ready-node'
+      elif [ -f go.mod ]; then
+        go build ./... 2>&1 || true
+        printf 'ready-go'
+      elif [ -f Cargo.toml ]; then
+        cargo build 2>&1 || true
+        printf 'ready-rust'
+      else
+        printf 'ready-unknown'
+      fi
+
+  agent Implement
+    label: "Implement Everything"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: Implement
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Implement the ENTIRE project in one shot. All tasks from the plan. Tests and implementation together.
+
+      ## Process
+      1. Read docs/plans/plan.md for the full plan
+      2. For each task, in order:
+         a. Write tests first (TDD — test must fail before implementation)
+         b. Write implementation to make tests pass
+         c. Run tests to confirm green
+         d. Run linter/formatter and fix issues
+      3. After ALL tasks are done:
+         a. Run the full test suite — everything must pass
+         b. Run linter — no errors
+         c. Stage and commit per logical chunk:
+            git add <specific files> && git commit -m '<type>(<scope>): <description>'
+      4. Mark completed tasks in docs/plans/plan.md by changing [ ] to [x]
+
+      ## Rules
+      - Write REAL tests that verify behavior, not tautological assertions
+      - No mocks unless absolutely unavoidable (external APIs only)
+      - Every function body must be complete — never write 'implement the logic here'
+      - If a test fails unexpectedly, fix the implementation, not the test
+      - Keep files minimal — don't split into many files unless there's a clear reason
+      - YAGNI: implement exactly what the spec asks for
+
+      ## Self-Check Before Finishing
+      - All tests pass?
+      - Linter clean?
+      - All plan tasks marked [x]?
+      - Code is readable and maintainable?
+
+  tool RunTests
+    label: "Run Tests"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v 2>&1 | tail -40
+        uv run pytest -q 2>&1 | tail -5
+      elif [ -f package.json ]; then
+        npm test 2>&1 | tail -40
+      elif [ -f go.mod ]; then
+        go test ./... -v 2>&1 | tail -40
+      elif [ -f Cargo.toml ]; then
+        cargo test 2>&1 | tail -40
+      else
+        echo 'no-test-framework'
+      fi
+      echo '---'
+      if [ -f pyproject.toml ]; then
+        uv run pytest -q 2>&1 | grep -E '(passed|failed|error)' && printf 'DONE' || printf 'NO_RESULTS'
+      elif [ -f package.json ]; then
+        printf 'DONE'
+      elif [ -f go.mod ]; then
+        printf 'DONE'
+      elif [ -f Cargo.toml ]; then
+        printf 'DONE'
+      fi
+
+  tool CheckTests
+    label: "Check Test Results"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      if [ -f pyproject.toml ]; then
+        result=$(uv run pytest -q 2>&1 | tail -1)
+      elif [ -f package.json ]; then
+        result=$(npm test 2>&1 | tail -1)
+      elif [ -f go.mod ]; then
+        result=$(go test ./... 2>&1 | tail -1)
+      elif [ -f Cargo.toml ]; then
+        result=$(cargo test 2>&1 | tail -1)
+      else
+        result='unknown'
+      fi
+      if echo "$result" | grep -qiE '(failed|error|FAIL)'; then
+        printf 'tests_failing'
+      else
+        printf 'tests_passing'
+      fi
+
+  agent FixFailures
+    label: "Fix Failures"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FixFailures
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Tests are failing. Fix them. Fast.
+
+      ## Process
+      1. Run the full test suite and read the COMPLETE output — every line matters
+      2. Identify each failing test and the root cause
+      3. Fix the IMPLEMENTATION, not the tests (unless the test itself has a bug)
+      4. Run tests again to confirm all green
+      5. Run linter, fix any issues
+      6. git add <changed files> && git commit -m 'fix: resolve test failures'
+
+      ## Rules
+      - Read the actual error messages carefully
+      - Fix root causes, not symptoms
+      - Do NOT delete or skip failing tests
+      - Do NOT disable functionality to make tests pass
+      - If you truly cannot fix it after careful analysis, explain what's wrong in your output
+
+  agent FinalCheck
+    label: "Final Check"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FinalCheck
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Final sanity check before shipping. Quick and dirty.
+
+      ## Process
+      1. Run full test suite — must be green
+      2. Run linter — must be clean
+      3. Verify all plan tasks are marked [x] in docs/plans/plan.md
+      4. Check git status — working tree should be clean
+      5. Do a quick scan of the code: any obvious bugs, missing error handling, or incomplete stubs?
+
+      ## Output
+      If everything looks good, say SHIP_IT.
+      If there are issues, fix them, commit, and then say SHIP_IT.
+
+  agent Ship
+    label: Ship
+    goal_gate: true
+    max_retries: 3
+    retry_target: Ship
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Ship it. Final commits and summary.
+
+      ## Process
+      1. Ensure working tree is clean (commit any stragglers)
+      2. Write a brief summary to docs/plans/speedrun-summary.md:
+         - What was built
+         - How to run it
+         - How to test it
+         - Any known limitations
+      3. git add docs/plans/speedrun-summary.md && git commit -m 'docs: add speedrun summary'
+      4. Log the final state:
+         echo '--- Final git log ---'
+         git log --oneline | head -20
+         echo '--- Test results ---'
+         # run appropriate test command
+         echo '--- Done ---'
+
+      ## Output
+      Report what was built and that it's ready for use.
+
+  edges
+    Start -> ReadSpec  weight: 2
+    ReadSpec -> ReadSpec  when ctx.outcome = retry  restart: true
+    ReadSpec -> QuickPlan  weight: 2
+    QuickPlan -> QuickPlan  when ctx.outcome = retry  restart: true
+    QuickPlan -> SetupProject  weight: 2
+    SetupProject -> SetupProject  when ctx.outcome = retry  restart: true
+    SetupProject -> VerifySetup  weight: 2
+    VerifySetup -> Implement  weight: 2
+    Implement -> Implement  when ctx.outcome = retry  restart: true
+    Implement -> RunTests  weight: 2
+    RunTests -> CheckTests  weight: 2
+    CheckTests -> FixFailures  restart: true
+    CheckTests -> FinalCheck  weight: 2
+    FixFailures -> FixFailures  when ctx.outcome = retry  restart: true
+    FixFailures -> Exit  when ctx.outcome = fail  label: unfixable
+    FixFailures -> RunTests  weight: 2  restart: true
+    FinalCheck -> FinalCheck  when ctx.outcome = retry  restart: true
+    FinalCheck -> Ship  weight: 2
+    Ship -> Ship  when ctx.outcome = retry  restart: true
+    Ship -> Exit  weight: 2

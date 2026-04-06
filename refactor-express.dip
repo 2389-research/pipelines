@@ -1,0 +1,976 @@
+workflow refactor_express
+  goal: "Given a refactoring spec (extract module, migrate API, replace dependency, restructure), analyze the existing codebase, create an incremental refactoring plan where tests pass at every step, execute each step with TDD discipline, verify green after each step, and create a PR."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 2
+    fidelity: summary:high
+    max_restarts: 30
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  agent ReadRefactorSpec
+    label: "Read Refactoring Spec"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ReadRefactorSpec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior software architect starting an autonomous refactoring operation.
+
+      ## Task
+      Read and understand the refactoring specification. The spec describes WHAT to refactor in an existing, working codebase.
+
+      ## Process
+      1. List all files in the working directory recursively (ls -laR, focus on docs/, specs/, *.md, README*)
+      2. Look for refactoring specs in these locations (check all):
+         - docs/refactor-spec.md
+         - docs/plans/refactor-spec.md
+         - REFACTOR.md
+         - Any file with 'refactor' in the name
+         - The project README if it contains a refactoring section
+      3. Read the spec thoroughly. Extract:
+         - **Refactoring type:** extract module, migrate API, replace dependency, restructure, rename, etc.
+         - **Target scope:** which files/modules/packages are affected
+         - **Desired end state:** what the code should look like after refactoring
+         - **Constraints:** what must NOT change (public API stability, behavior preservation, etc.)
+         - **Success criteria:** how do we know the refactoring is complete
+      4. Write your understanding to docs/plans/refactor-understanding.md
+
+      ## Output
+      Write to docs/plans/refactor-understanding.md with sections:
+      - **Refactoring Type:** [classification]
+      - **Scope:** [affected files/modules]
+      - **Current State:** [how things work now]
+      - **Desired End State:** [how things should work after]
+      - **Constraints:** [what must be preserved]
+      - **Success Criteria:** [measurable completion criteria]
+      - **Risk Assessment:** [what could go wrong, ordered by likelihood]
+
+      If no refactoring spec is found, check if there are TODO comments, FIXME markers, or obvious code smells that suggest what needs refactoring. Document what you find.
+
+      outcome=success if spec understood and documented
+      outcome=fail if no spec found and no obvious refactoring target identified
+
+  agent AnalyzeCodebase
+    label: "Analyze Codebase"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: AnalyzeCodebase
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior software architect performing deep analysis of a codebase before refactoring.
+
+      ## Context
+      Read docs/plans/refactor-understanding.md for the refactoring spec.
+
+      ## Task
+      Analyze the existing codebase with surgical precision. You need to understand every dependency, every call site, every test that touches the code being refactored.
+
+      ## Process
+      1. Read the refactoring understanding doc to know what areas to focus on
+      2. Map the project structure:
+         - Language and build system (pyproject.toml, package.json, go.mod, Cargo.toml, etc.)
+         - Source directories and test directories
+         - Configuration files
+      3. For the files/modules in scope:
+         a. Read every source file in the affected scope — line by line
+         b. Map ALL imports/dependencies — who imports the target modules?
+         c. Map ALL call sites — who calls the functions/classes being refactored?
+         d. Map ALL test files that exercise the affected code
+         e. Identify public API boundaries — what is exported vs internal?
+      4. For each dependency:
+         - Is it a direct dependency or transitive?
+         - Will the refactoring break it?
+         - What needs to change to maintain compatibility?
+      5. Check for:
+         - Circular dependencies that complicate extraction
+         - Global state or singletons that resist restructuring
+         - Reflection or dynamic dispatch that grep won't catch
+         - Configuration files that reference affected paths/names
+
+      ## Output
+      Write to docs/plans/codebase-analysis.md with sections:
+      - **Project Structure:** language, build system, directory layout
+      - **Affected Files:** every file that will be modified, with line counts
+      - **Dependency Graph:** who depends on what (imports, calls, type references)
+      - **Call Site Inventory:** every place the affected code is called from
+      - **Test Inventory:** every test file and test function that exercises affected code
+      - **Public API Surface:** what external consumers depend on (must be preserved)
+      - **Hazards:** circular deps, global state, reflection, dynamic dispatch
+      - **Estimated Complexity:** simple (< 5 files), medium (5-15 files), complex (15+ files)
+
+  tool SnapshotTests
+    label: "Snapshot Test Baseline"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p docs/plans
+      echo '=== Capturing test baseline ===' > docs/plans/test-baseline.txt
+      if [ -f pyproject.toml ]; then
+        echo 'build_system=python' >> docs/plans/test-baseline.txt
+        uv run pytest -v 2>&1 | tee -a docs/plans/test-baseline.txt
+        RESULT=$?
+      elif [ -f package.json ]; then
+        echo 'build_system=node' >> docs/plans/test-baseline.txt
+        npm test 2>&1 | tee -a docs/plans/test-baseline.txt
+        RESULT=$?
+      elif [ -f go.mod ]; then
+        echo 'build_system=go' >> docs/plans/test-baseline.txt
+        go test -v ./... 2>&1 | tee -a docs/plans/test-baseline.txt
+        RESULT=$?
+      elif [ -f Cargo.toml ]; then
+        echo 'build_system=rust' >> docs/plans/test-baseline.txt
+        cargo test 2>&1 | tee -a docs/plans/test-baseline.txt
+        RESULT=$?
+      else
+        echo 'build_system=unknown' >> docs/plans/test-baseline.txt
+        RESULT=1
+      fi
+      if [ "$RESULT" -eq 0 ]; then
+        printf 'baseline_green'
+      else
+        printf 'baseline_red'
+      fi
+
+  agent WriteCharacterizationTests
+    label: "Write Characterization Tests"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteCharacterizationTests
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior engineer writing characterization tests to lock down existing behavior before refactoring.
+
+      ## Context
+      1. Read docs/plans/refactor-understanding.md for what is being refactored
+      2. Read docs/plans/codebase-analysis.md for the dependency and call site maps
+      3. Read docs/plans/test-baseline.txt for the current test state
+
+      ## Task
+      The existing tests are either missing or failing. Before we can safely refactor, we need tests that capture the CURRENT behavior of the code being refactored  --  warts and all.
+
+      ## Process
+      1. For each public function/method/class in the affected scope:
+         a. Read the implementation to understand what it actually does
+         b. Write a test that captures that exact behavior
+         c. Include edge cases you discover by reading the code
+         d. Do NOT fix bugs — capture current behavior, even if it seems wrong
+      2. For each call site identified in the analysis:
+         a. Write an integration test that exercises the call path
+         b. Capture the exact output/side effects
+      3. Run the full test suite — ALL tests must pass
+      4. If any test fails, it means your characterization is wrong — fix the TEST, not the code
+
+      ## Rules
+      - These are CHARACTERIZATION tests — they document what the code DOES, not what it SHOULD do
+      - Use real code, real data — no mocks
+      - Each test should have a clear name: test_<function>_<scenario>_<expected_behavior>
+      - Add tests to existing test files if they exist; create new ones only if none exist
+      - Commit: git add <specific files> && git commit -m 'test(refactor): add characterization tests for refactoring scope'
+
+      ## VERIFICATION GATE
+      Run the full test suite. Read output. Check exit codes. Count failures. THEN claim success.
+      Do NOT say 'should work' or 'probably passes'.
+
+      ## Success Criteria
+      - Every public function in the refactoring scope has at least one characterization test
+      - All tests pass (exit code 0)
+      - Committed with conventional commit message
+
+  tool VerifyCharacterization
+    label: "Verify Characterization Tests"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v 2>&1
+        RESULT=$?
+      elif [ -f package.json ]; then
+        npm test 2>&1
+        RESULT=$?
+      elif [ -f go.mod ]; then
+        go test -v ./... 2>&1
+        RESULT=$?
+      elif [ -f Cargo.toml ]; then
+        cargo test 2>&1
+        RESULT=$?
+      else
+        RESULT=1
+      fi
+      if [ "$RESULT" -eq 0 ]; then
+        printf 'tests_green'
+      else
+        printf 'tests_red'
+      fi
+
+  agent PlanRefactor
+    label: "Plan Refactoring Steps"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: PlanRefactor
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior architect planning an incremental refactoring where tests stay green at EVERY step.
+
+      ## Context
+      1. Read docs/plans/refactor-understanding.md for the refactoring goal
+      2. Read docs/plans/codebase-analysis.md for the dependency and call site maps
+      3. Read docs/plans/test-baseline.txt for the current test state
+      4. Read the actual source files in the affected scope
+
+      ## Task
+      Create a step-by-step refactoring plan where EACH step is a small, safe transformation that keeps all tests passing.
+
+      ## CRITICAL PRINCIPLE: Tests green at every step
+      Unlike building from scratch, refactoring starts with WORKING code. The cardinal sin of refactoring is breaking something and not knowing when it broke. Every step must be independently verifiable.
+
+      ## Step Types (use these building blocks)
+      - **RENAME:** rename a file, class, function, variable (update all references)
+      - **EXTRACT:** extract code into a new function, class, or module
+      - **MOVE:** move code from one file/module to another
+      - **INLINE:** inline a function or variable (opposite of extract)
+      - **INTRODUCE_ABSTRACTION:** add an interface/protocol/base class
+      - **REPLACE_DEPENDENCY:** swap one dependency for another
+      - **ADD_ADAPTER:** add an adapter layer for API migration
+      - **DEPRECATE_AND_REDIRECT:** mark old path as deprecated, redirect to new
+      - **DELETE_DEAD_CODE:** remove unused code after migration is complete
+
+      ## Plan Format (MANDATORY)
+      Start with:
+      - **Goal:** one sentence
+      - **Refactoring type:** [from understanding doc]
+      - **Total steps:** N
+      - **Estimated risk:** low/medium/high
+
+      Then for each step:
+
+      - [ ] step-001: Short descriptive title
+        **Type:** [RENAME|EXTRACT|MOVE|INLINE|etc.]
+        **Files affected:** exact paths
+        **What changes:** precise description of the transformation
+        **Why this order:** why this step must come before/after others
+        **Verification:** exact test command to run after this step
+        **Rollback:** exact git command to undo if tests fail
+        **Commit:** exact git command with conventional commit message
+
+      - [ ] step-002: Next step
+        ...
+
+      ## IRON RULES
+      - Each step MUST be independently committable with green tests
+      - Steps MUST be ordered so that each one builds on the previous
+      - NEVER combine multiple transformations in one step (e.g., don't rename AND move simultaneously)
+      - Include a rollback command for every step (usually git checkout -- <files> or git revert HEAD)
+      - The LAST step should clean up: remove deprecated paths, update docs, delete temporary adapters
+
+      ## Output
+      Write to docs/plans/refactor-plan.md
+      Commit: git add docs/plans/ && git commit -m 'docs(refactor): add incremental refactoring plan'
+
+  agent ValidatePlan
+    label: "Validate Refactor Plan"
+    goal_gate: true
+    max_retries: 3
+    retry_target: PlanRefactor
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a meticulous refactoring plan auditor. Your job is to find gaps and ordering errors.
+
+      ## Context
+      1. Read docs/plans/refactor-plan.md for the refactoring plan
+      2. Read docs/plans/refactor-understanding.md for the original spec
+      3. Read docs/plans/codebase-analysis.md for the dependency graph
+
+      ## Task
+      Validate the refactoring plan for correctness, completeness, and safety.
+
+      ## Checks
+      1. **Completeness:** Does the plan achieve the desired end state from the spec?
+         - Every constraint satisfied?
+         - Every success criterion addressed?
+         - Every affected file accounted for?
+
+      2. **Step ordering:** Are dependencies between steps correct?
+         - Can each step compile/run independently after being applied?
+         - Are renames done before moves (to avoid confusion)?
+         - Are new paths created before old paths are removed?
+         - Is there a step that creates an adapter before removing the old API?
+
+      3. **Test safety:** Does every step have a verification command?
+         - Will the verification actually catch regressions?
+         - Are integration tests included, not just unit tests?
+
+      4. **Rollback safety:** Can every step be independently reverted?
+         - Is the rollback command correct?
+         - Will reverting step N break step N-1?
+
+      5. **Missing steps:**
+         - Import updates in dependent files?
+         - Configuration file updates?
+         - Documentation updates?
+         - Type definition updates?
+
+      ## Output
+      Write results to docs/plans/refactor-plan-audit.txt:
+      - If all checks pass: write APPROVED
+      - If issues found: write structured list of issues with FIX suggestions
+
+      End with APPROVED or ISSUES_FOUND.
+
+      outcome=success if APPROVED
+      outcome=fail if ISSUES_FOUND
+
+  tool ValidatePlanFormat
+    label: "Validate Plan Format"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      PLAN='docs/plans/refactor-plan.md'
+      mkdir -p .tracker
+      COUNTER='.tracker/plan_validate_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 5 ]; then
+        printf 'fail_retries_exhausted'
+        exit 0
+      fi
+      if [ ! -s "$PLAN" ]; then
+        printf 'fail_no_plan'
+        exit 0
+      fi
+      step_count=$(grep -c '^- \[ \] step-[0-9]\+:' "$PLAN" || true)
+      if [ "$step_count" -eq 0 ]; then
+        printf 'fail_no_steps'
+        exit 0
+      fi
+      if [ "$step_count" -lt 2 ]; then
+        printf 'fail_too_few_steps'
+        exit 0
+      fi
+      printf 'format_ok'
+
+  tool PickNextStep
+    label: "Pick Next Step"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      PLAN='docs/plans/refactor-plan.md'
+      total=$(grep -c '^- \[.\] step-[0-9]' "$PLAN" 2>/dev/null || true)
+      if [ "$total" -eq 0 ]; then
+        printf 'no_steps_found'
+        exit 0
+      fi
+      target=$(grep -oE 'step-[0-9]+' "$PLAN" | while read -r sid; do
+        if grep -q "^- \[ \] $sid" "$PLAN"; then
+          echo "$sid"
+          break
+        fi
+      done)
+      if [ -z "$target" ]; then
+        printf 'all_complete'
+        exit 0
+      fi
+      printf '%s' "$target" > docs/plans/current_step_id.txt
+      completed=$(grep -c '^- \[x\] step-[0-9]' "$PLAN" 2>/dev/null || true)
+      printf 'next_step-%s (%s/%s done)' "$target" "$completed" "$total"
+
+  tool CreateSavepoint
+    label: "Create Savepoint"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      STEP=$(cat docs/plans/current_step_id.txt)
+      SHA=$(git rev-parse HEAD)
+      printf '%s' "$SHA" > ".tracker/savepoint-${STEP}"
+      printf 'savepoint-%s-at-%s' "$STEP" "$SHA"
+
+  agent ExecuteStep
+    label: "Execute Refactoring Step"
+    fidelity: full
+    goal_gate: true
+    max_retries: 2
+    retry_target: ExecuteStep
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a disciplined refactoring engineer executing ONE incremental step of a refactoring plan.
+
+      ## CRITICAL: This is REFACTORING, not building from scratch
+      - The code already works. Your job is to transform it safely.
+      - Every change must preserve existing behavior.
+      - If you are unsure whether a change preserves behavior, write a test first.
+
+      ## Context
+      1. Read docs/plans/current_step_id.txt for the step ID
+      2. Read docs/plans/refactor-plan.md — find the step matching the ID
+      3. Read the step's complete specification: type, files affected, what changes, verification
+
+      ## Process
+      1. Read the step specification completely
+      2. Read ALL files that will be affected by this step
+      3. Read ALL test files that exercise the affected code
+      4. Apply the transformation described in the step:
+         - For RENAME: update the name everywhere — source, tests, imports, config, docs
+         - For EXTRACT: copy code to new location, update old location to delegate, update imports
+         - For MOVE: update imports in ALL dependent files (check the dependency graph in codebase-analysis.md)
+         - For REPLACE_DEPENDENCY: add new dep, update call sites, remove old dep
+         - For other types: follow the step description precisely
+      5. After applying the change:
+         a. Run the FULL test suite (not just affected tests) — the exact command from the step's verification
+         b. If tests PASS: commit with the exact commit message from the step
+         c. If tests FAIL: analyze the failure, fix it, re-run tests
+         d. If you cannot fix within 3 attempts: DO NOT commit. Report failure.
+
+      ## IRON RULES
+      - Apply EXACTLY one transformation per step. Do not combine steps.
+      - Do NOT refactor or 'improve' code beyond what the step specifies
+      - Do NOT add features or fix bugs unrelated to the refactoring step
+      - Do NOT change test assertions — if a test fails after your change, you broke behavior
+      - EXCEPTION: if the test is testing implementation details (e.g., import paths) rather than behavior, update it
+
+      ## Commit Discipline
+      - Stage only files you modified: git add <specific files>
+      - Use the exact commit message from the step specification
+      - Never stage .env, .tracker/, or infrastructure files
+
+      ## VERIFICATION GATE
+      Before claiming success, you MUST:
+      - Run the full test suite. Read output. Check exit codes. Count failures.
+      - Do NOT say 'should work' or 'probably passes'.
+      - If you have not run the tests in THIS session, you cannot claim they pass.
+
+      ## Success Criteria
+      - Step transformation applied correctly
+      - ALL tests pass (not just the ones you think are relevant)
+      - Committed with conventional commit message
+      - No unrelated changes
+
+  tool VerifyGreen
+    label: "Verify Tests Green"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      STEP=$(cat docs/plans/current_step_id.txt 2>/dev/null || echo 'unknown')
+      echo "=== Verifying tests green after $STEP ==="
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v 2>&1
+        RESULT=$?
+      elif [ -f package.json ]; then
+        npm test 2>&1
+        RESULT=$?
+      elif [ -f go.mod ]; then
+        go test -v ./... 2>&1
+        RESULT=$?
+      elif [ -f Cargo.toml ]; then
+        cargo test 2>&1
+        RESULT=$?
+      else
+        echo 'Unknown build system'
+        RESULT=1
+      fi
+      if [ "$RESULT" -eq 0 ]; then
+        printf 'green'
+      else
+        printf 'red'
+      fi
+
+  tool RollbackStep
+    label: "Rollback to Savepoint"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      STEP=$(cat docs/plans/current_step_id.txt 2>/dev/null || echo 'unknown')
+      SAVEPOINT_FILE=".tracker/savepoint-${STEP}"
+      if [ -f "$SAVEPOINT_FILE" ]; then
+        SHA=$(cat "$SAVEPOINT_FILE")
+        git reset --hard "$SHA"
+        printf 'rolled_back_to-%s' "$SHA"
+      else
+        git reset --hard HEAD~1 2>/dev/null || printf 'no_savepoint'
+        printf 'rolled_back_one_commit'
+      fi
+
+  tool CheckRollbackBudget
+    label: "Check Rollback Budget"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      STEP=$(cat docs/plans/current_step_id.txt 2>/dev/null || echo 'unknown')
+      COUNTER=".tracker/rollback_count_${STEP}"
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 3 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  tool MarkStepDone
+    label: "Mark Step Complete"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      target=$(cat docs/plans/current_step_id.txt)
+      sed -i.bak "s/^- \[ \] ${target}/- [x] ${target}/" docs/plans/refactor-plan.md
+      rm -f docs/plans/refactor-plan.md.bak
+      printf 'completed-%s' "$target"
+
+  agent DebugRefactorFailure
+    label: "Debug Refactoring Failure"
+    fidelity: full
+    goal_gate: true
+    max_retries: 2
+    retry_target: ReplanStep
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior debugger analyzing why a refactoring step broke tests.
+
+      ## Context
+      The step in docs/plans/current_step_id.txt failed to keep tests green after multiple attempts.
+
+      ## Phase 1: Understand What Broke
+      1. Read the current step spec from docs/plans/refactor-plan.md
+      2. Run the test suite and capture the EXACT failure output
+      3. Read the failing test(s) — what behavior are they testing?
+      4. Read the code changes: git diff HEAD (or git diff against savepoint)
+      5. Identify: is this a missed reference? A behavior change? An ordering issue?
+
+      ## Phase 2: Root Cause Analysis
+      1. Compare the current code to what it looked like before the step:
+         - git show <savepoint SHA>:<file> for the original version
+         - Read the savepoint SHA from .tracker/savepoint-<step_id>
+      2. Map every reference to the changed code — did you miss updating one?
+      3. Check for:
+         - Dynamic dispatch or reflection that grep won't catch
+         - Configuration files that reference old paths
+         - Import cycles created by the restructuring
+         - Test fixtures that hardcode paths or names
+
+      ## Phase 3: Fix
+      1. If the fix is straightforward (missed a reference, wrong import path):
+         - Apply the fix
+         - Run all tests to verify
+         - Commit: git add <files> && git commit -m 'fix(refactor): <description>'
+      2. If the step's approach is fundamentally flawed:
+         - Report why the approach won't work
+         - outcome=fail to trigger replanning
+
+      ## VERIFICATION GATE
+      Run the full test suite. Read output. Check exit codes. THEN claim.
+
+      ## Output
+      outcome=success if root cause found and fixed with all tests green
+      outcome=fail if the step needs to be replanned
+
+  agent ReplanStep
+    label: "Replan Step"
+    goal_gate: true
+    max_retries: 1
+    retry_target: AutoRecover
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are replanning a failed refactoring step. The original approach didn't work.
+
+      ## Context
+      1. Read docs/plans/current_step_id.txt for the failed step
+      2. Read docs/plans/refactor-plan.md for the original plan
+      3. Read docs/plans/codebase-analysis.md for the dependency graph
+      4. Read git log to see what was attempted
+
+      ## Task
+      The current step failed because the transformation was unsafe or incomplete. Rethink the approach.
+
+      ## Options (consider in order)
+      1. **Split the step:** Break it into smaller, safer sub-steps
+         - E.g., if 'extract module' failed, split into: create empty module, move one function at a time, update imports incrementally
+      2. **Add a bridge step:** Introduce a compatibility shim before the main change
+         - E.g., create an alias/re-export at the old location before moving code
+      3. **Reorder steps:** Maybe a prerequisite step is missing
+         - E.g., need to break a circular dependency before extracting a module
+      4. **Simplify the goal:** If the refactoring is too risky, reduce scope
+
+      ## Process
+      1. Analyze why the step failed
+      2. Choose a recovery strategy from above
+      3. Update docs/plans/refactor-plan.md:
+         - Replace the failed step with new sub-steps (step-NNN-a, step-NNN-b, etc.)
+         - OR insert prerequisite steps before it
+         - Reset the failed step's checkbox to unchecked
+      4. Commit: git add docs/plans/ && git commit -m 'docs(refactor): replan step after failure'
+
+      ## Output
+      outcome=success if step successfully replanned
+      outcome=fail if the refactoring goal is fundamentally unachievable
+
+  agent AutoRecover
+    label: "Auto Recover"
+    goal_gate: true
+    max_retries: 3
+    retry_target: AutoRecover
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are an autonomous recovery agent. The refactoring pipeline is stuck and there is no human to help.
+
+      ## Context
+      Read all available context — error messages, failed steps, debug output, plan state.
+
+      ## Process
+      1. Read docs/plans/current_step_id.txt (if it exists) for the stuck step
+      2. Read docs/plans/refactor-plan.md for the current plan state
+      3. Read git log --oneline -10 for recent history
+      4. Identify: Is this a step-level issue or a fundamental problem with the refactoring plan?
+
+      ## Recovery Strategies (try in order)
+      1. **Rollback and simplify:** Revert to the last green commit and try a simpler transformation
+      2. **Skip and compensate:** Mark the step as skipped, add a note, adjust remaining steps
+      3. **Reduce scope:** Drop the most complex part of the refactoring and deliver partial progress
+      4. **Emergency stop:** If the codebase is in a bad state, revert ALL refactoring and document learnings
+
+      ## Emergency Revert
+      If you choose emergency stop:
+      - Find the commit BEFORE any refactoring: git log --oneline | grep -v refactor | head -1
+      - Or use: git log --oneline --all to find the original state
+      - git reset --hard <safe SHA>
+      - Document what happened in docs/plans/refactor-failure.md
+
+      ## Output
+      outcome=success if recovery succeeded and pipeline can continue
+      outcome=fail if the problem is fundamental and cannot be self-recovered
+
+  tool ValidateFinalBuild
+    label: "Validate Final Build"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      echo '=== Final build validation ==='
+      if [ -f pyproject.toml ]; then
+        echo '--- pytest ---'
+        uv run pytest -v 2>&1 || { echo 'PYTEST_FAIL'; exit 1; }
+        echo '--- ruff ---'
+        uv run ruff check . 2>&1 || { echo 'RUFF_FAIL'; exit 1; }
+        printf 'validation_pass'
+      elif [ -f package.json ]; then
+        echo '--- npm test ---'
+        npm test 2>&1 || { echo 'TEST_FAIL'; exit 1; }
+        echo '--- lint ---'
+        npx eslint . 2>&1 || npx biome check . 2>&1 || echo 'lint-skipped'
+        printf 'validation_pass'
+      elif [ -f go.mod ]; then
+        echo '--- go build ---'
+        go build ./... 2>&1 || { echo 'BUILD_FAIL'; exit 1; }
+        echo '--- go test ---'
+        go test -v ./... 2>&1 || { echo 'TEST_FAIL'; exit 1; }
+        echo '--- go vet ---'
+        go vet ./... 2>&1 || echo 'vet-skipped'
+        printf 'validation_pass'
+      elif [ -f Cargo.toml ]; then
+        echo '--- cargo build ---'
+        cargo build 2>&1 || { echo 'BUILD_FAIL'; exit 1; }
+        echo '--- cargo test ---'
+        cargo test 2>&1 || { echo 'TEST_FAIL'; exit 1; }
+        echo '--- cargo clippy ---'
+        cargo clippy 2>&1 || echo 'clippy-skipped'
+        printf 'validation_pass'
+      else
+        echo 'Unknown build system'
+        printf 'validation_unknown'
+      fi
+
+  agent FinalReview
+    label: "Final Refactoring Review"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: FinalReview
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior code reviewer performing the final review of a completed refactoring.
+
+      ## Pre-check (MANDATORY)
+      Before reviewing, verify the refactoring actually happened:
+      - Read docs/plans/refactor-plan.md — are all steps marked complete?
+      - Read docs/plans/refactor-understanding.md — does the current code match the desired end state?
+      If the refactoring is incomplete, immediately return FAIL with details.
+
+      ## Context
+      1. Read docs/plans/refactor-understanding.md for the original spec and success criteria
+      2. Read docs/plans/refactor-plan.md to see all completed steps
+      3. Run: git log --oneline to see all refactoring commits
+      4. Review the full diff of the refactoring:
+         - If on a branch: git diff main...HEAD
+         - Otherwise: compare to the first refactoring commit
+
+      ## Review Dimensions
+      1. **Spec Compliance:** Does the end state match what was requested? Every success criterion met?
+      2. **Behavior Preservation:** Is the external behavior identical? No subtle changes in semantics?
+      3. **Import Health:** Are all imports clean? No circular dependencies introduced? No unused imports?
+      4. **Test Health:** Do all original tests still pass? Were tests updated only for structural changes (import paths), not behavioral changes?
+      5. **Dead Code:** Was all deprecated/temporary code cleaned up? No leftover adapters, shims, or old paths?
+      6. **Documentation:** Were docs, comments, and READMEs updated to reflect the new structure?
+      7. **Naming Consistency:** Do new names follow existing conventions? No mismatches?
+
+      ## VERIFICATION GATE
+      Run the full test suite. Read output. Check exit codes. THEN make claims.
+      Forbidden words: 'should', 'probably', 'seems to'.
+
+      ## Output
+      For each issue found: severity (Critical/Important/Suggestion), file:line, description, fix guidance.
+
+      Return verdict:
+      outcome=success — refactoring complete and clean
+      outcome=retry — minor issues that need fixing (list with exact file:line references)
+      outcome=fail — fundamental problems, refactoring may need to be reverted
+
+  tool CheckReworkBudget
+    label: "Check Rework Budget"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      COUNTER='.tracker/rework_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 2 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  agent FixReviewFindings
+    label: "Fix Review Findings"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FixReviewFindings
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a disciplined engineer fixing issues found during the final refactoring review.
+
+      ## Context
+      The final review found issues that need fixing before the refactoring can ship.
+      Read the review feedback from the previous node's context carefully.
+
+      ## Process
+      1. Read the review findings — prioritize Critical, then Important, skip Suggestions
+      2. For each finding:
+         a. Verify the finding is valid — check the code yourself
+         b. If valid: apply the fix
+         c. If invalid: document why it's wrong (reviewers make mistakes too)
+      3. After all fixes:
+         a. Run the FULL test suite — all tests must pass
+         b. Verify no unrelated changes were made
+      4. Commit: git add <specific files> && git commit -m 'fix(refactor): address review findings'
+
+      ## VERIFICATION GATE
+      Run the full test suite. Read output. Check exit codes. THEN claim.
+
+      ## Success Criteria
+      - All Critical and Important findings addressed
+      - All tests pass
+      - No unrelated changes
+      - Committed
+
+  agent FailureSummary
+    label: "Failure Summary"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FailureSummary
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The refactoring pipeline failed. Summarize what happened and provide a recovery path.
+
+      ## Process
+      1. Read docs/plans/refactor-plan.md — how many steps completed vs total?
+      2. Read docs/plans/refactor-understanding.md — what was the goal?
+      3. Read git log --oneline -20 — what was accomplished?
+      4. Identify the failure point and root cause
+
+      ## Output
+      Write to docs/plans/refactor-failure.md:
+      - **Goal:** what the refactoring was trying to achieve
+      - **Progress:** N of M steps completed
+      - **Failure Point:** which step failed and why
+      - **Root Cause:** why the refactoring approach didn't work
+      - **Code State:** is the codebase in a clean state? Any partial changes that need reverting?
+      - **Recovery Options:** concrete next steps for a human to continue
+      - **Lessons Learned:** what would you do differently next time
+
+      Commit: git add docs/plans/refactor-failure.md && git commit -m 'docs(refactor): add failure summary'
+
+  tool VerifyTestsFinal
+    label: "Final Test Verification"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      echo '=== Final verification before PR ==='
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
+      elif [ -f package.json ]; then
+        npm test 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
+      elif [ -f go.mod ]; then
+        go test -v ./... 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
+      elif [ -f Cargo.toml ]; then
+        cargo test 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
+      fi
+      printf 'final_verification_pass'
+
+  agent CreatePR
+    label: "Create Pull Request"
+    goal_gate: true
+    max_retries: 3
+    retry_target: CreatePR
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Finalize the refactoring and create a PR.
+
+      ## Process
+      1. Ensure we're on a feature branch:
+         git rev-parse --git-dir >/dev/null 2>&1 || { echo 'Not a git repo'; exit 1; }
+         BRANCH=$(git rev-parse --abbrev-ref HEAD)
+         if [ "$BRANCH" = 'main' ] || [ "$BRANCH" = 'master' ]; then
+           branch_name="refactor/$(basename $(pwd))-$(date +%Y%m%d)"
+           git checkout -b "$branch_name"
+         fi
+
+      2. Read docs/plans/refactor-understanding.md for the refactoring description
+      3. Read docs/plans/refactor-plan.md for the completed steps
+      4. Count commits: git log --oneline main..HEAD (or master..HEAD)
+
+      5. If no remote is configured (git remote | head -1 is empty):
+         - Log: 'No remote configured — skipping PR creation'
+         - Report: branch name, commit count, refactoring summary
+         - outcome=success (refactoring is complete, just no remote to push to)
+
+      6. If remote exists:
+         a. git push -u origin HEAD
+         b. Generate PR title: 'refactor: <concise description>' (under 70 chars)
+         c. Generate PR body from:
+            - Refactoring goal (from understanding doc)
+            - Steps completed (from plan)
+            - Test results
+            - Key decisions made during the refactoring
+         d. Create PR: gh pr create --title '<title>' --body '<body>'
+         e. Report the PR URL
+
+      ## PR Body Template
+      ### Refactoring Summary
+      <goal from understanding doc>
+
+      ### Changes
+      <list of completed steps>
+
+      ### Test Results
+      <latest test output summary>
+
+      ### Notes
+      <any deviations from the original plan and why>
+
+  edges
+    Start -> ReadRefactorSpec
+    ReadRefactorSpec -> AnalyzeCodebase  label: "spec understood"  weight: 2
+    ReadRefactorSpec -> FailureSummary  label: "no spec found"
+    AnalyzeCodebase -> SnapshotTests
+    SnapshotTests -> PlanRefactor  when ctx.tool_stdout = baseline_green  label: "tests green  --  baseline captured"  weight: 2
+    SnapshotTests -> WriteCharacterizationTests  label: "tests red or missing"
+    WriteCharacterizationTests -> VerifyCharacterization
+    VerifyCharacterization -> PlanRefactor  when ctx.tool_stdout = tests_green  label: "characterization tests green"  weight: 2
+    VerifyCharacterization -> WriteCharacterizationTests  label: "still red  --  fix tests"  restart: true
+    PlanRefactor -> ValidatePlanFormat
+    ValidatePlanFormat -> ValidatePlan  label: "format ok"  weight: 2
+    ValidatePlanFormat -> AutoRecover  when ctx.tool_stdout = fail_retries_exhausted  label: "plan loop exhausted"
+    ValidatePlanFormat -> PlanRefactor  label: "format fail"  restart: true
+    ValidatePlan -> PickNextStep  when ctx.outcome = success  label: "plan approved"  weight: 2
+    ValidatePlan -> PlanRefactor  label: "issues found  --  revise plan"  restart: true
+    PickNextStep -> CreateSavepoint  label: "has step"  weight: 2
+    PickNextStep -> ValidateFinalBuild  label: "all steps done"
+    PickNextStep -> AutoRecover  label: "no steps in plan"
+    CreateSavepoint -> ExecuteStep
+    ExecuteStep -> VerifyGreen
+    VerifyGreen -> MarkStepDone  label: "tests green"  weight: 2
+    VerifyGreen -> RollbackStep  label: "tests red  --  rollback"
+    RollbackStep -> CheckRollbackBudget
+    CheckRollbackBudget -> ExecuteStep  when ctx.tool_stdout = budget_ok  label: "retry step"  weight: 2  restart: true
+    CheckRollbackBudget -> DebugRefactorFailure  label: "too many rollbacks"
+    MarkStepDone -> PickNextStep  restart: true
+    ExecuteStep -> DebugRefactorFailure  when ctx.outcome = fail  label: "retries exhausted"
+    DebugRefactorFailure -> ExecuteStep  when ctx.outcome = success  label: "fixed  --  re-execute"  weight: 2  restart: true
+    DebugRefactorFailure -> ReplanStep  label: "can't fix"
+    ReplanStep -> PickNextStep  when ctx.outcome = success  label: replanned  weight: 2  restart: true
+    ReplanStep -> AutoRecover  label: stuck
+    AutoRecover -> PickNextStep  when ctx.outcome = success  label: recovered  weight: 2  restart: true
+    AutoRecover -> FailureSummary  label: unrecoverable
+    ValidateFinalBuild -> FinalReview  label: "build pass"  weight: 2
+    ValidateFinalBuild -> CheckReworkBudget  label: "build fail"
+    FinalReview -> VerifyTestsFinal  label: "review pass"  weight: 2
+    FinalReview -> FixReviewFindings  label: "needs fixes"
+    FinalReview -> FailureSummary  label: "fundamental problems"
+    FixReviewFindings -> FinalReview  when ctx.outcome = success  label: "fixes applied"  weight: 2  restart: true
+    FixReviewFindings -> CheckReworkBudget  label: "fix failed"
+    CheckReworkBudget -> FixReviewFindings  label: "rework ok"  weight: 2  restart: true
+    CheckReworkBudget -> FailureSummary  label: "rework budget exhausted"
+    FailureSummary -> Exit
+    VerifyTestsFinal -> CreatePR  label: "tests pass"  weight: 2
+    VerifyTestsFinal -> CheckReworkBudget  label: "tests fail"
+    CreatePR -> Exit  label: shipped  weight: 2
+    CreatePR -> FailureSummary  label: "PR failed"

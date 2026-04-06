@@ -1,0 +1,668 @@
+workflow bug_hunter
+  goal: "Given a bug report (issue URL, description, or error log), autonomously reproduce the bug, diagnose root cause, fix it with TDD, verify the fix, and create a pull request — running fully headless with no human intervention."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 2
+    fidelity: summary:high
+    max_restarts: 20
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  agent ReadBugReport
+    label: "Read Bug Report"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ReadBugReport
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior software engineer triaging a bug report.
+
+      ## Task
+      Read and understand the bug report. The report may come from multiple sources:
+      - An issue URL (GitHub, GitLab, Jira, etc.) referenced in files
+      - A description file (bug.md, issue.md, ISSUE, BUG_REPORT, etc.)
+      - Error logs in the working directory
+      - The pipeline goal or context from prior nodes
+
+      ## Process
+      1. List all files in the working directory: ls -la
+      2. Look for bug report files: any *.md, *.txt, ISSUE*, BUG*, ERROR*, or log files
+      3. Read every file that could describe the bug
+      4. If a GitHub issue URL is found, use gh issue view to fetch the full issue
+      5. Read the project README if it exists for context on the project
+
+      ## Output
+      Write a structured bug report summary to docs/bug-hunt/bug-report.md:
+      - **Bug ID:** (issue number or generated ID)
+      - **Summary:** one-sentence description
+      - **Reported Symptoms:** what the reporter observed
+      - **Expected Behavior:** what should happen instead
+      - **Reproduction Steps:** how to trigger the bug (if provided)
+      - **Error Messages:** exact error text, stack traces, log lines
+      - **Affected Components:** which files/modules are likely involved (best guess)
+      - **Severity Assessment:** critical / high / medium / low
+      - **Missing Information:** what we still need to figure out
+
+      Create the docs/bug-hunt/ directory if it does not exist.
+
+  agent ExploreCodebase
+    label: "Explore Codebase"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ExploreCodebase
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior software engineer exploring an unfamiliar codebase to understand its architecture before hunting a bug.
+
+      ## Context
+      Read docs/bug-hunt/bug-report.md for the bug being investigated.
+
+      ## Task
+      Build a mental model of the codebase architecture, focusing on areas relevant to the bug.
+
+      ## Process
+      1. Examine the project structure:
+         - ls -la (top level)
+         - find . -type f -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.go' -o -name '*.rs' | head -100
+         - Read build files: pyproject.toml, package.json, go.mod, Cargo.toml, Makefile, etc.
+      2. Understand the architecture:
+         - Read main entry points
+         - Identify module boundaries and key abstractions
+         - Trace the data flow through the components mentioned in the bug report
+      3. Find the code most likely related to the bug:
+         - Search for functions, classes, or variables mentioned in error messages
+         - grep -r for keywords from the bug report
+         - Read the files identified as affected components
+      4. Understand the test infrastructure:
+         - What test framework is used?
+         - Where are tests located?
+         - How are tests run? (exact command)
+         - Are there existing tests for the affected code?
+      5. Check git history for the affected area:
+         - git log --oneline -20 -- <affected files>
+         - Look for recent changes that may have introduced the bug
+
+      ## Output
+      Write your findings to docs/bug-hunt/codebase-analysis.md:
+      - **Project Type:** language, framework, build system
+      - **Test Command:** exact command to run tests
+      - **Architecture Overview:** key modules and their responsibilities (3-5 sentences)
+      - **Affected Code Paths:** specific files and functions related to the bug
+      - **Existing Test Coverage:** what tests exist for the affected code
+      - **Recent Changes:** any suspicious recent commits in the affected area
+      - **Reproduction Strategy:** how you plan to reproduce the bug based on what you've learned
+
+  agent ReproduceBug
+    label: "Reproduce Bug (Write Failing Test)"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: ReproduceBug
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior software engineer writing a failing test that proves the bug exists.
+
+      ## Context
+      1. Read docs/bug-hunt/bug-report.md for the bug description
+      2. Read docs/bug-hunt/codebase-analysis.md for codebase understanding
+
+      ## IRON LAW: THE BUG MUST BE PROVEN BY A FAILING TEST
+      If you cannot write a test that fails because of the bug, you have not reproduced it.
+
+      ## Process
+      1. Identify the correct test file to add your reproduction test to:
+         - If tests exist for the affected module, add to that file
+         - If no tests exist, create ONE new test file following the project's conventions
+      2. Write a focused test that:
+         - Exercises the exact code path that triggers the bug
+         - Asserts the EXPECTED (correct) behavior
+         - Will FAIL because the bug causes different behavior
+         - Has a clear, descriptive name like test_<module>_<bug_description>
+      3. Run the test and confirm it FAILS:
+         - The failure message should clearly relate to the bug
+         - If it fails for a different reason (import error, syntax error), fix the test
+         - If it passes, your test does not capture the bug — rewrite it
+      4. Run the FULL test suite to establish a baseline:
+         - Note how many tests pass/fail BEFORE your fix
+         - Your reproduction test should be the only new failure
+      5. Commit the failing test:
+         - git add <test file>
+         - git commit -m 'test(bug): add failing test reproducing <bug description>'
+
+      ## If You Cannot Reproduce
+      If after genuine effort you cannot write a failing test:
+      - Document exactly what you tried and why it didn't work
+      - Check if the bug is environment-specific, timing-dependent, or requires specific data
+      - Write what you know to docs/bug-hunt/reproduction-notes.md
+      - outcome=fail to trigger additional context gathering
+
+      ## VERIFICATION GATE
+      You MUST see the test fail with output that relates to the reported bug symptoms.
+      Do NOT claim reproduction without running the test and reading the output.
+
+      ## Output
+      outcome=success if you have a committed failing test that reproduces the bug
+      outcome=fail if you cannot reproduce the bug
+
+  tool CheckReproduced
+    label: "Check Reproduction Status"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      if [ -f docs/bug-hunt/reproduction-notes.md ]; then
+        printf 'cannot_reproduce'
+      elif git log --oneline -1 | grep -q 'test(bug)'; then
+        printf 'reproduced'
+      else
+        printf 'no_test_committed'
+      fi
+
+  agent AskForMoreContext
+    label: "Gather Additional Context"
+    goal_gate: true
+    max_retries: 3
+    retry_target: AskForMoreContext
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior engineer who could not reproduce a bug and needs more information.
+
+      ## Context
+      1. Read docs/bug-hunt/bug-report.md for the original bug report
+      2. Read docs/bug-hunt/reproduction-notes.md for what was already tried
+      3. Read docs/bug-hunt/codebase-analysis.md for codebase understanding
+
+      ## Task
+      Dig deeper to find what is needed to reproduce the bug.
+
+      ## Process
+      1. Re-read the error messages and stack traces very carefully
+         - Are there version-specific clues?
+         - Are there environment-specific clues (OS, config, data)?
+      2. Search git history more broadly:
+         - git log --all --oneline -50
+         - git log --all --oneline --diff-filter=M -- <affected files>
+         - Look for reverts, fixes, or related changes
+      3. Look for configuration files that might affect behavior:
+         - .env, .env.example, config/, settings files
+         - Different behavior in test vs production configs?
+      4. Check for data-dependent behavior:
+         - Are there fixtures, seeds, or sample data?
+         - Could the bug only trigger with specific input?
+      5. Try alternative reproduction approaches:
+         - Integration test instead of unit test
+         - Different entry point to the same code
+         - Edge case inputs (empty, null, very large, unicode, etc.)
+      6. Update docs/bug-hunt/bug-report.md with new findings
+      7. Update docs/bug-hunt/reproduction-notes.md with what you tried
+
+      ## Output
+      outcome=success if you found new information that could help reproduce the bug
+      outcome=fail if you are truly stuck and cannot find more context
+
+  agent DiagnoseRootCause
+    label: "Diagnose Root Cause"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: DiagnoseRootCause
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior debugger performing root cause analysis on a confirmed bug.
+
+      ## Context
+      1. Read docs/bug-hunt/bug-report.md for the bug description
+      2. Read docs/bug-hunt/codebase-analysis.md for architecture understanding
+      3. The reproduction test exists and fails — check git log for the test commit
+      4. Run the reproduction test to see the exact failure output
+
+      ## IRON LAW: FIND THE ROOT CAUSE, NOT JUST THE SYMPTOM
+      'It crashes here' is not a root cause. 'The null check is missing because X returns None when Y' is a root cause.
+
+      ## Process
+      ### Phase 1: Observe
+      1. Run the failing reproduction test with maximum verbosity
+      2. Read the FULL error output — stack traces, error codes, assertion messages
+      3. Identify the exact line where behavior diverges from expectation
+
+      ### Phase 2: Hypothesize
+      1. Form 2-3 hypotheses about what could cause this behavior
+      2. For each hypothesis, identify what evidence would confirm or deny it
+      3. Rank hypotheses by likelihood
+
+      ### Phase 3: Test Hypotheses
+      1. For the most likely hypothesis:
+         - Read the relevant source code carefully
+         - Trace the data flow from input to the point of failure
+         - Check edge cases, boundary conditions, type mismatches
+         - Look for off-by-one errors, null handling, race conditions
+      2. If hypothesis is wrong, move to the next one
+      3. If all hypotheses fail, widen the search:
+         - Check dependencies and their versions
+         - Look for implicit assumptions in the code
+         - Check for state mutation or side effects
+
+      ### Phase 4: Confirm
+      1. You MUST be able to explain:
+         - What the code does (the bug)
+         - What the code should do (the fix)
+         - Why the code does the wrong thing (the root cause)
+         - How long the bug has existed (git blame on the faulty line)
+      2. Predict what the fix should look like (without writing it yet)
+
+      ## Output
+      Write your diagnosis to docs/bug-hunt/diagnosis.md:
+      - **Root Cause:** clear explanation of why the bug occurs
+      - **Faulty Code:** exact file:line reference and the problematic code
+      - **How It Was Introduced:** git blame context
+      - **Proposed Fix:** what needs to change (conceptual, not code yet)
+      - **Risk Assessment:** what else might break when we fix this
+      - **Fix Complexity:** trivial / moderate / complex
+
+      Commit: git add docs/bug-hunt/diagnosis.md && git commit -m 'docs(bug): document root cause diagnosis'
+
+  agent FixBug
+    label: "Fix Bug (TDD)"
+    fidelity: full
+    goal_gate: true
+    max_retries: 3
+    retry_target: FixBug
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a disciplined software engineer fixing a confirmed bug using strict TDD.
+
+      ## Context
+      1. Read docs/bug-hunt/diagnosis.md for the root cause and proposed fix
+      2. Read docs/bug-hunt/codebase-analysis.md for architecture context
+      3. The reproduction test already exists and fails — find it in the test files
+
+      ## IRON LAW: MAKE THE FAILING TEST PASS WITH THE SMALLEST CORRECT FIX
+      Do NOT refactor unrelated code. Do NOT add features. Fix the bug and nothing else.
+
+      ## Process
+
+      ### GREEN — Write Minimal Fix
+      1. Read the reproduction test to understand what it expects
+      2. Read the faulty code identified in the diagnosis
+      3. Write the SMALLEST code change that fixes the root cause
+      4. The fix should address the root cause, not paper over the symptom
+      5. Run the reproduction test: confirm it PASSES
+      6. Run the FULL test suite: confirm nothing else broke
+
+      ### REFACTOR (only after green)
+      1. If the fix reveals a pattern that should be applied elsewhere, note it but do NOT apply it now
+      2. Clean up only the code you touched — rename if unclear, add a comment if the fix is non-obvious
+      3. Keep all tests green
+
+      ### COMMIT
+      1. Stage only the files you modified:
+         - git add <fixed source files>
+         - git commit -m 'fix(<scope>): <description of what was fixed>'
+      2. The commit message should reference the bug if there is an issue number
+
+      ## Edge Cases to Consider
+      - Does the fix handle null/None/nil inputs?
+      - Does the fix work with empty collections?
+      - Does the fix work with boundary values?
+      - Could the fix introduce a performance regression?
+
+      ## When Re-entered After Review Failure
+      If context shows a previous review failed:
+      1. Read the review feedback CAREFULLY
+      2. Verify each finding against the actual code
+      3. Fix valid findings, document why invalid findings are wrong
+      4. Re-run full test suite after fixes
+
+      ## VERIFICATION GATE
+      Before claiming success, you MUST:
+      - Run the reproduction test — see it PASS
+      - Run the full test suite — see ALL tests PASS
+      - Read the output — no errors, no warnings, no skipped tests
+      Do NOT say 'should work' or 'probably passes'.
+
+      ## Output
+      outcome=success if the bug is fixed and all tests pass
+      outcome=fail if the fix does not work or breaks other tests
+
+  agent VerifyFix
+    label: "Verify Fix (Review)"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FixBug
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a meticulous code reviewer verifying a bug fix.
+
+      ## CRITICAL FRAMING
+      The implementer may have fixed the symptom but not the root cause, or introduced a regression. Trust nothing — verify everything.
+
+      ## Context
+      1. Read docs/bug-hunt/diagnosis.md for the diagnosed root cause
+      2. Review the fix: git diff HEAD~1 (or git log --oneline -5 and diff the fix commit)
+      3. Read docs/bug-hunt/bug-report.md for the original symptoms
+
+      ## Verification Process
+      1. **Root Cause Match:** Does the fix address the root cause identified in the diagnosis, or does it just suppress the symptom?
+      2. **Completeness:** Does the fix handle all edge cases? Are there other code paths with the same bug pattern?
+      3. **Regression Risk:** Could this fix break anything else? Check callers of the modified code.
+      4. **Test Quality:** Is the reproduction test sufficient? Does it test the actual behavior, not a hardcoded value?
+      5. **Code Quality:** Is the fix clean, readable, and consistent with the codebase style?
+      6. **Minimal Change:** Did the implementer ONLY fix the bug, or did they sneak in unrelated changes?
+
+      ## Run Tests
+      Run the full test suite yourself. Read the output. Count passing and failing tests.
+
+      ## VERIFICATION GATE
+      You MUST run the tests in THIS session and read the output before making claims.
+
+      ## Output
+      If the fix is correct and complete: PASS
+      If issues found: FAIL with exact file:line references
+
+      outcome=success if PASS
+      outcome=fail if FAIL (routes back to FixBug)
+
+  tool CheckFixValid
+    label: "Check Fix Budget"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      COUNTER='.tracker/fix_attempt_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 5 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  tool RegressionTest
+    label: "Run Full Regression Suite"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      echo '=== Full regression test suite ==='
+      if [ -f pyproject.toml ]; then
+        echo '--- pytest ---'
+        uv run pytest -v 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
+        echo '--- ruff ---'
+        uv run ruff check . 2>&1 || { echo 'LINT_FAIL'; exit 1; }
+        printf 'regression-pass'
+      elif [ -f package.json ]; then
+        echo '--- npm test ---'
+        npm test 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
+        echo '--- lint ---'
+        npx eslint . 2>&1 || npx biome check . 2>&1 || echo 'lint-skipped'
+        printf 'regression-pass'
+      elif [ -f go.mod ]; then
+        echo '--- go test ---'
+        go test ./... -v 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
+        echo '--- go vet ---'
+        go vet ./... 2>&1 || echo 'vet-skipped'
+        printf 'regression-pass'
+      elif [ -f Cargo.toml ]; then
+        echo '--- cargo test ---'
+        cargo test 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
+        echo '--- cargo clippy ---'
+        cargo clippy 2>&1 || echo 'clippy-skipped'
+        printf 'regression-pass'
+      else
+        echo 'Unknown build system'
+        printf 'regression-unknown'
+      fi
+
+  agent FinalVerification
+    label: "Final Verification (Opus)"
+    fidelity: summary:high
+    goal_gate: true
+    max_retries: 3
+    retry_target: FixBug
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are performing the final quality check before shipping a bug fix.
+
+      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
+      Run commands. Read output. Check exit codes. THEN make claims.
+
+      ## Context
+      1. Read docs/bug-hunt/bug-report.md — original bug description
+      2. Read docs/bug-hunt/diagnosis.md — root cause analysis
+      3. Run: git log --oneline to see all commits in this bug fix
+      4. Run: git diff main...HEAD (or from first commit) to see all changes
+
+      ## Verification Checklist
+      1. **Bug is fixed:** The reproduction test passes
+      2. **No regressions:** All pre-existing tests still pass
+      3. **Root cause addressed:** The fix targets the root cause, not just the symptom
+      4. **Minimal change:** Only the necessary code was modified
+      5. **Test quality:** The reproduction test would catch this bug if it were reintroduced
+      6. **Code quality:** The fix is clean, readable, follows codebase conventions
+      7. **Documentation:** If the bug revealed a non-obvious design constraint, is it documented in a code comment?
+
+      ## Run Tests
+      Run the full test suite one final time. Read every line of output.
+
+      ## Output
+      outcome=success — PASS, ready to ship
+      outcome=retry — needs minor fixes (list them with exact file:line references)
+      outcome=fail — fundamental problems with the fix
+
+  agent CreatePR
+    label: "Create Pull Request"
+    goal_gate: true
+    max_retries: 3
+    retry_target: CreatePR
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Create a pull request for the bug fix.
+
+      ## Process
+      1. Ensure we are on a feature branch:
+         - If on main/master, create a branch:
+           branch_name="fix/$(cat docs/bug-hunt/bug-report.md | grep 'Bug ID' | head -1 | sed 's/.*: *//' | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | head -c 50)"
+           git checkout -b "$branch_name" 2>/dev/null || echo "Already on branch"
+      2. Stage and commit any remaining docs:
+         - git add docs/bug-hunt/
+         - git diff --cached --quiet || git commit -m 'docs(bug): add bug hunt documentation'
+      3. If no remote is configured (git remote | head -1 is empty):
+         - Log: 'No remote configured — skipping PR creation'
+         - Report: branch name, commit count, and summary of the fix
+         - outcome=success (fix is complete, just no remote to push to)
+      4. If remote exists:
+         a. git push -u origin HEAD
+         b. Generate PR title and body:
+            - Title: 'fix(<scope>): <one-line bug description>' (under 70 chars)
+            - Body should include:
+              * Bug description (from bug-report.md)
+              * Root cause (from diagnosis.md)
+              * What was changed
+              * How it was tested
+              * Link to original issue if available
+         c. Create PR: gh pr create --title '<title>' --body '<body>'
+         d. Report the PR URL
+
+      ## Output
+      outcome=success if PR created or no remote (fix is done)
+      outcome=fail if push or PR creation fails
+
+  agent DebugInvestigate
+    label: "Debug Investigation"
+    fidelity: full
+    goal_gate: true
+    max_retries: 2
+    retry_target: ReplanFix
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Role
+      You are a senior debugger. The fix attempt has failed multiple times. Perform deep root cause analysis.
+
+      ## IRON LAW: NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
+
+      ## Context
+      The bug fix for the issue described in docs/bug-hunt/diagnosis.md has failed after multiple attempts.
+
+      ## Phase 1: What Went Wrong
+      1. Read error messages carefully — full stack traces, line numbers
+      2. Run the failing tests with maximum verbosity
+      3. Check git log --oneline -10 to see what was tried
+      4. Diff current state against the pre-fix state
+
+      ## Phase 2: Pattern Analysis
+      1. Is the fix addressing the right root cause?
+      2. Are there additional contributing factors not identified in the diagnosis?
+      3. Is the bug in a different layer than expected (e.g., database vs application)?
+      4. Check for hidden state, race conditions, or order-dependent behavior
+
+      ## Phase 3: Course Correction
+      1. If the diagnosis was wrong: update docs/bug-hunt/diagnosis.md with the correct root cause
+      2. If the fix approach was wrong: document why and propose an alternative
+      3. Write a NEW failing test if the original reproduction test was insufficient
+      4. Attempt the fix with the corrected understanding
+
+      ## CRITICAL: >= 3 failed attempts means WRONG DIAGNOSIS
+      If multiple fix attempts fail, the original diagnosis is likely wrong.
+      Go back to first principles — the bug may not be where you think it is.
+
+      ## VERIFICATION GATE
+      Run tests. Read output. Check exit codes. THEN make claims.
+
+      ## Output
+      outcome=success if root cause re-identified and fix applied
+      outcome=fail if unable to resolve — needs replanning
+
+  agent ReplanFix
+    label: "Replan Fix Strategy"
+    goal_gate: true
+    max_retries: 1
+    retry_target: FailureSummary
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The bug fix has failed both implementation and debugging. Rethink the approach entirely.
+
+      ## Context
+      1. Read docs/bug-hunt/bug-report.md for the original bug
+      2. Read docs/bug-hunt/diagnosis.md for the (possibly wrong) diagnosis
+      3. Read git log --oneline -10 to see what was tried
+
+      ## Process
+      1. Revert all failed fix attempts:
+         - Find the commit before fix attempts began
+         - git revert or git reset as appropriate
+         - Keep the reproduction test (it should still fail)
+      2. Reconsider the diagnosis:
+         - Is the bug where we think it is?
+         - Could it be a configuration issue, not a code issue?
+         - Could it be in a dependency, not our code?
+      3. Try a completely different fix strategy:
+         - If previous fix was surgical, try a broader refactor
+         - If previous fix was broad, try a more targeted change
+         - If previous fix was in module A, investigate module B
+      4. Document the new strategy in docs/bug-hunt/diagnosis.md
+      5. Reset the .tracker/fix_attempt_count to allow new attempts
+
+      ## Output
+      outcome=success if new strategy identified and ready to retry
+      outcome=fail if the problem is genuinely beyond automated fixing
+
+  agent FailureSummary
+    label: "Failure Summary"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FailureSummary
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The bug hunt pipeline could not fix this bug autonomously. Write a comprehensive failure report.
+
+      ## Process
+      1. Read all docs/bug-hunt/ files for context
+      2. Read git log to see what was attempted
+      3. Summarize:
+         - What the bug is
+         - What was tried and why it failed
+         - What the most likely root cause is (even if unconfirmed)
+         - What a human engineer should try next
+         - Whether the reproduction test is still useful
+
+      ## Output
+      Write to docs/bug-hunt/failure-summary.md with sections:
+      - **Bug:** one-sentence summary
+      - **Attempts:** what was tried (with commit hashes)
+      - **Best Hypothesis:** most likely root cause
+      - **Recommended Next Steps:** concrete actions for a human
+      - **Reproduction Test:** location and whether it still captures the bug
+
+      Commit: git add docs/bug-hunt/ && git commit -m 'docs(bug): add failure summary for manual follow-up'
+
+  edges
+    Start -> ReadBugReport
+    ReadBugReport -> ExploreCodebase
+    ExploreCodebase -> ReproduceBug
+    ReproduceBug -> CheckReproduced
+    CheckReproduced -> ReproduceBug  when ctx.tool_stdout = no_test_committed  label: "no test committed"  restart: true
+    CheckReproduced -> AskForMoreContext  label: "cannot reproduce"
+    CheckReproduced -> DiagnoseRootCause  label: "bug reproduced"  weight: 2
+    AskForMoreContext -> ReproduceBug  when ctx.outcome = success  label: "retry with more context"  weight: 2  restart: true
+    AskForMoreContext -> FailureSummary  label: "truly stuck"
+    DiagnoseRootCause -> FixBug
+    FixBug -> VerifyFix
+    VerifyFix -> CheckFixValid  label: "fix rejected"
+    VerifyFix -> RegressionTest  label: "fix verified"  weight: 2
+    CheckFixValid -> FixBug  when ctx.tool_stdout = budget_ok  label: "retry fix"  weight: 2  restart: true
+    CheckFixValid -> DebugInvestigate  label: "too many attempts"
+    RegressionTest -> FixBug  when ctx.tool_stdout != regression-pass and ctx.tool_stdout != regression-unknown  label: "regression fail"  restart: true
+    RegressionTest -> FinalVerification  when ctx.tool_stdout = regression-unknown  label: "unknown build system"
+    RegressionTest -> FinalVerification  label: "regression pass"  weight: 2
+    FinalVerification -> FixBug  when ctx.outcome = retry  label: "needs minor fixes"  restart: true
+    FinalVerification -> FailureSummary  when ctx.outcome = fail  label: "fundamental problems"
+    FinalVerification -> CreatePR  label: approved  weight: 2
+    CreatePR -> FailureSummary  when ctx.outcome != success  label: "PR failed"
+    CreatePR -> Exit  label: shipped  weight: 2
+    FixBug -> DebugInvestigate  when ctx.outcome = fail  label: "retries exhausted"
+    DebugInvestigate -> FixBug  when ctx.outcome = success  label: re-diagnosed  weight: 2  restart: true
+    DebugInvestigate -> ReplanFix  label: "cannot fix"
+    ReplanFix -> FixBug  when ctx.outcome = success  label: "new strategy"  weight: 2  restart: true
+    ReplanFix -> FailureSummary  label: stuck
+    FailureSummary -> Exit

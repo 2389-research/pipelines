@@ -1,6 +1,3 @@
-# ABOUTME: Directly builds a project from superpowers spec + plan output, task by task.
-# ABOUTME: Loop-based pipeline: read next task → implement → verify → commit → repeat until done.
-
 workflow BuildFromSuperpowers
   goal: "The project described in the superpowers spec is fully built, tested, and committed — every task in the plan completed with passing tests"
   start: find_superpowers
@@ -10,10 +7,8 @@ workflow BuildFromSuperpowers
     model: claude-sonnet-4-6
     provider: anthropic
     max_retries: 3
+    max_restarts: 20
 
-  # ==========================
-  # FIND SUPERPOWERS OUTPUT
-  # ==========================
   tool find_superpowers
     label: "Find Superpowers Spec + Plan"
     timeout: 30s
@@ -37,16 +32,13 @@ workflow BuildFromSuperpowers
         printf 'ready'
       fi
 
-  # ==========================
-  # SCAFFOLD + ANALYZE
-  # ==========================
   agent setup_project
     label: "Setup Project and Analyze Plan"
     model: claude-opus-4-6
     reasoning_effort: high
     goal_gate: true
-    retry_target: setup_project
     max_retries: 3
+    retry_target: setup_project
     fallback_target: done
     prompt:
       You are working in `run.working_dir`.
@@ -84,9 +76,6 @@ workflow BuildFromSuperpowers
       - Task 1 is marked [x], all others are [ ]
       - go build / npm run build / uv run python -c "pass" succeeds (language-dependent)
 
-  # ==========================
-  # CHECK SETUP
-  # ==========================
   tool check_setup
     label: "Check Setup Complete"
     timeout: 30s
@@ -98,9 +87,6 @@ workflow BuildFromSuperpowers
         printf 'setup_missing'
       fi
 
-  # ==========================
-  # FIND NEXT TASK
-  # ==========================
   tool find_next_task
     label: "Find Next Uncompleted Task"
     timeout: 30s
@@ -118,15 +104,12 @@ workflow BuildFromSuperpowers
         printf 'task_%s' "$task_num"
       fi
 
-  # ==========================
-  # IMPLEMENT CURRENT TASK
-  # ==========================
   agent implement_task
     label: "Implement Next Task"
     model: claude-opus-4-6
     goal_gate: true
-    retry_target: implement_task
     max_retries: 3
+    retry_target: implement_task
     prompt:
       You are working in `run.working_dir`.
 
@@ -162,16 +145,13 @@ workflow BuildFromSuperpowers
       - Linter/type checker passes
       - Do NOT update progress.md yet — the verify step handles that
 
-  # ==========================
-  # VERIFY CURRENT TASK
-  # ==========================
   agent verify_task
     label: "Verify Task Implementation"
     model: claude-opus-4-6
-    auto_status: true
     goal_gate: true
-    retry_target: implement_task
+    auto_status: true
     max_retries: 3
+    retry_target: implement_task
     prompt:
       You are working in `run.working_dir`.
 
@@ -202,15 +182,12 @@ workflow BuildFromSuperpowers
       - All files from the task exist
       - Linter/type checker passes on affected packages
 
-  # ==========================
-  # COMMIT + MARK DONE
-  # ==========================
   agent commit_task
     label: "Commit and Mark Task Done"
     model: claude-sonnet-4-6
     goal_gate: true
-    retry_target: commit_task
     max_retries: 3
+    retry_target: commit_task
     prompt:
       You are working in `run.working_dir`.
 
@@ -229,16 +206,13 @@ workflow BuildFromSuperpowers
       - progress.md shows the task as [x]
       - Clean git status
 
-  # ==========================
-  # DIAGNOSE FAILURE
-  # ==========================
   agent diagnose_failure
     label: "Diagnose Verification Failure"
     model: claude-opus-4-6
     reasoning_effort: high
     goal_gate: true
-    retry_target: diagnose_failure
     max_retries: 3
+    retry_target: diagnose_failure
     prompt:
       You are working in `run.working_dir`.
 
@@ -264,9 +238,6 @@ workflow BuildFromSuperpowers
       - Fix applied
       - Tests pass after the fix
 
-  # ==========================
-  # CHECK DIAGNOSE BUDGET
-  # ==========================
   tool check_diagnose_budget
     label: "Check Diagnose Budget"
     timeout: 30s
@@ -284,10 +255,6 @@ workflow BuildFromSuperpowers
         printf 'budget_ok'
       fi
 
-  # ==========================
-  # RESET DIAGNOSE COUNTER
-  # (reset after each successful task so budget is per-task)
-  # ==========================
   tool reset_diagnose_budget
     label: "Reset Diagnose Budget"
     timeout: 30s
@@ -297,16 +264,13 @@ workflow BuildFromSuperpowers
       printf '0' > .tracker/diagnose_count
       printf 'reset'
 
-  # ==========================
-  # FINAL REVIEW
-  # ==========================
   agent final_review
     label: "Final Project Review"
     model: claude-opus-4-6
     reasoning_effort: high
     goal_gate: true
-    retry_target: final_review
     max_retries: 3
+    retry_target: final_review
     fallback_target: done
     prompt:
       You are working in `run.working_dir`.
@@ -342,15 +306,12 @@ workflow BuildFromSuperpowers
       - Project builds successfully
       - docs/plans/build_complete.md exists with summary
 
-  # ==========================
-  # STUCK — SKIP AND CONTINUE
-  # ==========================
   agent skip_and_continue
     label: "Skip Stuck Task and Continue"
     model: claude-sonnet-4-6
     goal_gate: true
-    retry_target: skip_and_continue
     max_retries: 3
+    retry_target: skip_and_continue
     prompt:
       You are working in `run.working_dir`.
 
@@ -371,53 +332,27 @@ workflow BuildFromSuperpowers
       - stuck_tasks.md updated
       - Pipeline can continue to next task
 
-  # ==========================
-  # EXIT
-  # ==========================
   agent done
-    label: "Exit"
+    label: Exit
     model: claude-sonnet-4-6
     prompt:
       Build from superpowers plan complete.
 
-  # ==========================
-  # EDGES
-  # ==========================
   edges
-    # Find superpowers output
-    find_superpowers -> setup_project  when ctx.tool_stdout = ready  label: "found"  weight: 2
-    find_superpowers -> done  when ctx.tool_stdout = missing_files  label: "no superpowers output"
-    find_superpowers -> done  when ctx.tool_stdout != ready  label: "fallback"
-
-    # Setup and first check
+    find_superpowers -> setup_project  when ctx.tool_stdout = ready  label: found  weight: 2
+    find_superpowers -> done  label: "no superpowers output"
     setup_project -> check_setup
     check_setup -> find_next_task  when ctx.tool_stdout = setup_done  weight: 2
-    check_setup -> setup_project  when ctx.tool_stdout != setup_done  label: "retry setup"  restart: true
-
-    # Task loop: find → implement → verify → commit → find next
-    find_next_task -> implement_task  when ctx.tool_stdout startswith task_  label: "next task"  weight: 2
-    find_next_task -> final_review  when ctx.tool_stdout = all_tasks_done  label: "all done"
-    find_next_task -> done  when ctx.tool_stdout != all_tasks_done  label: "fallback"
-
+    check_setup -> setup_project  label: "retry setup"  restart: true
+    find_next_task -> final_review  label: "all done"
+    find_next_task -> implement_task  label: "next task"  weight: 2
     implement_task -> verify_task
-
-    # Verify pass → commit → reset budget → find next
-    verify_task -> commit_task  when ctx.outcome = success  label: "pass"  weight: 2
-    verify_task -> check_diagnose_budget  when ctx.outcome = fail  label: "fail"
-    verify_task -> check_diagnose_budget  when ctx.outcome != success  label: "fallback"
-
+    verify_task -> check_diagnose_budget  label: fail
+    verify_task -> commit_task  label: pass  weight: 2
     commit_task -> reset_diagnose_budget
     reset_diagnose_budget -> find_next_task  restart: true
-
-    # Diagnose loop with budget
-    check_diagnose_budget -> diagnose_failure  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
-    check_diagnose_budget -> skip_and_continue  when ctx.tool_stdout = budget_exhausted  label: "stuck"
-    check_diagnose_budget -> skip_and_continue  when ctx.tool_stdout != budget_ok  label: "fallback"
-
+    check_diagnose_budget -> skip_and_continue  label: stuck
+    check_diagnose_budget -> diagnose_failure  label: "budget ok"  weight: 2
     diagnose_failure -> verify_task  restart: true
-
-    # Skip stuck task → reset budget → find next
     skip_and_continue -> reset_diagnose_budget
-
-    # Final review → done
     final_review -> done

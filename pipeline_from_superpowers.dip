@@ -1,21 +1,17 @@
-# ABOUTME: Generates a Dippin build pipeline from superpowers spec + plan output.
-# ABOUTME: Skips analysis/generation — superpowers already produced the spec and task plan.
-
 workflow PipelineFromSuperpowers
   goal: "A validated, high-quality pipeline .dip file exists in the working directory, built from the superpowers spec and plan, scoring quality_high on pattern and coverage metrics"
   start: find_superpowers
   exit: done
 
   defaults
-    model: claude-sonnet-4-5
+    model: claude-sonnet-4-6
     provider: anthropic
     max_retries: 3
+    max_restarts: 15
 
-  # ==========================
-  # FIND SUPERPOWERS OUTPUT
-  # ==========================
   tool find_superpowers
     label: "Find Superpowers Spec + Plan"
+    timeout: 30s
     command:
       #!/bin/sh
       set -eu
@@ -41,14 +37,12 @@ workflow PipelineFromSuperpowers
         printf 'ready'
       fi
 
-  # ==========================
-  # ANALYZE TASK STRUCTURE
-  # ==========================
   agent analyze_tasks
     label: "Analyze Task Structure"
     model: claude-opus-4-6
     reasoning_effort: high
     goal_gate: true
+    max_retries: 3
     retry_target: analyze_tasks
     prompt:
       You are working in `run.working_dir`.
@@ -100,11 +94,9 @@ workflow PipelineFromSuperpowers
       - Every task from the plan is listed with dependencies mapped
       - Dependency graph accurately reflects which tasks can parallelize
 
-  # ==========================
-  # CHECK ANALYSIS EXISTS
-  # ==========================
   tool check_analysis
     label: "Check Analysis File"
+    timeout: 30s
     command:
       #!/bin/sh
       set -eu
@@ -114,13 +106,11 @@ workflow PipelineFromSuperpowers
         printf 'analysis_missing'
       fi
 
-  # ==========================
-  # GENERATE DIP FILE
-  # ==========================
   agent generate_dip
     label: "Generate Pipeline Dip"
     model: claude-opus-4-6
     goal_gate: true
+    max_retries: 3
     retry_target: generate_dip
     prompt:
       You are working in `run.working_dir`.
@@ -326,11 +316,9 @@ workflow PipelineFromSuperpowers
       - Dependency ordering matches task_analysis.md
       - All mandatory patterns present
 
-  # ==========================
-  # VALIDATE
-  # ==========================
   tool run_validate
     label: "Run Dippin Check"
+    timeout: 30s
     command:
       #!/bin/sh
       set -eu
@@ -345,11 +333,9 @@ workflow PipelineFromSuperpowers
         printf 'invalid'
       fi
 
-  # ==========================
-  # FIX BUDGET CHECK
-  # ==========================
   tool check_fix_budget
     label: "Check Fix Budget"
+    timeout: 30s
     command:
       #!/bin/sh
       set -eu
@@ -365,13 +351,11 @@ workflow PipelineFromSuperpowers
         printf 'budget_ok'
       fi
 
-  # ==========================
-  # FIX VALIDATION ERRORS
-  # ==========================
   agent fix_validation
     label: "Fix Validation Errors"
     model: claude-opus-4-6
     goal_gate: true
+    max_retries: 3
     retry_target: fix_validation
     prompt:
       You are working in `run.working_dir`.
@@ -394,13 +378,11 @@ workflow PipelineFromSuperpowers
       ## Success Criteria
       - dippin check pipeline.dip reports valid
 
-  # ==========================
-  # REGENERATE
-  # ==========================
   agent regenerate_dip
     label: "Regenerate Pipeline Dip"
     model: claude-opus-4-6
     goal_gate: true
+    max_retries: 3
     retry_target: regenerate_dip
     prompt:
       You are working in `run.working_dir`.
@@ -419,11 +401,9 @@ workflow PipelineFromSuperpowers
       ## Success Criteria
       - pipeline.dip exists and passes dippin check
 
-  # ==========================
-  # SCORE QUALITY
-  # ==========================
   tool score_quality
     label: "Score Pipeline Quality"
+    timeout: 30s
     command:
       #!/bin/sh
       set -eu
@@ -455,11 +435,9 @@ workflow PipelineFromSuperpowers
         printf 'quality_low'
       fi
 
-  # ==========================
-  # REFINE BUDGET CHECK
-  # ==========================
   tool check_refine_budget
     label: "Check Refine Budget"
+    timeout: 30s
     command:
       #!/bin/sh
       set -eu
@@ -475,14 +453,12 @@ workflow PipelineFromSuperpowers
         printf 'budget_ok'
       fi
 
-  # ==========================
-  # REFINE PIPELINE
-  # ==========================
   agent refine_pipeline
     label: "Refine Pipeline Quality"
     model: claude-opus-4-6
     reasoning_effort: high
     goal_gate: true
+    max_retries: 3
     retry_target: refine_pipeline
     prompt:
       You are working in `run.working_dir`.
@@ -519,45 +495,26 @@ workflow PipelineFromSuperpowers
       - All superpowers tasks covered
       - pipeline.dip still validates
 
-  # ==========================
-  # EXIT
-  # ==========================
   agent done
-    label: "Exit"
+    label: Exit
     prompt:
       Pipeline generation from superpowers output complete.
 
-  # ==========================
-  # EDGES
-  # ==========================
   edges
-    # Find superpowers output
-    find_superpowers -> analyze_tasks  when ctx.tool_stdout = ready  label: "spec + plan found"  weight: 2
     find_superpowers -> done  when ctx.tool_stdout = missing_files  label: "missing superpowers output"
-
-    # Analyze task structure
+    find_superpowers -> analyze_tasks  label: "spec + plan found"  weight: 2
     analyze_tasks -> check_analysis
-    check_analysis -> generate_dip  when ctx.tool_stdout = analysis_ready  label: "analysis ready"  weight: 2
-    check_analysis -> analyze_tasks  when ctx.tool_stdout != analysis_ready  label: "analysis missing — retry"  restart: true
-
-    # Generate and validate
+    check_analysis -> analyze_tasks  when ctx.tool_stdout != analysis_ready  label: "analysis missing  --  retry"  restart: true
+    check_analysis -> generate_dip  label: "analysis ready"  weight: 2
     generate_dip -> run_validate
-
-    # Validation routing
-    run_validate -> score_quality  when ctx.tool_stdout = valid  label: "valid"  weight: 2
-    run_validate -> check_fix_budget  when ctx.tool_stdout != valid  label: "invalid"
-
-    # Fix loop with budget
-    check_fix_budget -> fix_validation  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
-    check_fix_budget -> regenerate_dip  when ctx.tool_stdout = budget_exhausted  label: "start fresh"
+    run_validate -> check_fix_budget  label: invalid
+    run_validate -> score_quality  label: valid  weight: 2
+    check_fix_budget -> regenerate_dip  label: "start fresh"
+    check_fix_budget -> fix_validation  label: "budget ok"  weight: 2
     fix_validation -> run_validate  restart: true
     regenerate_dip -> run_validate  restart: true
-
-    # Quality scoring
-    score_quality -> done  when ctx.tool_stdout = quality_high  label: "quality high"  weight: 2
-    score_quality -> check_refine_budget  when ctx.tool_stdout != quality_high  label: "needs refinement"
-
-    # Refine loop with budget
-    check_refine_budget -> refine_pipeline  when ctx.tool_stdout = budget_ok  label: "budget ok"  weight: 2
+    score_quality -> check_refine_budget  label: "needs refinement"
+    score_quality -> done  label: "quality high"  weight: 2
     check_refine_budget -> done  when ctx.tool_stdout = budget_exhausted  label: "best effort"
+    check_refine_budget -> refine_pipeline  label: "budget ok"  weight: 2
     refine_pipeline -> run_validate  restart: true

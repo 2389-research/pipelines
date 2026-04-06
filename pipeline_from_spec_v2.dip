@@ -1,0 +1,493 @@
+workflow pipeline_from_spec
+  goal: "A validated, high-quality pipeline DOT file exists in the working directory, generated from the spec, scoring quality_high on objective pattern and coverage metrics"
+  start: start
+  exit: done
+
+  defaults
+    max_retries: 3
+    max_restarts: 15
+
+  tool start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    goal_gate: true
+    max_retries: 3
+    retry_target: analyze_spec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file in the working directory and produce a structured analysis for pipeline generation.
+
+      ## Process
+      1. List markdown files and read the spec (the previous pipeline step already confirmed one exists)
+      2. Extract and write to docs/plans/spec_analysis.md:
+
+      ### Project Name
+      [name from spec]
+
+      ### Tech Stack
+      - Language: [e.g., Python 3.12]
+      - Framework: [e.g., stdlib http.server]
+      - Database: [e.g., SQLite 3]
+      - Test framework: [e.g., pytest]
+      - Linter: [e.g., ruff]
+      - Type checker: [e.g., mypy]
+      - Package manager: [e.g., uv]
+      - Other deps: [list]
+
+      ### Components (numbered)
+      For each component:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Draw the dependency graph in text: which components can run in parallel, which must be sequential.
+
+      ### Infrastructure Dependencies (for testing)
+      List any services that need local emulators or daemons for tests to run:
+      - [e.g., Firestore emulator on localhost:8080]
+      - [e.g., Postgres on localhost:5432]
+      - [e.g., Redis on localhost:6379]
+      Include the start command and health check for each.
+
+      ### Scope Analysis (v1 vs later)
+      - IN: [components strictly needed for v1 MVP]
+      - OUT: [components that can be deferred — integrations, nice-to-haves]
+      - Justification for each CUT
+
+      ### Pipeline Topology
+      Based on component count and dependencies, recommend:
+      - LINEAR: 1-3 components, simple deps
+      - FAN_OUT: 4-8 components, shared foundation, independent features
+      - DAG: 8+ components with cross-dependencies
+
+      3. Commit: git add -A && git commit -m 'docs(analysis): spec analysis for pipeline generation'
+
+      ## Success Criteria
+      - docs/plans/spec_analysis.md exists with all sections filled in
+      - No handwaving — every component named, every dependency mapped
+
+  tool check_analysis
+    label: "Check Analysis File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      if [ -f docs/plans/spec_analysis.md ] && [ -s docs/plans/spec_analysis.md ]; then
+        printf 'analysis_ready'
+      else
+        printf 'analysis_missing'
+      fi
+
+  agent generate_dot
+    label: "Generate Pipeline DOT"
+    goal_gate: true
+    max_retries: 3
+    retry_target: generate_dot
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read docs/plans/spec_analysis.md and generate a pipeline DOT file.
+
+      ## DOT Syntax Reference
+
+      ### Node Shapes (ONLY valid shapes)
+      | Shape | Purpose | Required Attributes |
+      |-------|---------|-------------------|
+      | Mdiamond | Start (exactly 1) | label |
+      | Msquare | Exit (exactly 1) | label |
+      | box | LLM coding tasks | prompt, label |
+      | diamond | Conditional routing | prompt, label |
+      | hexagon | Human gate (also needs type="wait.human") | label, type |
+      | parallelogram | Shell command | label, tool_command |
+      | component | Fan-out (parallel start) | label |
+      | tripleoctagon | Fan-in (parallel join) | label |
+
+      ### Graph Attributes (MUST be inside graph [ ... ] block)
+      goal (string, required), label (string), model_stylesheet (string), default_max_retry (int), retry_target (string), rankdir (TB or LR)
+
+      ### Node Attributes
+      prompt (string), label (string), shape (string), type (string), class (string), goal_gate (bool), retry_target (string), max_retries (int), timeout (duration), tool_command (string for parallelogram nodes)
+
+      ### Edge Attributes
+      label (string), condition (string), weight (int)
+
+      ### Edge Condition Syntax
+      condition="outcome=success"    — equality (case-insensitive)
+      condition="outcome=fail"
+      condition="outcome!=success"   — inequality
+      condition="context.tool_stdout=value"  — tool output check
+
+      ### Model Stylesheet (CSS-like)
+      model_stylesheet="
+          * { llm_model: claude-sonnet-4-5; llm_provider: anthropic; }
+          .code { llm_model: claude-opus-4-6; llm_provider: anthropic; }
+          .review { llm_model: claude-opus-4-6; reasoning_effort: high; }
+      "
+
+      ## MANDATORY PATTERNS — Include ALL of These
+
+      ### 1. Resume Support (first node after start)
+      check_existing [shape=parallelogram, label="Check Existing Plans",
+          tool_command="#!/bin/sh\nif [ -f docs/plans/plan.md ] && grep -q '^- \\[ \\]' docs/plans/plan.md 2>/dev/null; then\n  printf 'resume'\nelse\n  printf 'fresh'\nfi"]
+
+      ### 2. Scope Gating (before planning, for large specs)
+      scope_analysis node with class="review" that writes docs/plans/scope.md with IN/OUT sections.
+
+      ### 3. Per-Phase Verification Gates
+      After EVERY implement node, add a diamond verify node:
+      verify_X [shape=diamond, label="X Tests Pass?", prompt="Run tests + linter. If ALL pass: outcome=success. If ANY fail: outcome=fail"]
+      verify_X -> commit_X [label="pass", condition="outcome=success", weight=2];
+      verify_X -> implement_X [label="fix", condition="outcome=fail"];
+
+      ### 4. Graduated Escalation (at the end)
+      debug_investigate -> e2e [label="fixed", condition="outcome=success"];
+      debug_investigate -> replan [label="can't fix", condition="outcome=fail"];
+      replan -> e2e [label="replanned", condition="outcome=success"];
+      replan -> done [label="stuck", condition="outcome=fail"];
+
+      ### 5. Budget Tracking (before E2E retry loop)
+      check_budget [shape=parallelogram, label="Check Retry Budget",
+          tool_command="#!/bin/sh\nset -eu\nmkdir -p .tracker\nCOUNTER='.tracker/e2e_count'\ncount=0\n[ -f \"$COUNTER\" ] && count=$(cat \"$COUNTER\")\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"$COUNTER\"\nif [ \"$count\" -gt 5 ]; then\n  printf 'budget_exhausted'\nelse\n  printf 'budget_ok'\nfi"]
+
+      ### 6. Stdout Hygiene for ALL tool_command Scripts
+      The pipeline engine matches context.tool_stdout EXACTLY. If a tool_command prints anything besides the routing token to stdout, the condition will never match and the pipeline STALLS SILENTLY. Rules:
+      - ALL command output (tests, linters, builds) MUST go to stderr via >&2
+      - stdout MUST contain ONLY the routing token (e.g., printf 'pass', printf 'fail')
+      - NEVER use 2>&1 — it merges noisy output into stdout and breaks routing
+      - Example: go test ./... >&2 || fail=1 (output to stderr, capture exit code)
+
+      ### 7. Language-Aware Build Validation (before final review, follows stdout hygiene)
+      IMPORTANT: validate_build must output 'validation-pass', 'validation-fail', or 'validation-unknown' as the LAST thing printed. Do NOT use 'exit 1' on test/lint failure — that crashes the node instead of routing. Capture exit codes and branch on them:
+      validate_build [shape=parallelogram, label="Validate Full Build",
+          tool_command="#!/bin/sh\nset +e\nfail=0\nif [ -f pyproject.toml ]; then\n  uv run pytest -v >&2 || fail=1\n  uv run ruff check . >&2 || fail=1\n  if [ \"$fail\" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi\nelif [ -f go.mod ]; then\n  go build ./... >&2 && go test ./... >&2 || fail=1\n  if [ \"$fail\" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi\nelif [ -f package.json ]; then\n  npm test >&2 || fail=1\n  if [ \"$fail\" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi\nelse\n  printf 'validation-unknown'\nfi"]
+
+      ### 8. Timeout Budget for Verify Nodes
+      The tracker default tool_command timeout is 30s. This is NOT enough for verify nodes that run multiple heavy tools sequentially (test + typecheck + lint). Set explicit timeouts based on tech stack:
+      - **Go** (go test + golangci-lint): timeout="120s"
+      - **TypeScript/Node** (vitest + tsc --noEmit + eslint): timeout="120s" — tsc alone can take 20s+ on projects with large dependency type surfaces (Firebase, Prisma, etc.)
+      - **Rust** (cargo test + cargo clippy): timeout="180s" — first compilation is slow
+      - **Python** (pytest + ruff/mypy): timeout="60s" — usually fast unless heavy ML deps
+      - **Java/Kotlin** (gradle test + lint): timeout="180s"
+
+      Example:
+      verify_X [shape=diamond, label="X Tests Pass?", timeout="120s",
+          tool_command="#!/bin/sh\nset +e\nfail=0\nnpm test >&2 || fail=1\nnpx tsc --noEmit >&2 || fail=1\nnpx eslint . >&2 || fail=1\nif [ \"$fail\" -eq 0 ]; then printf 'pass'; else printf 'fail'; fi"]
+
+      Also set timeout on validate_build and any other parallelogram nodes that run builds or test suites.
+
+      ### 9. Infrastructure Prerequisites for Testing
+      If the tech stack includes services that need local emulators or daemons for testing (Firestore emulator, Postgres, Redis, NATS, etc.), the pipeline MUST handle this. Every verify tool_command that runs tests needing infrastructure MUST start or verify the service is running BEFORE executing tests. Example for Firestore:
+      verify_X [shape=diamond, label="X Tests Pass?",
+          tool_command="#!/bin/sh\nset +e\nfail=0\n# Start emulator if not running\nif ! curl -s http://localhost:8080/ >/dev/null 2>&1; then\n  gcloud emulators firestore start --host-port=localhost:8080 >&2 &\n  sleep 3\nfi\nexport FIRESTORE_EMULATOR_HOST=localhost:8080\ngo test ./internal/X/... -v >&2 || fail=1\ngolangci-lint run ./internal/X/... >&2 || fail=1\nif [ \"$fail\" -eq 0 ]; then printf 'pass'; else printf 'fail'; fi"]
+      Do NOT assume infrastructure is already running from a previous node — each verify node must be self-contained.
+
+      ### 10. Review That Reads Code (final review prompt must include)
+      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+      Run commands. Read output. Check exit codes. THEN make claims.
+      1. Get full diff  2. Read every changed file  3. Run test suite
+      DO NOT trust implementer claims. Verify independently.
+
+      ## Prompt Requirements for EVERY box Node
+      1. Start with: You are working in `run.working_dir`.
+      2. Include ## Tech Stack with language, framework, deps from spec_analysis.md
+      3. Include ## Process with TDD: Write failing tests FIRST
+      4. Include ## Success Criteria
+      5. Every box node MUST have goal_gate=true and retry_target pointing to itself or parent implement node
+
+      ## Topology Rules (from spec_analysis.md)
+      - LINEAR: start -> plan -> setup -> implement -> verify -> commit -> review -> done
+      - FAN_OUT: foundation -> component(fan-out) -> parallel impl nodes -> tripleoctagon(fan-in) -> verify -> commit
+      - DAG: Multiple fan-out/fan-in with tripleoctagon join nodes modeling real dependencies
+
+      ## Commit Nodes
+      After every implement+verify phase, add a commit node:
+      commit_X [shape=box, class="code", goal_gate=true, retry_target="implement_X",
+          label="Commit X", prompt="...git add -A && git commit -m 'type(scope): description'..."]
+
+      ## Output
+      Write the DOT file to pipeline.dot in the working directory root.
+      Name the digraph build_[project_name] (snake_case).
+
+      ## Worklog
+      Append a generation summary to docs/plans/generation_worklog.md:
+      - Timestamp, topology chosen, number of nodes/edges
+      - Which patterns were included
+      - Any decisions or tradeoffs made
+
+      ## DO NOT
+      - Invent attributes not in the reference (no join_policy, error_policy, max_parallel, default_choice)
+      - Put graph attributes outside the graph [ ... ] block
+      - Leave box nodes without goal_gate=true + retry_target
+      - Use hexagon without type="wait.human"
+      - Create human gates unless the spec explicitly requests them (default: fully autonomous/headless)
+      - Write prompts that assume context from other nodes (each prompt is self-contained)
+      - Use 'exit 1' in tool_command scripts to signal failure — output a routable string instead
+      - Use '2>&1' in tool_command scripts — this merges command output into stdout and breaks context.tool_stdout routing. Redirect noisy command output to stderr with '>&2' and reserve stdout for ONLY the routing token (e.g., printf 'pass' or printf 'fail')
+
+      ## Success Criteria
+      - pipeline.dot exists in working directory root
+      - Contains digraph with all mandatory patterns
+      - Every box node has goal_gate + retry_target
+      - Every implement phase has verify diamond + commit node
+
+  tool run_validate
+    label: "Run Tracker Validate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      if [ ! -f pipeline.dot ]; then
+        printf 'no_dot_file'
+        exit 0
+      fi
+      if tracker validate pipeline.dot >/dev/null 2>&1; then
+        printf 'valid'
+      else
+        printf 'invalid'
+      fi
+
+  tool check_fix_budget
+    label: "Check Fix Budget"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      COUNTER='.tracker/fix_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 3 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  agent fix_validation
+    label: "Fix Validation Errors"
+    goal_gate: true
+    max_retries: 3
+    retry_target: fix_validation
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The pipeline.dot file failed validation. Fix the errors.
+
+      ## Process
+      1. Run: tracker validate pipeline.dot
+      2. Read the FULL error output
+      3. Common fixes:
+         - Missing goal attribute -> add goal=... inside graph [ ... ]
+         - goal_gate without retry_target -> add retry_target to that node
+         - Unreachable nodes -> add missing edges
+         - Multiple start/exit nodes -> ensure exactly 1 Mdiamond and 1 Msquare
+         - Invalid attributes -> remove invented attributes (only use: prompt, label, shape, type, class, goal_gate, retry_target, max_retries, timeout, tool_command, fidelity, llm_model, llm_provider, reasoning_effort)
+         - Graph attributes outside graph block -> move inside graph [ ... ]
+      4. Save fixed pipeline.dot
+      5. Run: tracker validate pipeline.dot — confirm it passes
+
+      ## Success Criteria
+      - tracker validate pipeline.dot reports 'valid'
+
+  agent regenerate_dot
+    label: "Regenerate Pipeline DOT"
+    goal_gate: true
+    max_retries: 3
+    retry_target: regenerate_dot
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Previous attempts to fix pipeline.dot have failed repeatedly. Start fresh with deep understanding.
+
+      ## Process — Think Deeper Before Acting
+      This is NOT 'try the same thing again.' You must understand WHY previous attempts failed.
+
+      1. Read docs/plans/spec_analysis.md — re-internalize the project structure
+      2. Read the current pipeline.dot — identify the specific validation errors
+      3. Read docs/plans/generation_worklog.md if it exists — learn from previous attempts
+      4. Ask yourself: What pattern keeps causing failures? Wrong topology? Invented attributes? Missing edges?
+      5. Delete pipeline.dot and regenerate from scratch with a SIMPLER approach
+      6. Focus on correctness first:
+         - Exactly 1 Mdiamond (start) and 1 Msquare (exit)
+         - Every box node has goal_gate=true + retry_target
+         - All graph attributes inside graph [ ... ] block
+         - Only documented attributes — no invented ones
+         - parallelogram nodes use tool_command (not command)
+      7. Run: tracker validate pipeline.dot — confirm it passes
+
+      ## Worklog
+      Append to docs/plans/generation_worklog.md:
+      - What went wrong in previous attempts
+      - What you changed in this regeneration
+      - Validation result
+
+      ## Success Criteria
+      - pipeline.dot exists and passes tracker validate
+
+  tool score_quality
+    label: "Score Pipeline Quality"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      score=0
+      total=7
+      # Pattern 1: Resume support
+      grep -qi 'check_existing\|Check Existing' pipeline.dot && score=$((score + 1))
+      # Pattern 2: Scope gating
+      grep -qi 'scope_analysis\|scope' pipeline.dot && score=$((score + 1))
+      # Pattern 3: Per-phase verification (diamond verify nodes)
+      verify_count=$(grep -c 'shape=diamond' pipeline.dot 2>/dev/null || echo 0)
+      [ "$verify_count" -gt 0 ] && score=$((score + 1))
+      # Pattern 4: Graduated escalation
+      grep -qi 'debug_investigate\|debug\|replan' pipeline.dot && score=$((score + 1))
+      # Pattern 5: Budget tracking
+      grep -qi 'check_budget\|budget' pipeline.dot && score=$((score + 1))
+      # Pattern 6: Language-aware build validation
+      grep -qi 'validate_build' pipeline.dot && score=$((score + 1))
+      # Pattern 7: Review reads code (IRON LAW)
+      grep -qi 'IRON LAW' pipeline.dot && score=$((score + 1))
+      # Component coverage: count implement nodes vs spec components
+      impl_count=$(grep -c 'implement_' pipeline.dot 2>/dev/null || echo 0)
+      printf 'score=%s/%s impl=%s ' "$score" "$total" "$impl_count" >&2
+      if [ "$score" -ge 6 ]; then
+        printf 'quality_high'
+      elif [ "$score" -ge 4 ]; then
+        printf 'quality_medium'
+      else
+        printf 'quality_low'
+      fi
+
+  tool check_refine_budget
+    label: "Check Refine Budget"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .tracker
+      COUNTER='.tracker/refine_count'
+      count=0
+      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
+      count=$((count + 1))
+      printf '%s' "$count" > "$COUNTER"
+      if [ "$count" -gt 3 ]; then
+        printf 'budget_exhausted'
+      else
+        printf 'budget_ok'
+      fi
+
+  agent refine_pipeline
+    label: "Refine Pipeline Quality"
+    goal_gate: true
+    max_retries: 3
+    retry_target: refine_pipeline
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The generated pipeline.dot is valid but scored below quality_high. Improve it by adding missing patterns and fixing coverage gaps.
+
+      ## Process — Measure, Improve, Verify
+      This is an iterative refinement step inspired by autoresearch: identify what's missing, add it, verify the result.
+
+      1. Read pipeline.dot and docs/plans/spec_analysis.md
+      2. Check each quality dimension and fix what's missing:
+
+      ### Proven Patterns Checklist
+      For each missing pattern, add it to pipeline.dot:
+      - [ ] Resume support — check_existing parallelogram as first node after start
+      - [ ] Scope gating — scope_analysis box node with class=review before planning
+      - [ ] Per-phase verification — diamond node after EVERY implement node with pass/fail edges
+      - [ ] Graduated escalation — debug_investigate -> replan -> done chain at the end
+      - [ ] Budget tracking — check_budget parallelogram before E2E retry loop
+      - [ ] Language-aware build validation — validate_build parallelogram (MUST use set +e and printf, NOT exit 1)
+      - [ ] Timeout budget — verify nodes and validate_build have explicit timeout based on tech stack (120s+ for TS/Go, 180s for Rust/Java)
+      - [ ] Infrastructure prerequisites — verify tool_commands start emulators/services before running tests (self-contained, no assumptions)
+      - [ ] Review reads code — IRON LAW section in final review prompt
+
+      ### Component Coverage
+      For every component in docs/plans/spec_analysis.md, confirm pipeline.dot has:
+      - implement_X node (box, class=code, goal_gate=true, retry_target)
+      - verify_X node (diamond with pass/fail conditional edges)
+      - commit_X node (box)
+
+      ### Prompt Quality (spot-check 3 implement nodes)
+      - Starts with: You are working in `run.working_dir`.
+      - Includes ## Tech Stack with correct language/framework/deps
+      - Includes TDD instruction
+      - Has goal_gate=true + retry_target
+
+      ### Topology
+      - Independent components use fan-out (component) / fan-in (tripleoctagon)
+      - Dependent components have correct edge ordering
+
+      3. After all fixes, run: tracker validate pipeline.dot — confirm still valid
+      4. If any fix breaks validation, revert that specific fix
+
+      ## Worklog
+      Append to docs/plans/generation_worklog.md:
+      - What patterns were missing (with previous score)
+      - What was added/fixed
+      - New validation result
+
+      ## Success Criteria
+      - All 7 proven patterns present in pipeline.dot
+      - All spec components have implement + verify + commit nodes
+      - pipeline.dot still validates after fixes
+
+  tool done
+    label: Exit
+    timeout: 10s
+    command:
+      echo "done"
+
+  edges
+    start -> find_spec
+    find_spec -> done  when ctx.tool_stdout = no_spec_found  label: "no spec found"
+    find_spec -> analyze_spec  label: "spec found"  weight: 2
+    analyze_spec -> check_analysis
+    check_analysis -> analyze_spec  when ctx.tool_stdout != analysis_ready  label: "analysis missing  --  retry"  restart: true
+    check_analysis -> generate_dot  label: "analysis ready"  weight: 2
+    generate_dot -> run_validate
+    run_validate -> check_fix_budget  label: invalid
+    run_validate -> score_quality  label: valid  weight: 2
+    check_fix_budget -> regenerate_dot  label: "too many fixes  --  start fresh"
+    check_fix_budget -> fix_validation  label: "budget ok"  weight: 2
+    fix_validation -> run_validate  restart: true
+    regenerate_dot -> run_validate  restart: true
+    score_quality -> check_refine_budget  label: "needs refinement"
+    score_quality -> done  label: "quality high"  weight: 2
+    check_refine_budget -> done  when ctx.tool_stdout = budget_exhausted  label: "best effort  --  budget exhausted"
+    check_refine_budget -> refine_pipeline  label: "budget ok"  weight: 2
+    refine_pipeline -> run_validate  restart: true

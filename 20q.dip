@@ -1,0 +1,174 @@
+workflow twenty_questions
+  goal: "Play 20 Questions: the human thinks of something, the AI asks yes/no questions and tries to guess what it is within 20 questions."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 1
+    fidelity: summary:high
+    max_restarts: 50
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  tool ResetGame
+    label: "Reset Game"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      rm -f 20q-log.md
+      printf 'reset'
+
+  agent Welcome
+    label: Welcome
+    goal_gate: true
+    max_retries: 3
+    retry_target: Welcome
+    prompt:
+      Welcome the human to 20 Questions! Explain the rules briefly: they think of something (person, place, thing, or concept), and you get 20 yes/no questions to figure it out.
+
+  human HumanReady
+    label: "Ready to play?"
+    mode: yes_no
+
+  agent ThinkQuestion
+    label: Think
+    goal_gate: true
+    max_retries: 3
+    retry_target: ThinkQuestion
+    prompt:
+      You are playing 20 Questions.
+
+      Read `20q-log.md` to see the full question-and-answer history so far.
+      If the file does not exist or is empty, this is the very first question.
+
+      Based on ALL previous questions and their YES/NO answers, decide your next move:
+
+      1. If 20 questions have been asked OR you are >80% confident in your guess:
+         - Append "GUESS: [your guess]" to the log file
+         - End with outcome=fail (to trigger the guessing flow)
+
+      2. Otherwise:
+         - Count existing questions and append "Question N: [your question]?" to the log file
+         - Ask exactly ONE yes/no question that narrows down the possibilities
+         - End with outcome=success (to ask the human)
+
+      ## Strategy
+      - Start broad: living vs non-living, physical vs abstract
+      - Use binary search logic to eliminate half the possibilities each time
+      - RESPECT PREVIOUS ANSWERS. If "Is it living?" was answered NO, do NOT ask about animals, plants, or people.
+      - Track what categories have been eliminated and focus on what remains
+
+      ## Rules
+      - Read the log FIRST, then think, then write ONE update
+      - Never ask more than one question per turn
+      - Never contradict previous answers in your reasoning
+
+  human AskQuestion
+    label: "Answer the Question"
+    mode: yes_no
+
+  tool LogYes
+    label: Yes
+    timeout: 10s
+    command:
+      #!/bin/sh
+      echo "Answer: YES" >> 20q-log.md
+      printf 'YES'
+
+  tool LogNo
+    label: No
+    timeout: 10s
+    command:
+      #!/bin/sh
+      echo "Answer: NO" >> 20q-log.md
+      printf 'NO'
+
+  agent MakeGuess
+    label: "Present Guess"
+    goal_gate: true
+    max_retries: 3
+    retry_target: MakeGuess
+    prompt:
+      You just decided to guess. Read `20q-log.md` for the full Q&A history. Present your guess confidently to the human. Walk through the key yes/no clues that led you to this answer.
+
+  human HumanJudge
+    label: "Did I get it right?"
+    mode: yes_no
+
+  agent WrongGuess
+    label: "Wrong Guess"
+    goal_gate: true
+    max_retries: 3
+    retry_target: WrongGuess
+    prompt:
+      Your guess was wrong. Read `20q-log.md` and count questions. If fewer than 20 remain, say 'Back to the drawing board!' and end with outcome=success. If all 20 used, end with outcome=fail.
+
+      outcome=success if questions remain
+      outcome=fail if all 20 used
+
+  agent FinalGuess
+    label: "Final Guess"
+    goal_gate: true
+    max_retries: 3
+    retry_target: FinalGuess
+    prompt:
+      You have used all 20 questions and your earlier guess was wrong. Read `20q-log.md` for the full Q&A history. Make one last guess. Present it with your reasoning.
+
+  human HumanJudgeFinal
+    label: "Final guess — correct?"
+    mode: yes_no
+
+  agent Victory
+    label: "Victory!"
+    goal_gate: true
+    max_retries: 3
+    retry_target: Victory
+    prompt:
+      You guessed correctly! Celebrate! Read `20q-log.md` to count how many questions it took. Be enthusiastic but not obnoxious.
+
+  agent Defeat
+    label: Defeat
+    goal_gate: true
+    max_retries: 3
+    retry_target: Defeat
+    prompt:
+      You lost! Ask the human what they were thinking of. Be a gracious loser. Read `20q-log.md` and reflect on where your questioning strategy went wrong.
+
+  human PlayAgain
+    label: "Play Again?"
+    mode: yes_no
+
+  edges
+    Start -> ResetGame
+    ResetGame -> Welcome
+    Welcome -> HumanReady
+    HumanReady -> ThinkQuestion  when ctx.outcome = success  label: "[Y] Ready"  weight: 2
+    HumanReady -> HumanReady  label: "[N] Not yet"  restart: true
+    ThinkQuestion -> AskQuestion  label: asking  weight: 2
+    ThinkQuestion -> MakeGuess  label: guessing
+    AskQuestion -> LogYes  label: "[Y] Yes"  weight: 2
+    AskQuestion -> LogNo  label: "[N] No"
+    LogYes -> ThinkQuestion  restart: true
+    LogNo -> ThinkQuestion  restart: true
+    MakeGuess -> HumanJudge
+    HumanJudge -> Victory  label: "[Y] Correct!"  weight: 2
+    HumanJudge -> WrongGuess  label: "[N] Wrong"
+    WrongGuess -> ThinkQuestion  when ctx.outcome = success  label: "keep going"  weight: 2  restart: true
+    WrongGuess -> FinalGuess  label: "out of questions"
+    FinalGuess -> HumanJudgeFinal
+    HumanJudgeFinal -> Victory  label: "[Y] Got it!"  weight: 2
+    HumanJudgeFinal -> Defeat  label: "[N] Stumped"
+    Victory -> PlayAgain
+    Defeat -> PlayAgain
+    PlayAgain -> ResetGame  when ctx.outcome = success  label: "[Y] Again!"  weight: 2  restart: true
+    PlayAgain -> Exit  label: "[N] Done"

@@ -1,0 +1,279 @@
+workflow story_engine
+  goal: "Collaboratively write an interactive story where the AI crafts vivid scenes and the human makes choices that branch the narrative across multiple chapters, culminating in a personalized finale."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 1
+    fidelity: full
+    max_restarts: 50
+
+  tool Start
+    label: Start
+    timeout: 10s
+    command:
+      echo "start"
+
+  tool Exit
+    label: Exit
+    timeout: 10s
+    command:
+      echo "exit"
+
+  tool ResetStory
+    label: "Reset Story"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      rm -f story.md
+      printf 'reset'
+
+  agent Welcome
+    label: Welcome
+    goal_gate: true
+    max_retries: 3
+    retry_target: Welcome
+    prompt:
+      Welcome the human to the Story Engine! Explain the concept:
+
+      - You and the human will write an interactive story together
+      - The AI writes vivid scenes with rich prose
+      - The human makes choices at key moments that shape the plot
+      - After several chapters, the story will reach its climax and conclusion
+      - At the end, a full story summary is generated
+
+      Be warm, enthusiastic, and a little theatrical. Set the mood that something epic is about to happen.
+
+  human PickGenre
+    label: "Pick a Genre"
+    mode: yes_no
+
+  human PickSubGenre
+    label: "Refine the Tone"
+    mode: yes_no
+
+  agent SetupWorld
+    label: "Setup World"
+    goal_gate: true
+    max_retries: 3
+    retry_target: SetupWorld
+    prompt:
+      You are a master storyteller. Based on the human's genre and tone choices from context:
+
+      - outcome=success on the genre gate means Fantasy/Sci-Fi; outcome=fail means Mystery/Thriller
+      - outcome=success on the tone gate means Epic/Serious; outcome=fail means Quirky/Humorous
+
+      Create the story foundation. Write to `story.md` using your file tools:
+
+      ```
+      # Story Engine Adventure
+      ## Genre: [chosen genre]
+      ## Tone: [chosen tone]
+      ## Setting: [a vivid 2-3 sentence description of the world]
+      ## Protagonist: [name, brief description, a defining trait and a flaw]
+      ## Central Conflict: [the core tension that will drive the story]
+      ---
+      ```
+
+      Make the setting specific and atmospheric. The protagonist should feel like a real person with wants and fears. The central conflict should have personal stakes.
+
+      After writing the file, briefly summarize what you created to the human.
+
+  agent WriteOpeningScene
+    label: "Opening Scene"
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteOpeningScene
+    prompt:
+      You are a master storyteller. Read `story.md` to get the genre, tone, setting, protagonist, and conflict.
+
+      Write Chapter 1 — the opening scene. Append it to `story.md`:
+
+      ```
+      ## Chapter 1: [evocative title]
+
+      [3-5 paragraphs of vivid prose]
+      ```
+
+      WRITING GUIDELINES:
+      - Open in media res or with a striking image
+      - Establish the protagonist in their world through action, not exposition
+      - Use sensory details: sounds, smells, textures, light
+      - Match the tone (epic/serious vs quirky/humorous)
+      - End on a moment of tension or discovery that demands a choice
+      - Write in third person, past tense
+      - Aim for 300-500 words
+
+      After the scene, append a choices marker:
+
+      ```
+      ### Choices:
+      A) [first option — the bold/risky path]
+      B) [second option — the cautious/clever path]
+      C) [third option — the unexpected/creative path]
+      ```
+
+      Present the scene and choices to the human in your response.
+
+  human PresentChoices
+    label: "Make Your Choice"
+    mode: yes_no
+
+  agent WriteNextScene
+    label: "Write Next Scene"
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteNextScene
+    prompt:
+      You are a master storyteller continuing an interactive story. Read `story.md` to get the full story so far.
+
+      The human just made a choice. From context:
+      - outcome=success means they chose the BOLD path (Option A)
+      - outcome=fail means they chose the CAUTIOUS path (Option B or C)
+
+      First, count the existing chapters (lines starting with '## Chapter'). The next chapter number is one more than the current count.
+
+      Append the next chapter to `story.md`:
+
+      ```
+      ## Chapter N: [evocative title]
+
+      [The human chose: [bold/cautious]]
+
+      [3-5 paragraphs of vivid prose continuing the story]
+      ```
+
+      WRITING GUIDELINES:
+      - The choice MUST meaningfully affect what happens — no railroad plots
+      - Raise the stakes with each chapter
+      - Introduce at least one new element: character, location, revelation, or complication
+      - Develop the protagonist through their reactions and decisions
+      - Use callbacks to earlier events when possible
+      - Maintain genre and tone consistency
+      - Each chapter should have its own mini-arc (setup, tension, pivot)
+      - End on a cliffhanger or moment of decision
+      - 300-500 words of prose
+
+      After the scene, append choices:
+
+      ```
+      ### Choices:
+      A) [bold/risky path]
+      B) [cautious/clever path]
+      C) [unexpected/creative path]
+      ```
+
+      Present the scene and choices to the human.
+
+  tool CheckChapterCount
+    label: "Check Chapter Count"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      COUNT=$(grep -c '## Chapter' story.md)
+      if [ "$COUNT" -ge 5 ]; then
+        printf 'finale'
+        exit 1
+      else
+        printf 'continue: chapter %s done' "$COUNT"
+        exit 0
+      fi
+
+  human FinalChoice
+    label: "The Final Choice"
+    mode: yes_no
+
+  agent WriteFinalChapter
+    label: "Write Finale"
+    goal_gate: true
+    max_retries: 3
+    retry_target: WriteFinalChapter
+    prompt:
+      You are a master storyteller writing the FINALE of an interactive story. Read `story.md` to get the full story.
+
+      The human made their final choice:
+      - outcome=success means FACE IT HEAD-ON (courage/sacrifice)
+      - outcome=fail means FIND ANOTHER WAY (cunning/unexpected)
+
+      Write the final chapter. Append to `story.md`:
+
+      ```
+      ## Chapter [N]: [epic title — The Final Chapter]
+
+      [The human chose: [head-on/another way]]
+
+      [5-8 paragraphs — this is the climax and resolution]
+      ```
+
+      WRITING GUIDELINES:
+      - This is the CLIMAX — pull out all the stops
+      - Resolve the central conflict established in the setup
+      - The protagonist's defining trait AND flaw should both matter here
+      - Reference and pay off earlier choices — the human should feel their decisions mattered
+      - Include a moment of peak tension followed by resolution
+      - End with a satisfying denouement: where is the protagonist now? What changed?
+      - Match the tone but allow for emotional depth regardless
+      - If epic/serious: earn the emotion honestly, no cheap tricks
+      - If quirky/humorous: the heart beneath the jokes should shine through
+      - 500-800 words
+
+      Do NOT append choices. This is the end.
+
+      Present the finale to the human.
+
+  agent StorySummary
+    label: "Story Summary"
+    goal_gate: true
+    max_retries: 3
+    retry_target: StorySummary
+    prompt:
+      Read `story.md` — the complete interactive story. Generate a story summary and append it:
+
+      ```
+      ---
+      ## Story Summary
+
+      **Title:** [invent a fitting title for this story]
+      **Genre:** [genre] | **Tone:** [tone]
+      **Chapters:** [count]
+
+      ### The Tale
+      [A 2-3 paragraph narrative summary of the entire story, written like a book jacket blurb. Highlight the key choices the human made and how they shaped the outcome.]
+
+      ### Character Arc
+      [1 paragraph on how the protagonist changed from beginning to end]
+
+      ### Key Choices
+      [Bullet list of the major decisions and their consequences]
+
+      ### The Verdict
+      [A fun, genre-appropriate 1-2 sentence judgment of the human's choices. Were they heroic? Cunning? Chaotic? Give them a title like 'The Reluctant Hero' or 'The Chaos Gremlin'.]
+      ```
+
+      Present the full summary to the human. Thank them for playing and tell them this was a unique story that could never be told the same way twice.
+
+  human PlayAgain
+    label: "Play Again?"
+    mode: yes_no
+
+  edges
+    Start -> ResetStory
+    ResetStory -> Welcome
+    Welcome -> PickGenre
+    PickGenre -> PickSubGenre  when ctx.outcome = success  label: "[Y] Fantasy/SciFi"  weight: 2
+    PickGenre -> PickSubGenre  label: "[N] Mystery/Thriller"
+    PickSubGenre -> SetupWorld  when ctx.outcome = success  label: "[Y] Epic/Serious"  weight: 2
+    PickSubGenre -> SetupWorld  label: "[N] Quirky/Humorous"
+    SetupWorld -> WriteOpeningScene
+    WriteOpeningScene -> PresentChoices
+    PresentChoices -> WriteNextScene  when ctx.outcome = success  label: "[Y] Bold path"  weight: 2
+    PresentChoices -> WriteNextScene  label: "[N] Cautious path"
+    WriteNextScene -> CheckChapterCount
+    CheckChapterCount -> PresentChoices  when ctx.outcome = success  label: continue  weight: 2  restart: true
+    CheckChapterCount -> FinalChoice  label: "finale time"
+    FinalChoice -> WriteFinalChapter  when ctx.outcome = success  label: "[Y] Head-on"  weight: 2
+    FinalChoice -> WriteFinalChapter  label: "[N] Another way"
+    WriteFinalChapter -> StorySummary
+    StorySummary -> PlayAgain
+    PlayAgain -> ResetStory  when ctx.outcome = success  label: "[Y] New adventure!"  weight: 2  restart: true
+    PlayAgain -> Exit  label: "[N] Farewell"
