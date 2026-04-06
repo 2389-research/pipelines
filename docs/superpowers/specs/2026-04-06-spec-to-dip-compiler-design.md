@@ -617,9 +617,9 @@ When the spec describes interactions between components (API endpoints, database
 
 Generated pipelines MUST include scenario testing that exercises real systems:
 
-1. A **scenario setup** tool node that creates `.scratch/` directory and prepares test data against real dependencies (test database instances, sandbox API endpoints, local emulators — never mocks)
-2. A **scenario run** tool node that executes scenario tests in `.scratch/` with real dependencies. Tests must be independent (each sets up own data, no ordering dependencies)
-3. A **scenario extract** tool node that promotes recurring patterns to `scenarios.jsonl` (committed to git, while `.scratch/` stays gitignored)
+1. A **scenario setup** tool node that prepares test data against real dependencies (test database instances, sandbox API endpoints, local emulators — never mocks)
+2. A **scenario run** tool node that executes scenario tests with real dependencies. Tests must be independent (each sets up own data, no ordering dependencies)
+3. A **scenario extract** tool node that promotes recurring patterns to `scenarios.jsonl`
 4. Conditional routing: pass → continue, fail → fix loop with restart
 
 The truth hierarchy for generated pipelines:
