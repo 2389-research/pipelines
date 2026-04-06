@@ -14,6 +14,8 @@ A `.dip` pipeline (`spec_to_dip.dip`) that reads a spec (required) and optional 
 - **Deliberation:** Tensions surfaced not papered over, structured discernment at decision points
 - **Test Kitchen:** Parallel generation, objective tests (dippin toolchain) determine quality
 - **Review Squad:** Multi-perspective review dispatch with specialized reviewers
+- **Simmer:** Iterative refinement with investigation-first judge board — the final .dip goes through simmer-style refinement loops where judges investigate the artifact before scoring
+- **Scenario Testing:** Generated pipelines enforce the Iron Law: "NO FEATURE IS VALIDATED UNTIL A SCENARIO PASSES WITH REAL DEPENDENCIES" — no mocks allowed, real systems exercised
 
 The `dippin check` toolchain serves as the objective quality gate throughout.
 
@@ -53,7 +55,7 @@ defaults
   model: claude-sonnet-4-6
   provider: anthropic
   max_retries: 3
-  max_restarts: 10
+  max_restarts: 15
 ```
 
 ---
@@ -408,8 +410,72 @@ Commits everything.
 final_validate -> final_fix           when ctx.tool_stdout = grade_C
 final_validate -> final_fix           when ctx.tool_stdout = grade_F
 final_fix -> final_validate           restart: true
-final_validate -> publish_output      when ctx.tool_stdout = grade_A
-final_validate -> publish_output      when ctx.tool_stdout = grade_B
+final_validate -> simmer_judge        when ctx.tool_stdout = grade_A
+final_validate -> simmer_judge        when ctx.tool_stdout = grade_B
+```
+
+---
+
+## Phase 12: Simmer Refinement (Simmer Pattern)
+
+After the .dip passes validation, it goes through a simmer-style refinement loop. The judge board investigates the artifact before scoring — reading the spec, the analysis, the compliance matrix, and the .dip itself to understand the problem before proposing improvements.
+
+### Nodes
+
+**`simmer_judge`** (agent, claude-opus-4-6, reasoning_effort: high, auto_status: true) — Investigation-first judge. Before scoring, reads:
+1. The original spec
+2. The dip_analysis.md
+3. The compliance matrix
+4. The candidate .dip file
+5. The tournament results (what reviewers said)
+
+Scores the .dip 1-10 on each criterion:
+- Spec fidelity (does the pipeline do what the spec says?)
+- Prompt specificity (are prompts actionable, not vague?)
+- Edge exhaustiveness (can execution get stuck?)
+- Error recovery (retry loops, fallbacks, goal gates)
+- TDD pattern quality (is the test-first loop real or perfunctory?)
+- Security review depth (tech-stack-specific or generic?)
+- Scenario testing (real dependencies or mock-friendly?)
+
+Produces **ASI (Actionable Side Information)**: the single highest-leverage improvement for the next iteration.
+
+Outputs: `STATUS: success` (score >= 8 on all criteria) or `STATUS: fail` (improvement needed).
+
+**`simmer_refine`** (agent, claude-opus-4-6, reasoning_effort: high) — Receives the ASI and improves the .dip file. Makes the minimum change to address the judge's highest-leverage suggestion. Does NOT see scores (Simmer context discipline: generator doesn't see scores to avoid optimizing for numbers).
+
+**`simmer_revalidate`** (tool, timeout: 30s) — `dippin check --format json` on the refined .dip. Ensures the refinement didn't break structural validity.
+
+### Edges
+
+```
+simmer_judge -> publish_output        when ctx.outcome = success
+simmer_judge -> simmer_refine         when ctx.outcome = fail
+simmer_refine -> simmer_revalidate
+simmer_revalidate -> simmer_judge     when ctx.tool_stdout = valid    restart: true
+simmer_revalidate -> simmer_refine    when ctx.tool_stdout = errors   restart: true
+```
+
+The simmer loop runs up to 3 iterations (bounded by max_restarts). If the judge can't get all criteria to 8+, the pipeline proceeds with the best iteration.
+
+---
+
+## Phase 13: Publish
+
+### Nodes
+
+**`publish_output`** (agent, claude-sonnet-4-6) — Copies final .dip to working directory root with spec-derived name. Writes a summary including:
+- Final dippin doctor grade
+- Simmer judge scores (final iteration)
+- Compliance matrix summary
+- Tournament results summary
+- Generation provenance (which model contributed what)
+
+Commits everything.
+
+### Edges
+
+```
 publish_output -> Done
 no_spec_exit -> Done
 ```
@@ -432,9 +498,11 @@ no_spec_exit -> Done
 | Pick | copy_winner | 1 agent |
 | Merge | merge_candidates, validate_merge, fix_merge | 2 agent, 1 tool |
 | Rework | rework_feedback, rework_analysis | 1 human, 1 agent |
-| Final | final_validate, final_fix, publish_output, Done | 1 tool, 2 agent, 1 agent |
+| Final Validation | final_validate, final_fix | 1 tool, 1 agent |
+| Simmer | simmer_judge, simmer_refine, simmer_revalidate | 2 agent, 1 tool |
+| Publish | publish_output, Done | 2 agent |
 
-**Total:** ~40 nodes
+**Total:** ~45 nodes
 
 ---
 
@@ -490,7 +558,7 @@ Each reviewer receives:
 | Final grade C/F | Fix loop to `final_fix` (max 3) |
 | Human chooses rework | Full restart from generation with feedback |
 
-Global `max_restarts: 10` prevents infinite loops.
+Global `max_restarts: 15` prevents infinite loops (accounts for validation fix loops + simmer refinement iterations).
 
 ---
 
@@ -543,6 +611,35 @@ When the spec describes interactions between components (API endpoints, database
 2. Infrastructure setup nodes if needed (start database, start emulator, etc.)
 3. Teardown/cleanup as appropriate
 
+### Scenario Testing Pattern (The Iron Law)
+
+**"NO FEATURE IS VALIDATED UNTIL A SCENARIO PASSES WITH REAL DEPENDENCIES"**
+
+Generated pipelines MUST include scenario testing that exercises real systems:
+
+1. A **scenario setup** tool node that creates `.scratch/` directory and prepares test data against real dependencies (test database instances, sandbox API endpoints, local emulators — never mocks)
+2. A **scenario run** tool node that executes scenario tests in `.scratch/` with real dependencies. Tests must be independent (each sets up own data, no ordering dependencies)
+3. A **scenario extract** tool node that promotes recurring patterns to `scenarios.jsonl` (committed to git, while `.scratch/` stays gitignored)
+4. Conditional routing: pass → continue, fail → fix loop with restart
+
+The truth hierarchy for generated pipelines:
+- Scenario tests (real system, real data) = **TRUTH**
+- Unit tests (isolated) = useful but not sufficient
+- Mocks = explicitly prohibited
+
+When the spec involves external services, the generated pipeline MUST include infrastructure setup nodes (start emulators, create test instances) with health checks before scenario tests run.
+
+### Simmer-Style Refinement Loop
+
+Generated pipelines SHOULD include a simmer-style quality loop for their primary output artifact:
+
+1. A **judge** agent node that evaluates the output against spec criteria (investigation-first — reads the artifact and context before scoring)
+2. A **refine** agent node that addresses the judge's highest-leverage improvement (receives ASI, not scores)
+3. A **revalidate** tool node that confirms the refinement didn't break anything
+4. Restart edges bounded by max_restarts
+
+This pattern is especially valuable for pipelines producing complex artifacts (generated code, documentation, configurations).
+
 ### Human Review Gates
 
 Generated pipelines MUST include at least one human review gate at a meaningful decision point (not just at the end). The analysis phase determines where human input adds the most value — typically after initial implementation and before final shipping.
@@ -556,8 +653,11 @@ Generated pipelines MUST include at least one human review gate at a meaningful 
 3. Every spec requirement traces to at least one node in the compliance matrix
 4. `dippin doctor` grade is A or B
 5. Human approved the output (pick or merge path)
-6. Generated pipeline includes TDD pattern (write tests → run → implement → verify loop)
-7. Generated pipeline includes security review nodes with tech-stack-specific tooling
-8. Generated pipeline includes code quality gates (lint, type check, format)
-9. Generated pipeline includes integration tests when spec describes component interactions
-10. Generated pipeline includes at least one human review gate at a meaningful decision point
+6. Simmer judge scores >= 8 on all criteria (or best iteration after 3 rounds)
+7. Generated pipeline includes TDD pattern (write tests → run → implement → verify loop)
+8. Generated pipeline includes security review nodes with tech-stack-specific tooling
+9. Generated pipeline includes code quality gates (lint, type check, format)
+10. Generated pipeline includes scenario testing with real dependencies (no mocks)
+11. Generated pipeline includes integration tests when spec describes component interactions
+12. Generated pipeline includes at least one human review gate at a meaningful decision point
+13. Generated pipeline includes simmer-style refinement for primary output artifacts (when applicable)
