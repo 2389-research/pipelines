@@ -1,0 +1,28 @@
+# ABOUTME: Meta-pipeline that generates production-quality .dip pipeline files from specs.
+# ABOUTME: Uses multi-model tournament with domain-specific review panels and spec compliance verification.
+
+workflow SpecToDip
+  goal: "Generate a validated, production-quality .dip pipeline from a spec using multi-model tournament with domain-specific review panels and spec compliance verification"
+  start: Start
+  exit: Done
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 15
+
+  agent Start
+    label: Start
+
+  agent Done
+    label: Done
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
