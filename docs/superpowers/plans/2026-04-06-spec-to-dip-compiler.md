@@ -1,0 +1,1650 @@
+# Spec-to-Dip Compiler Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Create `spec_to_dip.dip` — a pipeline that reads a spec (+ optional superpowers plan), runs a multi-model tournament to generate candidate `.dip` files, validates/reviews/refines them, and outputs a production-quality `.dip` pipeline.
+
+**Architecture:** Single `.dip` file with ~47 nodes across 14 phases: discovery → analysis → perspective generation → parallel tournament generation (Claude/GPT/Gemini) → validation fix loops ��� compliance checking → review panel → scoring → human decision gate → optional merge → final validation → simmer refinement → fresh-eyes review → publish. Uses the `dippin` toolchain (`dippin check`, `dippin lint`, `dippin doctor`) as objective quality gates throughout.
+
+**Tech Stack:** Dippin DSL (`.dip` format), shell scripts for tool nodes, `dippin` CLI for validation. Multi-provider: Anthropic (claude-opus-4-6, claude-sonnet-4-6), OpenAI (gpt-5.4), Google (gemini-2.5-pro).
+
+---
+
+## File Map
+
+| File | Action | Responsibility |
+|------|--------|----------------|
+| `spec_to_dip.dip` | Create | The complete pipeline — all ~47 nodes, edges, prompts |
+
+This is a single-file deliverable. The plan is broken into tasks by *pipeline phase* — each task adds one phase's nodes and edges to the file. We build incrementally and validate after each phase.
+
+**Validation strategy:** After each task that adds nodes/edges, run `dippin check` on the partial file. The file will have structural errors (missing edges, unreachable nodes) until all phases are connected, but parse errors should be zero at every step. Full validation (`dippin lint`) runs after the final task connects everything.
+
+**Reference files (read-only):**
+- `/Users/harper/Public/src/2389/dippin-lang/docs/llm-reference.md` — Dippin LLM reference card (syntax, common mistakes)
+- `/Users/harper/Public/src/2389/dippin-lang/docs/syntax.md` — Full syntax reference
+- `/Users/harper/Public/src/2389/dippin-lang/docs/nodes.md` — Node kinds and fields
+- `/Users/harper/Public/src/2389/dippin-lang/docs/edges.md` — Edge syntax and routing
+- `/Users/harper/Public/src/2389/dippin-lang/docs/validation.md` — All 39 diagnostic codes
+- `/Users/harper/Public/src/2389/dot-files/docs/superpowers/specs/2026-04-06-spec-to-dip-compiler-design.md` — The spec for this pipeline
+- `/Users/harper/Public/src/2389/dot-files/examples/ask_and_execute.dip` — Reference: large pipeline with parallel/fan_in, cross-review, human gates
+- `/Users/harper/Public/src/2389/dot-files/examples/interview_loop.dip` — Reference: simmer-style assessment loop
+
+---
+
+## Task 1: Workflow Header, Defaults, and Lifecycle Nodes
+
+**Files:**
+- Create: `spec_to_dip.dip`
+
+- [ ] **Step 1: Create the file with workflow header, defaults, and lifecycle nodes**
+
+Write the foundation of the pipeline — the workflow declaration, defaults block, Start/Done lifecycle nodes, and the `no_spec_exit` error handler.
+
+```dippin
+workflow SpecToDip
+  goal: "Generate a validated, production-quality .dip pipeline from a spec using multi-model tournament with domain-specific review panels and spec compliance verification"
+  start: Start
+  exit: Done
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 15
+
+  agent Start
+    label: Start
+
+  agent Done
+    label: Done
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+```
+
+- [ ] **Step 2: Validate the partial file parses**
+
+Run: `cd /Users/harper/Public/src/2389/dot-files && /Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip`
+
+Expected: JSON output with 3 nodes, 0 edges. No parse errors. (Validation will fail — no edges yet — that's expected.)
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add spec_to_dip.dip
+git commit -m "feat: scaffold spec_to_dip.dip with header, defaults, lifecycle nodes"
+```
+
+---
+
+## Task 2: Phase 1 — Discovery Nodes (find_spec, find_plan)
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add the find_spec tool node**
+
+Add after `no_spec_exit`, before any edges block:
+
+```dippin
+  # ── Phase 1: Discovery ──────────────────────────
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+```
+
+- [ ] **Step 2: Add the find_plan tool node**
+
+```dippin
+  tool find_plan
+    label: "Find Superpowers Plan"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      spec=""
+      plan=""
+      if [ -d docs/superpowers/specs ]; then
+        for f in docs/superpowers/specs/*.md; do
+          [ -f "$f" ] && spec="$f" && break
+        done
+      fi
+      if [ -d docs/superpowers/plans ]; then
+        for f in docs/superpowers/plans/*.md; do
+          [ -f "$f" ] && plan="$f" && break
+        done
+      fi
+      if [ -n "$spec" ] || [ -n "$plan" ]; then
+        printf 'plan_found'
+      else
+        printf 'no_plan'
+      fi
+```
+
+- [ ] **Step 3: Add Phase 1 edges**
+
+Add the edges block at the bottom of the file:
+
+```dippin
+  edges
+    Start -> find_spec
+    find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
+    find_spec -> no_spec_exit      when ctx.tool_stdout = no_spec_found
+    find_plan -> analyze_spec
+    no_spec_exit -> Done
+```
+
+- [ ] **Step 4: Validate parses cleanly**
+
+Run: `/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip`
+
+Expected: JSON output with 5 nodes, 5 edges. No parse errors. (Structural validation will show DIP003 for `analyze_spec` not existing yet — expected.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 1 discovery nodes (find_spec, find_plan)"
+```
+
+---
+
+## Task 3: Phase 2 — Spec Analysis Nodes
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add the analyze_spec agent node**
+
+Add after the Phase 1 nodes, before the edges block:
+
+```dippin
+  # ── Phase 2: Spec Analysis ─────────────────────
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    max_retries: 3
+    retry_target: analyze_spec
+    writes: spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file and optional superpowers plan. Produce a structured analysis for pipeline generation.
+
+      ## Process
+      1. Find and read the spec file (the previous step confirmed one exists)
+      2. Check for superpowers artifacts in docs/superpowers/specs/*.md and docs/superpowers/plans/*.md
+      3. Write docs/plans/dip_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      [Name, purpose, one-paragraph description]
+
+      ### Tech Stack
+      - Language: [e.g., Python 3.12]
+      - Framework: [e.g., FastAPI]
+      - Database: [e.g., PostgreSQL]
+      - Test framework: [e.g., pytest]
+      - Linter: [e.g., ruff]
+      - Type checker: [e.g., mypy]
+      - Package manager: [e.g., uv]
+
+      ### Components (numbered)
+      For each component:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can run in parallel, which must be sequential.
+
+      ### Recommended Topology
+      Based on component count and dependencies:
+      - LINEAR: 1-3 components, simple deps
+      - FAN_OUT: 4-8 components, shared foundation, independent features
+      - DAG: 8+ components with cross-dependencies
+
+      ### Architectural Slots
+      Key design decisions where multiple valid approaches exist. For each slot:
+      - What the decision is
+      - 2-3 valid approaches
+      - Trade-offs
+
+      ### Pipeline Node Inventory
+      Which components need agent nodes, which need tool nodes, where human gates belong.
+
+      ### Edge Pattern Recommendations
+      Where to use conditional routing, retry loops, fallback paths.
+
+      ### Spec Requirements Checklist
+      Every discrete requirement extracted from the spec, numbered R1-Rn for compliance tracing.
+
+      4. Commit: git add -A && git commit -m 'docs(analysis): spec analysis for pipeline generation'
+
+      ## Success Criteria
+      - docs/plans/dip_analysis.md exists with ALL sections filled in
+      - Every component named, every dependency mapped
+      - Requirements numbered for traceability
+```
+
+- [ ] **Step 2: Add the check_analysis tool node**
+
+```dippin
+  tool check_analysis
+    label: "Check Analysis File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      if [ ! -f docs/plans/dip_analysis.md ]; then
+        printf 'analysis_missing'
+        exit 0
+      fi
+      for section in "Project Summary" "Tech Stack" "Components" "Dependency Graph" "Recommended Topology" "Architectural Slots" "Pipeline Node Inventory" "Edge Pattern" "Spec Requirements Checklist"; do
+        if ! grep -q "$section" docs/plans/dip_analysis.md; then
+          printf 'analysis_missing'
+          exit 0
+        fi
+      done
+      printf 'analysis_ok'
+```
+
+- [ ] **Step 3: Add Phase 2 edges**
+
+Add to the edges block:
+
+```dippin
+    analyze_spec -> check_analysis
+    check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
+    check_analysis -> analyze_spec           when ctx.tool_stdout = analysis_missing  restart: true
+```
+
+- [ ] **Step 4: Validate parses**
+
+Run: `/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip`
+
+Expected: No parse errors. DIP003 for `identify_perspectives` not existing yet — expected.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 2 spec analysis nodes"
+```
+
+---
+
+## Task 4: Phase 3 — Perspective Generation
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add the identify_perspectives agent node**
+
+Add after Phase 2 nodes:
+
+```dippin
+  # ── Phase 3: Perspective Generation (Jam) ──────
+
+  agent identify_perspectives
+    label: "Identify Perspectives"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: perspectives
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read docs/plans/dip_analysis.md and identify 3-5 domain-specific perspectives relevant to this project's pipeline design.
+
+      These are NOT hardcoded personas. Generate them fresh based on the problem domain in the spec.
+
+      ## Process
+      1. Read the spec analysis, especially Tech Stack, Components, and Architectural Slots
+      2. Identify which professional perspectives would produce the most diverse pipeline designs
+      3. Write .ai/perspectives.md with 3-5 perspectives, each containing:
+         - Role title (e.g., "QA engineer focused on test coverage and edge cases")
+         - What this perspective prioritizes in pipeline design
+         - What this perspective would critique in a pipeline
+         - Specific architectural slots this perspective has strong opinions about
+
+      ## Examples by domain
+      Web app: full-stack architect, QA engineer, DevOps engineer, security engineer
+      Data pipeline: data engineer, ML engineer, SRE, data quality analyst
+      CLI tool: developer experience engineer, test engineer, release manager
+      API: API design specialist, performance engineer, integration specialist
+
+      Pick perspectives that will produce genuinely different pipeline designs, not slight variations of the same approach.
+```
+
+- [ ] **Step 2: Add Phase 3 edge**
+
+Add to edges block:
+
+```dippin
+    identify_perspectives -> gen_parallel
+```
+
+- [ ] **Step 3: Validate and commit**
+
+Run: `/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip`
+
+Expected: Parses. DIP003 for `gen_parallel` — expected.
+
+```bash
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 3 perspective generation"
+```
+
+---
+
+## Task 5: Phase 4 — Generation Tournament (Parallel)
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+This is the largest task — three generation agents with substantial prompts that embed the dippin LLM reference card.
+
+- [ ] **Step 1: Add parallel/fan_in declarations and gen_claude**
+
+Add after Phase 3 nodes:
+
+```dippin
+  # ── Phase 4: Generation Tournament ─────────────
+
+  parallel gen_parallel -> gen_claude, gen_gpt, gen_gemini
+
+  agent gen_claude
+    label: "Claude Generation"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_claude
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference
+      - workflow <Name> with goal:, start:, exit: header
+      - defaults block for model, provider, max_retries, max_restarts
+      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
+      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
+      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
+      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
+      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
+      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+
+      ## Common LLM Mistakes to Avoid
+      1. Missing start: or exit: field
+      2. Edge references undeclared node
+      3. parallel targets without matching fan_in sources
+      4. Bare variable names in conditions (use ctx.outcome, not outcome)
+      5. Agent node with empty prompt
+      6. Missing tool timeout
+      7. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+
+      ## Generation Emphasis: THOROUGHNESS
+      Your strength is exhaustive edge conditions and spec compliance. Make sure:
+      - Every requirement from the Spec Requirements Checklist maps to at least one node
+      - All conditional edges are exhaustive (success/fail pairs) or have fallback edges
+      - All tool nodes have timeouts
+      - All back-edges have restart: true
+      - Use auto_status: true on decision-point agents
+      - Use goal_gate: true on critical quality checks
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/claude.dip
+      mkdir -p .ai/candidates first.
+```
+
+- [ ] **Step 2: Add gen_gpt**
+
+```dippin
+  agent gen_gpt
+    label: "GPT Generation"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_gpt
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference
+      - workflow <Name> with goal:, start:, exit: header
+      - defaults block for model, provider, max_retries, max_restarts
+      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
+      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
+      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
+      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
+      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
+      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+
+      ## Common LLM Mistakes to Avoid
+      1. Missing start: or exit: field
+      2. Edge references undeclared node
+      3. parallel targets without matching fan_in sources
+      4. Bare variable names in conditions (use ctx.outcome, not outcome)
+      5. Agent node with empty prompt
+      6. Missing tool timeout
+      7. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+      - TDD Loop: write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass/fail]
+      - Security Review: security_scan (tool) -> security_review (agent, goal_gate) -> [pass/fail]
+      - Code Quality Gates: lint, type_check, format_check (all tool nodes with timeouts)
+      - Scenario Testing: real dependencies only, no mocks, scenario_setup -> scenario_run -> scenario_extract
+      - Fresh-Eyes Review: agent with goal_gate immediately before every commit node
+      - Human Review Gate: at least one, at a meaningful decision point
+      - Simmer Refinement: for complex output artifacts
+
+      ## Generation Emphasis: STRUCTURAL CLARITY
+      Your strength is clean topology and readable structure. Make sure:
+      - The pipeline reads top-to-bottom as a clear narrative
+      - Phase comments (# ── Phase N: Name ──) separate logical sections
+      - Node IDs are descriptive and consistent (PascalCase or snake_case, pick one)
+      - Parallel branches are symmetric and balanced
+      - Edge routing is immediately understandable
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/gpt.dip
+      mkdir -p .ai/candidates first.
+```
+
+- [ ] **Step 3: Add gen_gemini**
+
+```dippin
+  agent gen_gemini
+    label: "Gemini Generation"
+    model: gemini-2.5-pro
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference
+      - workflow <Name> with goal:, start:, exit: header
+      - defaults block for model, provider, max_retries, max_restarts
+      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
+      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
+      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
+      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
+      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
+      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+
+      ## Common LLM Mistakes to Avoid
+      1. Missing start: or exit: field
+      2. Edge references undeclared node
+      3. parallel targets without matching fan_in sources
+      4. Bare variable names in conditions (use ctx.outcome, not outcome)
+      5. Agent node with empty prompt
+      6. Missing tool timeout
+      7. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+      - TDD Loop: write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass/fail]
+      - Security Review: security_scan (tool) -> security_review (agent, goal_gate) -> [pass/fail]
+      - Code Quality Gates: lint, type_check, format_check (all tool nodes with timeouts)
+      - Scenario Testing: real dependencies only, no mocks, scenario_setup -> scenario_run -> scenario_extract
+      - Fresh-Eyes Review: agent with goal_gate immediately before every commit node
+      - Human Review Gate: at least one, at a meaningful decision point
+      - Simmer Refinement: for complex output artifacts
+
+      ## Generation Emphasis: ROBUSTNESS
+      Your strength is error handling and edge case coverage. Make sure:
+      - Every decision point has explicit failure handling
+      - Retry loops are bounded with max_retries and fallback_target
+      - Tool commands use set -eu and handle failure gracefully
+      - Pipeline can recover from partial failures
+      - Fallback edges exist for every conditional routing point
+      - max_restarts is set appropriately for the number of loops
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/gemini.dip
+      mkdir -p .ai/candidates first.
+
+  fan_in gen_join <- gen_claude, gen_gpt, gen_gemini
+```
+
+- [ ] **Step 4: Add Phase 4 edges**
+
+Add to edges block:
+
+```dippin
+    identify_perspectives -> gen_parallel
+    gen_parallel -> gen_claude
+    gen_parallel -> gen_gpt
+    gen_parallel -> gen_gemini
+    gen_claude -> gen_join
+    gen_gpt -> gen_join
+    gen_gemini -> gen_join
+```
+
+Note: Remove the duplicate `identify_perspectives -> gen_parallel` edge from Task 4 Step 2 — it's now in this block.
+
+- [ ] **Step 5: Validate and commit**
+
+Run: `/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip`
+
+Expected: Parses with 12 nodes. No parse errors.
+
+```bash
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 4 generation tournament (3 models parallel)"
+```
+
+---
+
+## Task 6: Phase 5 — Validation + Fix Loop
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add validate_all tool node**
+
+Add after Phase 4 nodes:
+
+```dippin
+  # ── Phase 5: Validation + Fix Loop ─────────────
+
+  tool validate_all
+    label: "Validate All Candidates"
+    timeout: 60s
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .ai/candidates
+      errors=""
+      for name in claude gpt gemini; do
+        f=".ai/candidates/${name}.dip"
+        if [ ! -f "$f" ]; then
+          errors="${errors}${name}_missing "
+          continue
+        fi
+        result=$(dippin check --format json "$f" 2>&1)
+        printf '%s' "$result" > ".ai/candidates/${name}_check.json"
+        valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+        if [ -z "$valid" ]; then
+          errors="${errors}${name} "
+        fi
+      done
+      if [ -z "$errors" ]; then
+        printf 'all_valid'
+      else
+        count=$(printf '%s' "$errors" | wc -w | tr -d ' ')
+        if [ "$count" -gt 1 ]; then
+          printf 'multiple_errors'
+        else
+          printf '%s_errors' "$(printf '%s' "$errors" | tr -d ' ')"
+        fi
+      fi
+```
+
+- [ ] **Step 2: Add fix agents**
+
+```dippin
+  agent fix_claude
+    label: "Fix Claude Candidate"
+    reads: candidate_claude
+    writes: candidate_claude
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/claude.dip.
+
+      ## Process
+      1. Read .ai/candidates/claude_check.json for the dippin check diagnostics
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/claude.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/claude.dip
+
+      ## Common Fixes
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
+
+  agent fix_gpt
+    label: "Fix GPT Candidate"
+    reads: candidate_gpt
+    writes: candidate_gpt
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/gpt.dip.
+
+      ## Process
+      1. Read .ai/candidates/gpt_check.json for the dippin check diagnostics
+      2. Read .ai/candidates/gpt.dip
+      3. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      4. Write the fixed version back to .ai/candidates/gpt.dip
+
+  agent fix_gemini
+    label: "Fix Gemini Candidate"
+    reads: candidate_gemini
+    writes: candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/gemini.dip.
+
+      ## Process
+      1. Read .ai/candidates/gemini_check.json for the dippin check diagnostics
+      2. Read .ai/candidates/gemini.dip
+      3. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      4. Write the fixed version back to .ai/candidates/gemini.dip
+
+  agent fix_all
+    label: "Fix All Candidates"
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Multiple candidates have validation errors. Fix all of them.
+
+      ## Process
+      For each of claude, gpt, gemini:
+      1. Read .ai/candidates/{name}_check.json
+      2. If errors exist, read .ai/candidates/{name}.dip
+      3. Fix the minimum necessary
+      4. Write fixed version back
+
+      Fix each candidate independently — do not merge or cross-pollinate.
+```
+
+- [ ] **Step 3: Add Phase 5 edges**
+
+```dippin
+    gen_join -> validate_all
+    validate_all -> compliance_parallel       when ctx.tool_stdout = all_valid
+    validate_all -> fix_claude                when ctx.tool_stdout = claude_errors
+    validate_all -> fix_gpt                   when ctx.tool_stdout = gpt_errors
+    validate_all -> fix_gemini                when ctx.tool_stdout = gemini_errors
+    validate_all -> fix_all                   when ctx.tool_stdout = multiple_errors
+    fix_claude -> validate_all                restart: true
+    fix_gpt -> validate_all                   restart: true
+    fix_gemini -> validate_all                restart: true
+    fix_all -> validate_all                   restart: true
+```
+
+- [ ] **Step 4: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 5 validation and fix loop"
+```
+
+---
+
+## Task 7: Phase 6 — Spec Compliance Check (Parallel)
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add compliance parallel/fan_in and agents**
+
+```dippin
+  # ── Phase 6: Spec Compliance Check ─────────────
+
+  parallel compliance_parallel -> compliance_claude, compliance_gpt, compliance_gemini
+
+  agent compliance_claude
+    label: "Claude Compliance Check"
+    reads: spec_analysis, candidate_claude
+    writes: compliance_claude
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the Claude candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/claude.dip
+      3. For each numbered requirement (R1, R2, ...), find the node(s) that implement it
+      4. Write .ai/candidates/claude_compliance.md as a table:
+
+      | # | Requirement | Node(s) | Coverage | Gap |
+      |---|------------|---------|----------|-----|
+
+      Coverage values: Full, Partial, MISSING
+      5. Also check for required patterns:
+         - TDD loop present? (write_tests -> run -> implement -> verify)
+         - Security review present? (scan tool + review agent with goal_gate)
+         - Code quality gates present? (lint, type check, format tools)
+         - Scenario testing present? (real deps, no mocks)
+         - Fresh-eyes before commit? (goal_gate agent before commit node)
+         - Human review gate present?
+
+      If any requirement is MISSING or any required pattern is absent, output STATUS: gaps_found
+      If all requirements are Full/Partial and all patterns present, output STATUS: compliant
+
+  agent compliance_gpt
+    label: "GPT Compliance Check"
+    reads: spec_analysis, candidate_gpt
+    writes: compliance_gpt
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the GPT candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/gpt.dip
+      3. For each numbered requirement, find implementing node(s)
+      4. Write .ai/candidates/gpt_compliance.md as a compliance matrix table
+      5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
+
+      Output STATUS: compliant or STATUS: gaps_found
+
+  agent compliance_gemini
+    label: "Gemini Compliance Check"
+    reads: spec_analysis, candidate_gemini
+    writes: compliance_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the Gemini candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/gemini.dip
+      3. For each numbered requirement, find implementing node(s)
+      4. Write .ai/candidates/gemini_compliance.md as a compliance matrix table
+      5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
+
+      Output STATUS: compliant or STATUS: gaps_found
+
+  fan_in compliance_join <- compliance_claude, compliance_gpt, compliance_gemini
+```
+
+- [ ] **Step 2: Add Phase 6 edges**
+
+```dippin
+    compliance_parallel -> compliance_claude
+    compliance_parallel -> compliance_gpt
+    compliance_parallel -> compliance_gemini
+    compliance_claude -> compliance_join
+    compliance_gpt -> compliance_join
+    compliance_gemini -> compliance_join
+    compliance_join -> review_parallel
+```
+
+- [ ] **Step 3: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 6 spec compliance check (parallel)"
+```
+
+---
+
+## Task 8: Phase 7 — Review Panel (5 Parallel Reviewers)
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add review parallel/fan_in and 5 reviewer agents**
+
+```dippin
+  # ── Phase 7: Review Panel ──────────────────────
+
+  parallel review_parallel -> review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+
+  agent review_structure
+    label: "Structure Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate graph structure of all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. Read docs/plans/dip_analysis.md for recommended topology
+      3. For each candidate, evaluate:
+         - Are edges exhaustive? (success/fail pairs, fallback edges)
+         - Are conditions syntactically correct? (ctx.* namespace prefix)
+         - Are parallel/fan_in correctly matched?
+         - Does the topology match the recommended architecture?
+         - Are all nodes reachable from start?
+         - Can execution reach exit from every path?
+      4. Write .ai/reviews/structure.md with scores and detailed reasoning for each candidate
+
+  agent review_compliance
+    label: "Compliance Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis, compliance_claude, compliance_gpt, compliance_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Cross-check compliance matrices against the spec. Score each candidate 1-10.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md (spec requirements checklist)
+      2. Read all three compliance matrices from .ai/candidates/*_compliance.md
+      3. For each candidate, evaluate:
+         - Are all requirements genuinely addressed or just superficially mentioned?
+         - Do the mapped nodes actually implement the requirement?
+         - Are there requirements marked "Full" that are really "Partial"?
+         - Are required patterns (TDD, security, scenarios, fresh-eyes, human gate) real or perfunctory?
+      4. Write .ai/reviews/compliance.md with scores and evidence
+
+  agent review_robustness
+    label: "Robustness Review"
+    model: gemini-2.5-pro
+    provider: gemini
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate error handling and robustness of all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate:
+         - Do retry loops have max_retries set?
+         - Do critical nodes have fallback_target?
+         - Are tool timeouts realistic (not 5s for a build, not 10m for a grep)?
+         - Are goal_gate nodes placed at critical quality checks?
+         - Is max_restarts sufficient for the number of restart edges?
+         - Can the pipeline recover from partial failures?
+         - Do shell commands use set -eu?
+      3. Write .ai/reviews/robustness.md with scores and specific weaknesses found
+
+  agent review_efficiency
+    label: "Efficiency Review"
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Check for efficiency issues in all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate:
+         - Are there unnecessary serial bottlenecks? (could parallel fan-out help?)
+         - Are model choices appropriate? (Opus for analysis, Sonnet for routine tasks)
+         - Are reasoning_effort levels justified? (high only where needed)
+         - Is the pipeline longer than necessary? (unnecessary nodes?)
+         - Could any adjacent agent nodes be combined without loss?
+      3. Write .ai/reviews/efficiency.md with scores and optimization suggestions
+
+  agent review_prompts
+    label: "Prompt Quality Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate prompt quality across all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate every agent node's prompt:
+         - Is it specific enough to produce good output? (not "review the code")
+         - Does it include success criteria?
+         - Does it reference context variables correctly? (${ctx.*} syntax)
+         - Are instructions contradictory or ambiguous?
+         - Does it tell the agent what format to output in?
+         - For auto_status agents: does the prompt instruct STATUS: success/fail output?
+      3. Write .ai/reviews/prompts.md with scores and specific prompt improvements
+
+  fan_in review_join <- review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+```
+
+- [ ] **Step 2: Add Phase 7 edges**
+
+```dippin
+    review_parallel -> review_structure
+    review_parallel -> review_compliance
+    review_parallel -> review_robustness
+    review_parallel -> review_efficiency
+    review_parallel -> review_prompts
+    review_structure -> review_join
+    review_compliance -> review_join
+    review_robustness -> review_join
+    review_efficiency -> review_join
+    review_prompts -> review_join
+    review_join -> synthesize_scores
+```
+
+- [ ] **Step 3: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 7 review panel (5 parallel reviewers)"
+```
+
+---
+
+## Task 9: Phase 8-9 — Scoring + Human Decision Gate
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add synthesize_scores agent**
+
+```dippin
+  # ── Phase 8: Scoring & Recommendation ──────────
+
+  agent synthesize_scores
+    label: "Synthesize Tournament Results"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    auto_status: true
+    reads: compliance_claude, compliance_gpt, compliance_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize all review panel findings and compliance matrices into tournament results.
+
+      ## Process
+      1. Read all review files from .ai/reviews/ (structure, compliance, robustness, efficiency, prompts)
+      2. Read all compliance matrices from .ai/candidates/*_compliance.md
+      3. Produce .ai/candidates/tournament_results.md containing:
+
+      ### Score Summary
+      | Dimension | Claude | GPT | Gemini |
+      |-----------|--------|-----|--------|
+      | Structure | X/10 | X/10 | X/10 |
+      | Compliance | X/10 | X/10 | X/10 |
+      | Robustness | X/10 | X/10 | X/10 |
+      | Efficiency | X/10 | X/10 | X/10 |
+      | Prompts | X/10 | X/10 | X/10 |
+      | **Total** | **X/50** | **X/50** | **X/50** |
+
+      ### Ranking
+      1st, 2nd, 3rd with reasoning.
+
+      ### Tensions
+      Where reviewers disagreed. Surface the tension — do not paper over it.
+
+      ### Synthesis Opportunities
+      Specific elements from non-winning candidates worth merging:
+      - "GPT's prompt for node X is clearer than Claude's"
+      - "Gemini's retry pattern on node Y is more robust"
+
+      ### Compliance Status
+      Which candidates have gaps? Which are fully compliant?
+
+      ### Recommendation
+      If clear winner with 5+ point lead: STATUS: clear_winner
+      If top two are close or synthesis opportunities are significant: STATUS: merge_recommended
+      If all candidates have major gaps: STATUS: rework_needed
+```
+
+- [ ] **Step 2: Add human_select node**
+
+```dippin
+  # ── Phase 9: Human Decision ────────────────────
+
+  human human_select
+    label: "Tournament results are in. Pick winner, merge best elements, or rework?"
+    mode: choice
+    default: "pick"
+```
+
+- [ ] **Step 3: Add Phase 8-9 edges**
+
+```dippin
+    synthesize_scores -> human_select
+    human_select -> copy_winner        label: "[P] Pick winner"
+    human_select -> merge_candidates   label: "[M] Merge best elements"
+    human_select -> rework_feedback    label: "[R] Rework with feedback"
+```
+
+- [ ] **Step 4: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 8-9 scoring and human decision gate"
+```
+
+---
+
+## Task 10: Phases 10a/10b/10c — Pick, Merge, and Rework Paths
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add copy_winner (pick path)**
+
+```dippin
+  # ── Phase 10a: Pick Winner ─────────────────────
+
+  agent copy_winner
+    label: "Copy Winner to Final"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Copy the tournament winner to .ai/candidates/final.dip.
+
+      ## Process
+      1. Read .ai/candidates/tournament_results.md to determine the winner
+      2. Copy .ai/candidates/{winner}.dip to .ai/candidates/final.dip
+      3. Apply any trivial fixes noted by reviewers (missing labels, lint warnings)
+      4. Do NOT make structural changes — the winner was already validated
+```
+
+- [ ] **Step 2: Add merge path nodes**
+
+```dippin
+  # ── Phase 10b: Merge Path ──────────────────────
+
+  agent merge_candidates
+    label: "Merge Best Elements"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Active synthesis: take the winning candidate as base and incorporate the best elements from other candidates.
+
+      ## Process
+      1. Read .ai/candidates/tournament_results.md for:
+         - Which candidate won
+         - Synthesis opportunities (specific elements to incorporate)
+      2. Read all three .dip candidates
+      3. Start with the winner as the base
+      4. For each synthesis opportunity identified:
+         - Evaluate whether incorporating it improves the pipeline
+         - If yes, make the change while preserving structural validity
+      5. Write the merged result to .ai/candidates/final.dip
+
+      ## Rules
+      - Preserve structural validity at all times
+      - Every change must be justified by the synthesis opportunities
+      - Do not add elements not identified by the review panel
+      - Run dippin check mentally after each change
+
+  tool validate_merge
+    label: "Validate Merged Output"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
+      printf '%s' "$result" > .ai/candidates/final_check.json
+      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+      if [ -n "$valid" ]; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  agent fix_merge
+    label: "Fix Merged Output"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors introduced by the merge.
+
+      ## Process
+      1. Read .ai/candidates/final_check.json for diagnostics
+      2. Read .ai/candidates/final.dip
+      3. Fix the minimum necessary
+      4. Write back to .ai/candidates/final.dip
+```
+
+- [ ] **Step 3: Add rework path nodes**
+
+```dippin
+  # ── Phase 10c: Rework Path ─────────────────────
+
+  human rework_feedback
+    label: "What needs to change? Provide specific feedback."
+    mode: freeform
+
+  agent rework_analysis
+    label: "Incorporate Rework Feedback"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The human requested rework. Incorporate their feedback into the analysis.
+
+      ## Process
+      1. Read the human's feedback from context
+      2. Read docs/plans/dip_analysis.md
+      3. Update the analysis to reflect the feedback:
+         - Add new requirements if specified
+         - Modify architectural recommendations if needed
+         - Update the requirements checklist
+      4. Write updated analysis back to docs/plans/dip_analysis.md
+      5. Commit: git add -A && git commit -m 'docs(analysis): update analysis with rework feedback'
+```
+
+- [ ] **Step 4: Add Phase 10 edges**
+
+```dippin
+    copy_winner -> final_validate
+    merge_candidates -> validate_merge
+    validate_merge -> fix_merge              when ctx.tool_stdout = errors
+    fix_merge -> validate_merge              restart: true
+    validate_merge -> final_validate         when ctx.tool_stdout = valid
+    rework_feedback -> rework_analysis
+    rework_analysis -> gen_parallel          restart: true
+```
+
+- [ ] **Step 5: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 10 pick/merge/rework paths"
+```
+
+---
+
+## Task 11: Phase 11 — Final Validation
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add final_validate and final_fix**
+
+```dippin
+  # ── Phase 11: Final Validation ─────────────────
+
+  tool final_validate
+    label: "Final Validation Suite"
+    timeout: 60s
+    command:
+      #!/bin/sh
+      set -eu
+      f=".ai/candidates/final.dip"
+      check=$(dippin check --format json "$f" 2>&1)
+      errors=$(printf '%s' "$check" | grep -o '"errors":[0-9]*' | grep -o '[0-9]*')
+      warnings=$(printf '%s' "$check" | grep -o '"warnings":[0-9]*' | grep -o '[0-9]*')
+      if [ "$errors" -gt 0 ]; then
+        printf 'grade_F'
+        exit 0
+      fi
+      doctor=$(dippin doctor "$f" 2>&1)
+      grade=$(printf '%s' "$doctor" | grep -o 'Grade: [A-F]' | grep -o '[A-F]' || printf 'C')
+      if [ "$grade" = "A" ]; then
+        printf 'grade_A'
+      elif [ "$grade" = "B" ]; then
+        printf 'grade_B'
+      else
+        printf 'grade_C'
+      fi
+
+  agent final_fix
+    label: "Fix Final Issues"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The final .dip file has lint warnings or doctor suggestions. Fix them.
+
+      ## Process
+      1. Run dippin lint .ai/candidates/final.dip and read output
+      2. Run dippin doctor .ai/candidates/final.dip and read suggestions
+      3. Fix each issue in .ai/candidates/final.dip
+      4. Focus on: missing timeouts, empty prompts, unused writes, missing fallbacks
+```
+
+- [ ] **Step 2: Add Phase 11 edges**
+
+```dippin
+    final_validate -> final_fix              when ctx.tool_stdout = grade_C
+    final_validate -> final_fix              when ctx.tool_stdout = grade_F
+    final_fix -> final_validate              restart: true
+    final_validate -> simmer_judge           when ctx.tool_stdout = grade_A
+    final_validate -> simmer_judge           when ctx.tool_stdout = grade_B
+```
+
+- [ ] **Step 3: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 11 final validation"
+```
+
+---
+
+## Task 12: Phase 12 — Simmer Refinement
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add simmer_judge, simmer_refine, simmer_revalidate**
+
+```dippin
+  # ── Phase 12: Simmer Refinement ────────────────
+
+  agent simmer_judge
+    label: "Simmer Judge"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Investigation-first judge. Evaluate the final .dip pipeline against quality criteria.
+
+      ## Investigation (do this BEFORE scoring)
+      1. Read the original spec file
+      2. Read docs/plans/dip_analysis.md
+      3. Read .ai/candidates/final.dip thoroughly
+      4. Read the compliance matrix for the winning candidate
+      5. Read .ai/candidates/tournament_results.md
+
+      ## Scoring Criteria (1-10 each)
+      - **Spec fidelity**: Does the pipeline do what the spec says? Every requirement addressed?
+      - **Prompt specificity**: Are prompts actionable with success criteria? Not vague?
+      - **Edge exhaustiveness**: Can execution get stuck? Missing fallbacks?
+      - **Error recovery**: Retry loops bounded? Fallback targets set? Goal gates on critical nodes?
+      - **TDD quality**: Is the test-first loop real or perfunctory? Tests before implementation?
+      - **Security depth**: Tech-stack-specific scan tool? OWASP-aware review agent?
+      - **Scenario testing**: Real dependencies? No mocks? Infrastructure setup?
+
+      ## Output
+      Write scores and reasoning to .ai/simmer/judge_round_N.md (increment N each round).
+
+      If ALL scores >= 8: STATUS: success
+      If ANY score < 8: STATUS: fail
+
+      When STATUS: fail, include ONE Actionable Side Information (ASI):
+      The single highest-leverage improvement. Be specific:
+      - BAD: "improve prompts"
+      - GOOD: "Node build_feature has a vague prompt 'implement the feature' — add success criteria, expected artifacts, and the tech stack context from the analysis"
+
+  agent simmer_refine
+    label: "Simmer Refine"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Apply the judge's ASI (Actionable Side Information) to improve the .dip file.
+
+      ## Process
+      1. Read the latest .ai/simmer/judge_round_N.md for the ASI
+      2. Read .ai/candidates/final.dip
+      3. Make the MINIMUM change to address the ASI
+      4. Write the improved version back to .ai/candidates/final.dip
+
+      ## Rules
+      - You do NOT see scores. Only the ASI.
+      - Make one focused improvement, not scattered edits
+      - Preserve structural validity
+      - Do not add nodes/edges not implied by the ASI
+
+  tool simmer_revalidate
+    label: "Simmer Revalidate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
+      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+      if [ -n "$valid" ]; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+```
+
+- [ ] **Step 2: Add Phase 12 edges**
+
+```dippin
+    simmer_judge -> fresh_eyes               when ctx.outcome = success
+    simmer_judge -> simmer_refine            when ctx.outcome = fail
+    simmer_refine -> simmer_revalidate
+    simmer_revalidate -> simmer_judge        when ctx.tool_stdout = valid    restart: true
+    simmer_revalidate -> simmer_refine       when ctx.tool_stdout = errors   restart: true
+```
+
+- [ ] **Step 3: Validate and commit**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin parse spec_to_dip.dip
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 12 simmer refinement loop"
+```
+
+---
+
+## Task 13: Phase 13-14 — Fresh-Eyes Review + Publish
+
+**Files:**
+- Modify: `spec_to_dip.dip`
+
+- [ ] **Step 1: Add fresh_eyes and fresh_eyes_revalidate**
+
+```dippin
+  # ── Phase 13: Fresh-Eyes Review ────────────────
+
+  agent fresh_eyes
+    label: "Fresh-Eyes Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Final sanity check. Re-read the .dip file from scratch as if seeing it for the first time.
+
+      Passing validation proves the .dip works as designed. Fresh-eyes proves the design is correct.
+
+      ## Systematic Checks
+      1. **Security**: Do tool commands have injection risks? Are shell scripts using set -eu? Are API keys or secrets hardcoded in prompts?
+      2. **Logic errors**: Can edge conditions deadlock? Are there unreachable nodes the validator missed? Do restart loops have bounded retries?
+      3. **Spec fidelity**: Re-read the original spec one more time. Is anything missing that slipped through the compliance matrix?
+      4. **Prompt correctness**: Do prompts reference context variables (${ctx.*}) that upstream nodes actually produce? Are instructions contradictory?
+      5. **Operational safety**: Are tool timeouts realistic? Could any tool command cause data loss? Are fallback paths sensible?
+
+      ## Process
+      1. Read the original spec file
+      2. Read .ai/candidates/final.dip from top to bottom
+      3. For each check above, note any issues found
+      4. If issues found:
+         - Fix them directly in .ai/candidates/final.dip
+         - List what you fixed in .ai/fresh_eyes_report.md
+         - STATUS: fail (to trigger revalidation)
+      5. If clean:
+         - Write .ai/fresh_eyes_report.md confirming clean review
+         - STATUS: success
+
+  tool fresh_eyes_revalidate
+    label: "Fresh-Eyes Revalidate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
+      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+      if [ -n "$valid" ]; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+```
+
+- [ ] **Step 2: Add publish_output**
+
+```dippin
+  # ── Phase 14: Publish ──────────────────────────
+
+  agent publish_output
+    label: "Publish Final Pipeline"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Copy the final .dip to the working directory root and commit.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md for the project name
+      2. Derive a filename: {project_name_snake_case}.dip
+      3. Copy .ai/candidates/final.dip to ./{filename}.dip
+      4. Write .ai/summary.md containing:
+         - Final dippin doctor grade
+         - Simmer judge scores (from latest .ai/simmer/judge_round_*.md)
+         - Fresh-eyes review result
+         - Compliance matrix summary
+         - Tournament results summary (winner, scores)
+         - Generation provenance (which model contributed what)
+      5. Commit:
+         git add ./{filename}.dip .ai/summary.md
+         git commit -m "feat: generate {filename}.dip from spec via multi-model tournament"
+```
+
+- [ ] **Step 3: Add Phase 13-14 edges**
+
+```dippin
+    fresh_eyes -> publish_output             when ctx.outcome = success
+    fresh_eyes -> fresh_eyes_revalidate      when ctx.outcome = fail
+    fresh_eyes_revalidate -> fresh_eyes      restart: true
+    publish_output -> Done
+```
+
+- [ ] **Step 4: Validate the complete pipeline**
+
+Run the full validation suite:
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin check spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin lint spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin doctor spec_to_dip.dip
+```
+
+Expected:
+- `dippin check`: valid: true, errors: 0
+- `dippin lint`: zero warnings (or justified warnings)
+- `dippin doctor`: grade A or B
+
+If any validation fails, fix the issues before committing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add spec_to_dip.dip
+git commit -m "feat(spec-to-dip): add Phase 13-14 fresh-eyes review and publish — pipeline complete"
+```
+
+---
+
+## Task 14: Full Pipeline Validation and Cleanup
+
+**Files:**
+- Modify: `spec_to_dip.dip` (fixes only)
+
+- [ ] **Step 1: Run complete validation**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin check --format json spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin lint spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin doctor spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin coverage spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin graph spec_to_dip.dip
+```
+
+- [ ] **Step 2: Fix any remaining diagnostics**
+
+Read each diagnostic carefully. For each:
+- DIP001-DIP009 errors: MUST fix
+- DIP101-DIP133 warnings: fix if possible, document justification if not
+- Ensure all back-edges have `restart: true`
+- Ensure all tool nodes have `timeout:`
+- Ensure no agent nodes have empty prompts
+
+- [ ] **Step 3: Verify edge completeness**
+
+Manually verify:
+- `no_spec_exit -> Done` exists
+- Every parallel has a matching fan_in
+- Every conditional routing has exhaustive conditions or fallback
+- The rework path (`rework_analysis -> gen_parallel restart: true`) correctly loops back
+
+- [ ] **Step 4: Run dippin fmt**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin fmt --write spec_to_dip.dip
+```
+
+This canonicalizes indentation and formatting.
+
+- [ ] **Step 5: Final validation after formatting**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin check spec_to_dip.dip
+/Users/harper/Public/src/2389/dippin-lang/dippin doctor spec_to_dip.dip
+```
+
+Expected: valid: true, grade A or B.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spec_to_dip.dip
+git commit -m "chore(spec-to-dip): validation fixes and canonical formatting"
+```
+
+---
+
+## Task 15: Export Visualization and Final Commit
+
+**Files:**
+- Modify: none (read-only verification)
+
+- [ ] **Step 1: Generate DOT visualization**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin export-dot spec_to_dip.dip > spec_to_dip.dot
+```
+
+- [ ] **Step 2: Verify graph structure visually**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin graph spec_to_dip.dip
+```
+
+Verify the ASCII DAG shows:
+- Linear flow from Start through discovery/analysis/perspectives
+- Fan-out to 3 generation agents
+- Fan-in to validation
+- Fan-out to 3 compliance agents
+- Fan-in to 5-way review parallel
+- Fan-in to scoring
+- Human choice with 3 outgoing paths
+- Merge path with fix loop
+- Final validate → simmer loop → fresh-eyes → publish → Done
+
+- [ ] **Step 3: Run simulation**
+
+```bash
+/Users/harper/Public/src/2389/dippin-lang/dippin simulate spec_to_dip.dip
+```
+
+Verify execution trace looks reasonable — all nodes visited on the happy path.
+
+- [ ] **Step 4: Commit visualization**
+
+```bash
+git add spec_to_dip.dot
+git commit -m "docs: add DOT visualization of spec_to_dip pipeline"
+```
