@@ -680,27 +680,22 @@ workflow SpecToDip
       set -eu
       mkdir -p .ai/candidates
       errors=""
-      found=0
+      missing=""
       for name in claude gpt gemini; do
         f=".ai/candidates/${name}.dip"
         if [ ! -f "$f" ]; then
-          # Gen agent failed upstream — skip, not an error validate_all can fix
+          missing="${missing}${name} "
           printf 'skipped (not generated)' > ".ai/candidates/${name}_check.txt"
           continue
         fi
-        found=$((found + 1))
         result=$(dippin validate "$f" 2>&1 || true)
         printf '%s' "$result" > ".ai/candidates/${name}_check.txt"
         if ! printf '%s' "$result" | grep -q 'validation passed'; then
           errors="${errors}${name} "
         fi
       done
-      if [ "$found" -eq 0 ]; then
-        # No candidates at all — nothing to validate
-        printf 'all_valid'
-      elif [ -z "$errors" ]; then
-        printf 'all_valid'
-      else
+      # Priority: validation errors first, then missing files, then all good
+      if [ -n "$errors" ]; then
         count=$(printf '%s' "$errors" | wc -w | tr -d ' ')
         if [ "$count" -gt 1 ]; then
           printf 'multiple_errors'
@@ -711,6 +706,12 @@ workflow SpecToDip
         else
           printf 'gemini_errors'
         fi
+      elif [ -n "$missing" ]; then
+        # Existing candidates are valid but some were never generated
+        printf '%s' "$missing" > .ai/candidates/missing.txt
+        printf 'missing_candidates'
+      else
+        printf 'all_valid'
       fi
 
   agent fix_claude
@@ -839,6 +840,100 @@ workflow SpecToDip
       6. Write fixed version back
 
       Fix each candidate independently — do not merge or cross-pollinate.
+
+  agent regen_missing
+    label: "Regenerate Missing Candidates"
+    reads: spec_analysis, perspectives
+    writes: candidate_claude, candidate_gpt, candidate_gemini
+    fallback_target: compliance_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Some gen agents failed to produce candidates. Generate the missing ones.
+
+      ## Process
+      1. Read .ai/candidates/missing.txt to see which candidates are missing
+      2. For each missing candidate name (claude, gpt, gemini):
+         a. Read docs/plans/dip_analysis.md for the spec analysis
+         b. Read .ai/perspectives.md for domain perspectives
+         c. Read the original spec file referenced in the analysis
+         d. Generate a complete .dip pipeline file
+         e. Write it to .ai/candidates/{name}.dip
+
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            set -eu
+            cd "$WORKING_DIR"
+            uv run pytest -q 2>&1
+            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          auto_status: true
+          goal_gate: true
+          prompt:
+            Implement the code to make failing tests pass.
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement [when ctx.tool_stdout = fail]
+          run_tests -> build_parallel [when ctx.tool_stdout = pass]
+          implement -> run_tests [restart: true]
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+
+      ## CRITICAL: Do NOT skip any missing candidate. Generate ALL of them.
+      If only one is missing, generate that one. If two are missing, generate both.
+      Each generated pipeline should be a complete, production-quality .dip file.
 
   parallel compliance_parallel -> compliance_claude, compliance_gpt, compliance_gemini
 
@@ -1407,10 +1502,12 @@ workflow SpecToDip
     validate_all -> fix_gpt  when ctx.tool_stdout = gpt_errors
     validate_all -> fix_gemini  when ctx.tool_stdout = gemini_errors
     validate_all -> fix_all  when ctx.tool_stdout = multiple_errors
+    validate_all -> regen_missing  when ctx.tool_stdout = missing_candidates
     fix_claude -> validate_all  restart: true
     fix_gpt -> validate_all  restart: true
     fix_gemini -> validate_all  restart: true
     fix_all -> validate_all  restart: true
+    regen_missing -> validate_all  restart: true
     compliance_parallel -> compliance_claude
     compliance_parallel -> compliance_gpt
     compliance_parallel -> compliance_gemini
