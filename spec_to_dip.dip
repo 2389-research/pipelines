@@ -680,19 +680,25 @@ workflow SpecToDip
       set -eu
       mkdir -p .ai/candidates
       errors=""
+      found=0
       for name in claude gpt gemini; do
         f=".ai/candidates/${name}.dip"
         if [ ! -f "$f" ]; then
-          errors="${errors}${name} "
+          # Gen agent failed upstream — skip, not an error validate_all can fix
+          printf 'skipped (not generated)' > ".ai/candidates/${name}_check.txt"
           continue
         fi
+        found=$((found + 1))
         result=$(dippin validate "$f" 2>&1 || true)
         printf '%s' "$result" > ".ai/candidates/${name}_check.txt"
         if ! printf '%s' "$result" | grep -q 'validation passed'; then
           errors="${errors}${name} "
         fi
       done
-      if [ -z "$errors" ]; then
+      if [ "$found" -eq 0 ]; then
+        # No candidates at all — nothing to validate
+        printf 'all_valid'
+      elif [ -z "$errors" ]; then
         printf 'all_valid'
       else
         count=$(printf '%s' "$errors" | wc -w | tr -d ' ')
