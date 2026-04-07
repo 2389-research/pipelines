@@ -1156,7 +1156,6 @@ workflow SpecToDip
     label: "Synthesize Tournament Results"
     model: claude-opus-4-6
     reasoning_effort: high
-    auto_status: true
     reads: compliance_claude, compliance_gpt, compliance_gemini, review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
     writes: tournament_results
     prompt:
@@ -1196,11 +1195,28 @@ workflow SpecToDip
 
       ### Recommendation
       Make the call. You are the decision-maker here.
-      - If there is a clear winner (5+ point lead, no critical gaps): STATUS: pick
-      - If the top two are close or there are significant synthesis opportunities worth merging: STATUS: merge
-      - If all candidates have major compliance gaps or fundamental design flaws: STATUS: rework
+      - If there is a clear winner (5+ point lead, no critical gaps): write `pick` to .ai/candidates/decision.txt
+      - If the top two are close or there are significant synthesis opportunities worth merging: write `merge` to .ai/candidates/decision.txt
+      - If all candidates have major compliance gaps or fundamental design flaws: write `rework` to .ai/candidates/decision.txt
 
-      Your STATUS line MUST be the last line of your response. Use exactly one of: pick, merge, rework.
+      You MUST write exactly one word (pick, merge, or rework) to .ai/candidates/decision.txt as your final action.
+
+  tool read_decision
+    label: "Read Tournament Decision"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      f=".ai/candidates/decision.txt"
+      if [ ! -f "$f" ]; then
+        printf 'merge'
+        exit 0
+      fi
+      decision=$(cat "$f" | tr -d '[:space:]')
+      case "$decision" in
+        pick|merge|rework) printf '%s' "$decision" ;;
+        *) printf 'merge' ;;
+      esac
 
   agent copy_winner
     label: "Copy Winner to Final"
@@ -1415,6 +1431,12 @@ workflow SpecToDip
       - Preserve structural validity
       - Do not add nodes/edges not implied by the ASI
 
+      ## Dippin Edge Syntax (CRITICAL)
+      When editing edges, use KEYWORD syntax, NOT bracket syntax:
+        WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      Brackets in edges will cause parse errors. This is the most common mistake.
+
   tool simmer_revalidate
     label: "Simmer Revalidate"
     timeout: 30s
@@ -1474,6 +1496,37 @@ workflow SpecToDip
       else
         printf 'errors'
       fi
+
+  tool pre_publish_validate
+    label: "Pre-Publish Validation Gate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      printf '%s' "$result" > .ai/candidates/pre_publish_check.txt
+      if printf '%s' "$result" | grep -q 'validation passed'; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  agent pre_publish_fix
+    label: "Fix Pre-Publish Errors"
+    fallback_target: publish_output
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors caught by the pre-publish gate.
+
+      ## Process
+      1. Read .ai/candidates/pre_publish_check.txt for diagnostics
+      2. Read .ai/candidates/final.dip
+      3. Fix the minimum necessary — typically bracket syntax on edges
+         The correct syntax is keyword-based: `A -> B when ctx.x = fail restart: true label: go`
+         NOT bracket-based: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+      4. Write back to .ai/candidates/final.dip
 
   agent publish_output
     label: "Publish Final Pipeline"
@@ -1544,9 +1597,10 @@ workflow SpecToDip
     review_efficiency -> review_join
     review_prompts -> review_join
     review_join -> synthesize_scores
-    synthesize_scores -> copy_winner  when ctx.outcome = pick
-    synthesize_scores -> merge_candidates  when ctx.outcome = merge
-    synthesize_scores -> rework_feedback  when ctx.outcome = rework
+    synthesize_scores -> read_decision
+    read_decision -> copy_winner  when ctx.tool_stdout = pick
+    read_decision -> merge_candidates  when ctx.tool_stdout = merge
+    read_decision -> rework_feedback  when ctx.tool_stdout = rework
     copy_winner -> final_validate
     merge_candidates -> validate_merge
     validate_merge -> fix_merge  when ctx.tool_stdout = errors
@@ -1565,8 +1619,11 @@ workflow SpecToDip
     simmer_refine -> simmer_revalidate
     simmer_revalidate -> simmer_judge  when ctx.tool_stdout = valid  restart: true
     simmer_revalidate -> simmer_refine  when ctx.tool_stdout = errors  restart: true
-    fresh_eyes -> publish_output  when ctx.outcome = success
+    fresh_eyes -> pre_publish_validate  when ctx.outcome = success
     fresh_eyes -> fresh_eyes_revalidate  when ctx.outcome = fail
     fresh_eyes_revalidate -> fresh_eyes  when ctx.tool_stdout = valid  restart: true
     fresh_eyes_revalidate -> fresh_eyes  when ctx.tool_stdout = errors  restart: true
+    pre_publish_validate -> publish_output  when ctx.tool_stdout = valid
+    pre_publish_validate -> pre_publish_fix  when ctx.tool_stdout = errors
+    pre_publish_fix -> pre_publish_validate  restart: true
     publish_output -> Done
