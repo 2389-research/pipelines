@@ -7,7 +7,7 @@ workflow SpecToDip
     model: claude-sonnet-4-6
     provider: anthropic
     max_retries: 3
-    max_restarts: 15
+    max_restarts: 30
 
   agent Start
     label: Start
@@ -48,6 +48,7 @@ workflow SpecToDip
     timeout: 30s
     command:
       #!/bin/sh
+      set -eu
       spec=""
       plan=""
       if [ -d docs/superpowers/specs ]; then
@@ -191,6 +192,7 @@ workflow SpecToDip
     reasoning_effort: high
     reads: spec_analysis, perspectives
     writes: candidate_claude
+    fallback_target: gen_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -250,6 +252,9 @@ workflow SpecToDip
       ### Simmer Refinement (for complex output artifacts)
       judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
 
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
+
       ## Generation Emphasis: THOROUGHNESS
       Your strength is exhaustive edge conditions and spec compliance. Make sure:
       - Every requirement from the Spec Requirements Checklist maps to at least one node
@@ -270,6 +275,7 @@ workflow SpecToDip
     reasoning_effort: high
     reads: spec_analysis, perspectives
     writes: candidate_gpt
+    fallback_target: gen_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -303,13 +309,34 @@ workflow SpecToDip
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
-      - TDD Loop: write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass/fail]
-      - Security Review: security_scan (tool) -> security_review (agent, goal_gate) -> [pass/fail]
-      - Code Quality Gates: lint, type_check, format_check (all tool nodes with timeouts)
-      - Scenario Testing: real dependencies only, no mocks, scenario_setup -> scenario_run -> scenario_extract
-      - Fresh-Eyes Review: agent with goal_gate immediately before every commit node
-      - Human Review Gate: at least one, at a meaningful decision point
-      - Simmer Refinement: for complex output artifacts
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
 
       ## Generation Emphasis: STRUCTURAL CLARITY
       Your strength is clean topology and readable structure. Make sure:
@@ -330,6 +357,7 @@ workflow SpecToDip
     reasoning_effort: high
     reads: spec_analysis, perspectives
     writes: candidate_gemini
+    fallback_target: gen_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -363,13 +391,34 @@ workflow SpecToDip
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
-      - TDD Loop: write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass/fail]
-      - Security Review: security_scan (tool) -> security_review (agent, goal_gate) -> [pass/fail]
-      - Code Quality Gates: lint, type_check, format_check (all tool nodes with timeouts)
-      - Scenario Testing: real dependencies only, no mocks, scenario_setup -> scenario_run -> scenario_extract
-      - Fresh-Eyes Review: agent with goal_gate immediately before every commit node
-      - Human Review Gate: at least one, at a meaningful decision point
-      - Simmer Refinement: for complex output artifacts
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
 
       ## Generation Emphasis: ROBUSTNESS
       Your strength is error handling and edge case coverage. Make sure:
@@ -426,6 +475,7 @@ workflow SpecToDip
     label: "Fix Claude Candidate"
     reads: candidate_claude
     writes: candidate_claude
+    fallback_target: compliance_parallel
     prompt:
       You are working in `run.working_dir`.
 
@@ -451,6 +501,7 @@ workflow SpecToDip
     label: "Fix GPT Candidate"
     reads: candidate_gpt
     writes: candidate_gpt
+    fallback_target: compliance_parallel
     prompt:
       You are working in `run.working_dir`.
 
@@ -459,14 +510,24 @@ workflow SpecToDip
 
       ## Process
       1. Read .ai/candidates/gpt_check.json for the dippin check diagnostics
-      2. Read .ai/candidates/gpt.dip
-      3. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
-      4. Write the fixed version back to .ai/candidates/gpt.dip
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/gpt.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/gpt.dip
+
+      ## Common Fixes
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
 
   agent fix_gemini
     label: "Fix Gemini Candidate"
     reads: candidate_gemini
     writes: candidate_gemini
+    fallback_target: compliance_parallel
     prompt:
       You are working in `run.working_dir`.
 
@@ -475,14 +536,24 @@ workflow SpecToDip
 
       ## Process
       1. Read .ai/candidates/gemini_check.json for the dippin check diagnostics
-      2. Read .ai/candidates/gemini.dip
-      3. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
-      4. Write the fixed version back to .ai/candidates/gemini.dip
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/gemini.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/gemini.dip
+
+      ## Common Fixes
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
 
   agent fix_all
     label: "Fix All Candidates"
     reads: candidate_claude, candidate_gpt, candidate_gemini
     writes: candidate_claude, candidate_gpt, candidate_gemini
+    fallback_target: compliance_parallel
     prompt:
       You are working in `run.working_dir`.
 
@@ -504,6 +575,7 @@ workflow SpecToDip
     label: "Claude Compliance Check"
     reads: spec_analysis, candidate_claude
     writes: compliance_claude
+    fallback_target: compliance_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -528,13 +600,13 @@ workflow SpecToDip
          - Fresh-eyes before commit? (goal_gate agent before commit node)
          - Human review gate present?
 
-      If any requirement is MISSING or any required pattern is absent, output STATUS: gaps_found
-      If all requirements are Full/Partial and all patterns present, output STATUS: compliant
+      Note any MISSING requirements or absent patterns in the compliance table's Gap column.
 
   agent compliance_gpt
     label: "GPT Compliance Check"
     reads: spec_analysis, candidate_gpt
     writes: compliance_gpt
+    fallback_target: compliance_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -548,12 +620,13 @@ workflow SpecToDip
       4. Write .ai/candidates/gpt_compliance.md as a compliance matrix table
       5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
 
-      Output STATUS: compliant or STATUS: gaps_found
+      Note any MISSING requirements or absent patterns in the compliance table's Gap column.
 
   agent compliance_gemini
     label: "Gemini Compliance Check"
     reads: spec_analysis, candidate_gemini
     writes: compliance_gemini
+    fallback_target: compliance_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -567,7 +640,7 @@ workflow SpecToDip
       4. Write .ai/candidates/gemini_compliance.md as a compliance matrix table
       5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
 
-      Output STATUS: compliant or STATUS: gaps_found
+      Note any MISSING requirements or absent patterns in the compliance table's Gap column.
 
   fan_in compliance_join <- compliance_claude, compliance_gpt, compliance_gemini
 
@@ -578,6 +651,8 @@ workflow SpecToDip
     model: claude-opus-4-6
     reasoning_effort: high
     reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_structure
+    fallback_target: review_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -602,6 +677,8 @@ workflow SpecToDip
     provider: openai
     reasoning_effort: high
     reads: spec_analysis, compliance_claude, compliance_gpt, compliance_gemini
+    writes: review_compliance
+    fallback_target: review_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -624,6 +701,8 @@ workflow SpecToDip
     provider: gemini
     reasoning_effort: high
     reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_robustness
+    fallback_target: review_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -645,6 +724,8 @@ workflow SpecToDip
   agent review_efficiency
     label: "Efficiency Review"
     reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_efficiency
+    fallback_target: review_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -666,6 +747,8 @@ workflow SpecToDip
     model: claude-opus-4-6
     reasoning_effort: high
     reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_prompts
+    fallback_target: review_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -689,8 +772,8 @@ workflow SpecToDip
     label: "Synthesize Tournament Results"
     model: claude-opus-4-6
     reasoning_effort: high
-    auto_status: true
-    reads: compliance_claude, compliance_gpt, compliance_gemini
+    reads: compliance_claude, compliance_gpt, compliance_gemini, review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+    writes: tournament_results
     prompt:
       You are working in `run.working_dir`.
 
@@ -735,6 +818,7 @@ workflow SpecToDip
     label: "Tournament results are in. Pick winner, merge best elements, or rework?"
     mode: choice
     default: pick
+    reads: tournament_results
 
   agent copy_winner
     label: "Copy Winner to Final"
@@ -794,6 +878,7 @@ workflow SpecToDip
 
   agent fix_merge
     label: "Fix Merged Output"
+    fallback_target: human_select
     prompt:
       You are working in `run.working_dir`.
 
@@ -809,6 +894,16 @@ workflow SpecToDip
   human rework_feedback
     label: "What needs to change? Provide specific feedback."
     mode: freeform
+
+  tool rework_cleanup
+    label: "Clean Stale Artifacts"
+    timeout: 15s
+    command:
+      #!/bin/sh
+      set -eu
+      rm -rf .ai/candidates .ai/reviews .ai/simmer
+      mkdir -p .ai/candidates
+      printf 'cleaned'
 
   agent rework_analysis
     label: "Incorporate Rework Feedback"
@@ -832,23 +927,26 @@ workflow SpecToDip
 
   tool final_validate
     label: "Final Validation Suite"
-    timeout: 1m
+    timeout: 2m
     command:
       #!/bin/sh
       set -eu
       f=".ai/candidates/final.dip"
       check=$(dippin check --format json "$f" 2>&1)
-      errors=$(printf '%s' "$check" | grep -o '"errors":[0-9]*' | grep -o '[0-9]*')
-      warnings=$(printf '%s' "$check" | grep -o '"warnings":[0-9]*' | grep -o '[0-9]*')
+      errors=$(printf '%s' "$check" | grep -o '"errors":[0-9]*' | grep -o '[0-9]*' || echo 0)
+      warnings=$(printf '%s' "$check" | grep -o '"warnings":[0-9]*' | grep -o '[0-9]*' || echo 0)
       if [ "$errors" -gt 0 ]; then
         printf 'grade_F'
         exit 0
       fi
+      lint_out=$(dippin lint "$f" 2>&1 || true)
+      printf '%s' "$lint_out" > .ai/candidates/final_lint.txt
+      lint_warns=$(printf '%s' "$lint_out" | grep -c 'warning\[' || echo 0)
       doctor=$(dippin doctor "$f" 2>&1)
       grade=$(printf '%s' "$doctor" | grep -o 'Grade: [A-F]' | grep -o '[A-F]' || true)
-      if [ "$grade" = "A" ]; then
+      if [ "$grade" = "A" ] && [ "$lint_warns" -lt 5 ]; then
         printf 'grade_A'
-      elif [ "$grade" = "B" ]; then
+      elif [ "$grade" = "A" ] || [ "$grade" = "B" ]; then
         printf 'grade_B'
       else
         printf 'grade_C'
@@ -856,6 +954,7 @@ workflow SpecToDip
 
   agent final_fix
     label: "Fix Final Issues"
+    fallback_target: simmer_judge
     prompt:
       You are working in `run.working_dir`.
 
@@ -901,15 +1000,21 @@ workflow SpecToDip
       If ALL scores >= 8: STATUS: success
       If ANY score < 8: STATUS: fail
 
-      When STATUS: fail, include ONE Actionable Side Information (ASI):
-      The single highest-leverage improvement. Be specific:
+      When STATUS: fail, write ONE Actionable Side Information (ASI) to .ai/simmer/asi_round_N.md (same N).
+      This file MUST contain ONLY the improvement instruction — no scores, no reasoning.
+      The refiner reads only this file, not the judge file.
+
+      ASI must be specific:
       - BAD: "improve prompts"
       - GOOD: "Node build_feature has a vague prompt 'implement the feature' — add success criteria, expected artifacts, and the tech stack context from the analysis"
+
+      Also check for score regression: if any dimension scored lower than the previous round, note it and consider whether the previous ASI caused a regression.
 
   agent simmer_refine
     label: "Simmer Refine"
     model: claude-opus-4-6
     reasoning_effort: high
+    fallback_target: fresh_eyes
     prompt:
       You are working in `run.working_dir`.
 
@@ -917,7 +1022,7 @@ workflow SpecToDip
       Apply the judge's ASI (Actionable Side Information) to improve the .dip file.
 
       ## Process
-      1. Read the latest .ai/simmer/judge_round_N.md for the ASI
+      1. Read the latest .ai/simmer/asi_round_N.md for the ASI (NOT the judge file)
       2. Read .ai/candidates/final.dip
       3. Make the MINIMUM change to address the ASI
       4. Write the improved version back to .ai/candidates/final.dip
@@ -948,6 +1053,7 @@ workflow SpecToDip
     reasoning_effort: high
     goal_gate: true
     auto_status: true
+    fallback_target: publish_output
     prompt:
       You are working in `run.working_dir`.
 
@@ -1021,6 +1127,7 @@ workflow SpecToDip
     analyze_spec -> check_analysis
     check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
     check_analysis -> analyze_spec  when ctx.tool_stdout = analysis_missing  restart: true
+    check_analysis -> analyze_spec  restart: true  label: "fallback"
     identify_perspectives -> gen_parallel
     gen_parallel -> gen_claude
     gen_parallel -> gen_gpt
@@ -1034,6 +1141,7 @@ workflow SpecToDip
     validate_all -> fix_gpt  when ctx.tool_stdout = gpt_errors
     validate_all -> fix_gemini  when ctx.tool_stdout = gemini_errors
     validate_all -> fix_all  when ctx.tool_stdout = multiple_errors
+    validate_all -> fix_all  label: "fallback"
     fix_claude -> validate_all  restart: true
     fix_gpt -> validate_all  restart: true
     fix_gemini -> validate_all  restart: true
@@ -1065,13 +1173,16 @@ workflow SpecToDip
     validate_merge -> fix_merge  when ctx.tool_stdout = errors
     fix_merge -> validate_merge  restart: true
     validate_merge -> final_validate  when ctx.tool_stdout = valid
+    validate_merge -> fix_merge  label: "fallback"
     rework_feedback -> rework_analysis
-    rework_analysis -> gen_parallel  restart: true
+    rework_analysis -> rework_cleanup
+    rework_cleanup -> gen_parallel  restart: true
     final_validate -> final_fix  when ctx.tool_stdout = grade_C
     final_validate -> final_fix  when ctx.tool_stdout = grade_F
     final_fix -> final_validate  restart: true
     final_validate -> simmer_judge  when ctx.tool_stdout = grade_A
     final_validate -> simmer_judge  when ctx.tool_stdout = grade_B
+    final_validate -> final_fix  label: "fallback"
     simmer_judge -> fresh_eyes  when ctx.outcome = success
     simmer_judge -> simmer_refine  when ctx.outcome = fail
     simmer_refine -> simmer_revalidate
@@ -1079,5 +1190,6 @@ workflow SpecToDip
     simmer_revalidate -> simmer_refine  when ctx.tool_stdout = errors  restart: true
     fresh_eyes -> publish_output  when ctx.outcome = success
     fresh_eyes -> fresh_eyes_revalidate  when ctx.outcome = fail
-    fresh_eyes_revalidate -> fresh_eyes  restart: true
+    fresh_eyes_revalidate -> fresh_eyes  when ctx.tool_stdout = valid  restart: true
+    fresh_eyes_revalidate -> fresh_eyes  when ctx.tool_stdout = errors  restart: true
     publish_output -> Done
