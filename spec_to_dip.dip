@@ -753,6 +753,106 @@ workflow SpecToDip
     mode: choice
     default: "pick"
 
+  # ── Phase 10a: Pick Winner ─────────────────────
+
+  agent copy_winner
+    label: "Copy Winner to Final"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Copy the tournament winner to .ai/candidates/final.dip.
+
+      ## Process
+      1. Read .ai/candidates/tournament_results.md to determine the winner
+      2. Copy .ai/candidates/{winner}.dip to .ai/candidates/final.dip
+      3. Apply any trivial fixes noted by reviewers (missing labels, lint warnings)
+      4. Do NOT make structural changes — the winner was already validated
+
+  # ── Phase 10b: Merge Path ──────────────────────
+
+  agent merge_candidates
+    label: "Merge Best Elements"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Active synthesis: take the winning candidate as base and incorporate the best elements from other candidates.
+
+      ## Process
+      1. Read .ai/candidates/tournament_results.md for:
+         - Which candidate won
+         - Synthesis opportunities (specific elements to incorporate)
+      2. Read all three .dip candidates
+      3. Start with the winner as the base
+      4. For each synthesis opportunity identified:
+         - Evaluate whether incorporating it improves the pipeline
+         - If yes, make the change while preserving structural validity
+      5. Write the merged result to .ai/candidates/final.dip
+
+      ## Rules
+      - Preserve structural validity at all times
+      - Every change must be justified by the synthesis opportunities
+      - Do not add elements not identified by the review panel
+      - Run dippin check mentally after each change
+
+  tool validate_merge
+    label: "Validate Merged Output"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
+      printf '%s' "$result" > .ai/candidates/final_check.json
+      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+      if [ -n "$valid" ]; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  agent fix_merge
+    label: "Fix Merged Output"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors introduced by the merge.
+
+      ## Process
+      1. Read .ai/candidates/final_check.json for diagnostics
+      2. Read .ai/candidates/final.dip
+      3. Fix the minimum necessary
+      4. Write back to .ai/candidates/final.dip
+
+  # ── Phase 10c: Rework Path ─────────────────────
+
+  human rework_feedback
+    label: "What needs to change? Provide specific feedback."
+    mode: freeform
+
+  agent rework_analysis
+    label: "Incorporate Rework Feedback"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The human requested rework. Incorporate their feedback into the analysis.
+
+      ## Process
+      1. Read the human's feedback from context
+      2. Read docs/plans/dip_analysis.md
+      3. Update the analysis to reflect the feedback:
+         - Add new requirements if specified
+         - Modify architectural recommendations if needed
+         - Update the requirements checklist
+      4. Write updated analysis back to docs/plans/dip_analysis.md
+      5. Commit: git add -A && git commit -m 'docs(analysis): update analysis with rework feedback'
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -801,3 +901,10 @@ workflow SpecToDip
     human_select -> copy_winner        label: "[P] Pick winner"
     human_select -> merge_candidates   label: "[M] Merge best elements"
     human_select -> rework_feedback    label: "[R] Rework with feedback"
+    copy_winner -> final_validate
+    merge_candidates -> validate_merge
+    validate_merge -> fix_merge              when ctx.tool_stdout = errors
+    fix_merge -> validate_merge              restart: true
+    validate_merge -> final_validate         when ctx.tool_stdout = valid
+    rework_feedback -> rework_analysis
+    rework_analysis -> gen_parallel          restart: true
