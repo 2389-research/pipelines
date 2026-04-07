@@ -1127,7 +1127,6 @@ workflow SpecToDip
     analyze_spec -> check_analysis
     check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
     check_analysis -> analyze_spec  when ctx.tool_stdout = analysis_missing  restart: true
-    check_analysis -> analyze_spec  restart: true  label: "fallback"
     identify_perspectives -> gen_parallel
     gen_parallel -> gen_claude
     gen_parallel -> gen_gpt
@@ -1141,7 +1140,6 @@ workflow SpecToDip
     validate_all -> fix_gpt  when ctx.tool_stdout = gpt_errors
     validate_all -> fix_gemini  when ctx.tool_stdout = gemini_errors
     validate_all -> fix_all  when ctx.tool_stdout = multiple_errors
-    validate_all -> fix_all  label: "fallback"
     fix_claude -> validate_all  restart: true
     fix_gpt -> validate_all  restart: true
     fix_gemini -> validate_all  restart: true
@@ -1173,7 +1171,6 @@ workflow SpecToDip
     validate_merge -> fix_merge  when ctx.tool_stdout = errors
     fix_merge -> validate_merge  restart: true
     validate_merge -> final_validate  when ctx.tool_stdout = valid
-    validate_merge -> fix_merge  label: "fallback"
     rework_feedback -> rework_analysis
     rework_analysis -> rework_cleanup
     rework_cleanup -> gen_parallel  restart: true
@@ -1182,7 +1179,6 @@ workflow SpecToDip
     final_fix -> final_validate  restart: true
     final_validate -> simmer_judge  when ctx.tool_stdout = grade_A
     final_validate -> simmer_judge  when ctx.tool_stdout = grade_B
-    final_validate -> final_fix  label: "fallback"
     simmer_judge -> fresh_eyes  when ctx.outcome = success
     simmer_judge -> simmer_refine  when ctx.outcome = fail
     simmer_refine -> simmer_revalidate

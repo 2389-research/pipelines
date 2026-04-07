@@ -58,7 +58,6 @@ digraph SpecToDip {
   analyze_spec -> check_analysis;
   check_analysis -> identify_perspectives [condition="tool_stdout = analysis_ok", label="tool_stdout = analysis_ok"];
   check_analysis -> analyze_spec [condition="tool_stdout = analysis_missing", label="tool_stdout = analysis_missing", restart="true", style="dashed"];
-  check_analysis -> analyze_spec [label="fallback", restart="true", style="dashed"];
   identify_perspectives -> gen_parallel;
   gen_parallel -> gen_claude;
   gen_parallel -> gen_gpt;
@@ -72,7 +71,6 @@ digraph SpecToDip {
   validate_all -> fix_gpt [condition="tool_stdout = gpt_errors", label="tool_stdout = gpt_errors"];
   validate_all -> fix_gemini [condition="tool_stdout = gemini_errors", label="tool_stdout = gemini_errors"];
   validate_all -> fix_all [condition="tool_stdout = multiple_errors", label="tool_stdout = multiple_errors"];
-  validate_all -> fix_all [label="fallback"];
   fix_claude -> validate_all [restart="true", style="dashed"];
   fix_gpt -> validate_all [restart="true", style="dashed"];
   fix_gemini -> validate_all [restart="true", style="dashed"];
@@ -104,7 +102,6 @@ digraph SpecToDip {
   validate_merge -> fix_merge [condition="tool_stdout = errors", label="tool_stdout = errors"];
   fix_merge -> validate_merge [restart="true", style="dashed"];
   validate_merge -> final_validate [condition="tool_stdout = valid", label="tool_stdout = valid"];
-  validate_merge -> fix_merge [label="fallback"];
   rework_feedback -> rework_analysis;
   rework_analysis -> rework_cleanup;
   rework_cleanup -> gen_parallel [restart="true", style="dashed"];
@@ -113,7 +110,6 @@ digraph SpecToDip {
   final_fix -> final_validate [restart="true", style="dashed"];
   final_validate -> simmer_judge [condition="tool_stdout = grade_A", label="tool_stdout = grade_A"];
   final_validate -> simmer_judge [condition="tool_stdout = grade_B", label="tool_stdout = grade_B"];
-  final_validate -> final_fix [label="fallback"];
   simmer_judge -> fresh_eyes [condition="outcome = success", label="outcome = success"];
   simmer_judge -> simmer_refine [condition="outcome = fail", label="outcome = fail"];
   simmer_refine -> simmer_revalidate;
