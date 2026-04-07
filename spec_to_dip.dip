@@ -449,10 +449,9 @@ workflow SpecToDip
           errors="${errors}${name} "
           continue
         fi
-        result=$(dippin check --format json "$f" 2>&1)
-        printf '%s' "$result" > ".ai/candidates/${name}_check.json"
-        valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
-        if [ -z "$valid" ]; then
+        result=$(dippin validate "$f" 2>&1 || true)
+        printf '%s' "$result" > ".ai/candidates/${name}_check.txt"
+        if ! printf '%s' "$result" | grep -q 'validation passed'; then
           errors="${errors}${name} "
         fi
       done
@@ -483,7 +482,7 @@ workflow SpecToDip
       Fix validation errors in .ai/candidates/claude.dip.
 
       ## Process
-      1. Read .ai/candidates/claude_check.json for the dippin check diagnostics
+      1. Read .ai/candidates/claude_check.txt for the dippin validate diagnostics
       2. For each error, understand what the diagnostic code means:
          - DIP001-DIP009 are structural errors that MUST be fixed
          - DIP101-DIP133 are warnings — fix if straightforward
@@ -509,7 +508,7 @@ workflow SpecToDip
       Fix validation errors in .ai/candidates/gpt.dip.
 
       ## Process
-      1. Read .ai/candidates/gpt_check.json for the dippin check diagnostics
+      1. Read .ai/candidates/gpt_check.txt for the dippin validate diagnostics
       2. For each error, understand what the diagnostic code means:
          - DIP001-DIP009 are structural errors that MUST be fixed
          - DIP101-DIP133 are warnings — fix if straightforward
@@ -535,7 +534,7 @@ workflow SpecToDip
       Fix validation errors in .ai/candidates/gemini.dip.
 
       ## Process
-      1. Read .ai/candidates/gemini_check.json for the dippin check diagnostics
+      1. Read .ai/candidates/gemini_check.txt for the dippin validate diagnostics
       2. For each error, understand what the diagnostic code means:
          - DIP001-DIP009 are structural errors that MUST be fixed
          - DIP101-DIP133 are warnings — fix if straightforward
@@ -859,7 +858,7 @@ workflow SpecToDip
       - Preserve structural validity at all times
       - Every change must be justified by the synthesis opportunities
       - Do not add elements not identified by the review panel
-      - Run dippin check mentally after each change
+      - Run dippin validate mentally after each change
 
   tool validate_merge
     label: "Validate Merged Output"
@@ -867,10 +866,9 @@ workflow SpecToDip
     command:
       #!/bin/sh
       set -eu
-      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
-      printf '%s' "$result" > .ai/candidates/final_check.json
-      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
-      if [ -n "$valid" ]; then
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      printf '%s' "$result" > .ai/candidates/final_check.txt
+      if printf '%s' "$result" | grep -q 'validation passed'; then
         printf 'valid'
       else
         printf 'errors'
@@ -932,21 +930,20 @@ workflow SpecToDip
       #!/bin/sh
       set -eu
       f=".ai/candidates/final.dip"
-      check=$(dippin check --format json "$f" 2>&1)
-      errors=$(printf '%s' "$check" | grep -o '"errors":[0-9]*' | grep -o '[0-9]*' || echo 0)
-      warnings=$(printf '%s' "$check" | grep -o '"warnings":[0-9]*' | grep -o '[0-9]*' || echo 0)
-      if [ "$errors" -gt 0 ]; then
+      validate_out=$(dippin validate "$f" 2>&1 || true)
+      if ! printf '%s' "$validate_out" | grep -q 'validation passed'; then
         printf 'grade_F'
         exit 0
       fi
       lint_out=$(dippin lint "$f" 2>&1 || true)
       printf '%s' "$lint_out" > .ai/candidates/final_lint.txt
       lint_warns=$(printf '%s' "$lint_out" | grep -c 'warning\[' || echo 0)
-      doctor=$(dippin doctor "$f" 2>&1)
-      grade=$(printf '%s' "$doctor" | grep -o 'Grade: [A-F]' | grep -o '[A-F]' || true)
-      if [ "$grade" = "A" ] && [ "$lint_warns" -lt 5 ]; then
+      error_warns=$(printf '%s' "$lint_out" | grep -c 'error\[' || echo 0)
+      if [ "$error_warns" -gt 0 ]; then
+        printf 'grade_F'
+      elif [ "$lint_warns" -lt 5 ]; then
         printf 'grade_A'
-      elif [ "$grade" = "A" ] || [ "$grade" = "B" ]; then
+      elif [ "$lint_warns" -lt 15 ]; then
         printf 'grade_B'
       else
         printf 'grade_C'
@@ -963,7 +960,7 @@ workflow SpecToDip
 
       ## Process
       1. Run dippin lint .ai/candidates/final.dip and read output
-      2. Run dippin doctor .ai/candidates/final.dip and read suggestions
+      2. Run dippin validate .ai/candidates/final.dip and read any errors
       3. Fix each issue in .ai/candidates/final.dip
       4. Focus on: missing timeouts, empty prompts, unused writes, missing fallbacks
 
@@ -1039,9 +1036,8 @@ workflow SpecToDip
     command:
       #!/bin/sh
       set -eu
-      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
-      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
-      if [ -n "$valid" ]; then
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      if printf '%s' "$result" | grep -q 'validation passed'; then
         printf 'valid'
       else
         printf 'errors'
@@ -1087,9 +1083,8 @@ workflow SpecToDip
     command:
       #!/bin/sh
       set -eu
-      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
-      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
-      if [ -n "$valid" ]; then
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      if printf '%s' "$result" | grep -q 'validation passed'; then
         printf 'valid'
       else
         printf 'errors'
@@ -1108,7 +1103,7 @@ workflow SpecToDip
       2. Derive a filename: {project_name_snake_case}.dip
       3. Copy .ai/candidates/final.dip to ./{filename}.dip
       4. Write .ai/summary.md containing:
-         - Final dippin doctor grade
+         - Final dippin lint warning count
          - Simmer judge scores (from latest .ai/simmer/judge_round_*.md)
          - Fresh-eyes review result
          - Compliance matrix summary
