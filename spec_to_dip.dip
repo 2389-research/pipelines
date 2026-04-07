@@ -205,24 +205,103 @@ workflow SpecToDip
       3. Read the original spec file referenced in the analysis
       4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
 
-      ## Dippin Syntax Reference
-      - workflow <Name> with goal:, start:, exit: header
-      - defaults block for model, provider, max_retries, max_restarts
-      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
-      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
-      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
-      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
-      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
-      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows EVERY construct you need:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            set -eu
+            cd "$WORKING_DIR"
+            uv run pytest -q 2>&1
+            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement [when ctx.tool_stdout = fail]
+          run_tests -> review_gate [when ctx.tool_stdout = pass]
+          implement -> run_tests [restart: true]
+          review_gate -> build_parallel [when ctx.outcome = success]
+          review_gate -> implement [when ctx.outcome = fail] [restart: true]
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
 
       ## Common LLM Mistakes to Avoid
-      1. Missing start: or exit: field
-      2. Edge references undeclared node
-      3. parallel targets without matching fan_in sources
-      4. Bare variable names in conditions (use ctx.outcome, not outcome)
-      5. Agent node with empty prompt
-      6. Missing tool timeout
-      7. Back-edges without restart: true
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Missing start: or exit: field
+      5. Edge references undeclared node
+      6. parallel targets without matching fan_in sources
+      7. Bare variable names in conditions (use ctx.outcome, not outcome)
+      8. Agent node with empty prompt
+      9. Missing tool timeout
+      10. Back-edges without restart: true
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
@@ -288,24 +367,103 @@ workflow SpecToDip
       3. Read the original spec file referenced in the analysis
       4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
 
-      ## Dippin Syntax Reference
-      - workflow <Name> with goal:, start:, exit: header
-      - defaults block for model, provider, max_retries, max_restarts
-      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
-      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
-      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
-      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
-      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
-      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows EVERY construct you need:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            set -eu
+            cd "$WORKING_DIR"
+            uv run pytest -q 2>&1
+            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement [when ctx.tool_stdout = fail]
+          run_tests -> review_gate [when ctx.tool_stdout = pass]
+          implement -> run_tests [restart: true]
+          review_gate -> build_parallel [when ctx.outcome = success]
+          review_gate -> implement [when ctx.outcome = fail] [restart: true]
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
 
       ## Common LLM Mistakes to Avoid
-      1. Missing start: or exit: field
-      2. Edge references undeclared node
-      3. parallel targets without matching fan_in sources
-      4. Bare variable names in conditions (use ctx.outcome, not outcome)
-      5. Agent node with empty prompt
-      6. Missing tool timeout
-      7. Back-edges without restart: true
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Missing start: or exit: field
+      5. Edge references undeclared node
+      6. parallel targets without matching fan_in sources
+      7. Bare variable names in conditions (use ctx.outcome, not outcome)
+      8. Agent node with empty prompt
+      9. Missing tool timeout
+      10. Back-edges without restart: true
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
@@ -370,24 +528,103 @@ workflow SpecToDip
       3. Read the original spec file referenced in the analysis
       4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
 
-      ## Dippin Syntax Reference
-      - workflow <Name> with goal:, start:, exit: header
-      - defaults block for model, provider, max_retries, max_restarts
-      - Node kinds: agent (prompt:), human (mode: choice|freeform|interview), tool (command:, timeout:), parallel (-> targets), fan_in (<- sources), subgraph (ref:)
-      - Agent fields: model, provider, prompt, system_prompt, auto_status, goal_gate, reasoning_effort, reads, writes, max_retries, retry_target, fallback_target
-      - Edge syntax: From -> To [when condition] [label: text] [weight: int] [restart: true]
-      - Conditions: ctx.outcome = success, ctx.tool_stdout = value, and/or/not, contains, startswith, endswith, in
-      - All condition variables MUST have namespace prefix: ctx.*, graph.*, params.*
-      - Exhaustive condition pairs (ctx.outcome = success + ctx.outcome = fail) suppress DIP101/DIP102
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows EVERY construct you need:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            set -eu
+            cd "$WORKING_DIR"
+            uv run pytest -q 2>&1
+            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement [when ctx.tool_stdout = fail]
+          run_tests -> review_gate [when ctx.tool_stdout = pass]
+          implement -> run_tests [restart: true]
+          review_gate -> build_parallel [when ctx.outcome = success]
+          review_gate -> implement [when ctx.outcome = fail] [restart: true]
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
 
       ## Common LLM Mistakes to Avoid
-      1. Missing start: or exit: field
-      2. Edge references undeclared node
-      3. parallel targets without matching fan_in sources
-      4. Bare variable names in conditions (use ctx.outcome, not outcome)
-      5. Agent node with empty prompt
-      6. Missing tool timeout
-      7. Back-edges without restart: true
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Missing start: or exit: field
+      5. Edge references undeclared node
+      6. parallel targets without matching fan_in sources
+      7. Bare variable names in conditions (use ctx.outcome, not outcome)
+      8. Agent node with empty prompt
+      9. Missing tool timeout
+      10. Back-edges without restart: true
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
@@ -491,6 +728,10 @@ workflow SpecToDip
       5. Write the fixed version back to .ai/candidates/claude.dip
 
       ## Common Fixes
+      - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
+        find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
+        `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
+        If you see this pattern, rewrite the file in correct indentation-based dippin syntax.
       - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
       - DIP004 (unreachable): Add edges connecting the orphaned node
       - DIP005 (cycle): Add restart: true to back-edges
@@ -517,6 +758,10 @@ workflow SpecToDip
       5. Write the fixed version back to .ai/candidates/gpt.dip
 
       ## Common Fixes
+      - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
+        find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
+        `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
+        If you see this pattern, rewrite the file in correct indentation-based dippin syntax.
       - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
       - DIP004 (unreachable): Add edges connecting the orphaned node
       - DIP005 (cycle): Add restart: true to back-edges
@@ -543,6 +788,10 @@ workflow SpecToDip
       5. Write the fixed version back to .ai/candidates/gemini.dip
 
       ## Common Fixes
+      - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
+        find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
+        `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
+        If you see this pattern, rewrite the file in correct indentation-based dippin syntax.
       - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
       - DIP004 (unreachable): Add edges connecting the orphaned node
       - DIP005 (cycle): Add restart: true to back-edges
@@ -559,12 +808,29 @@ workflow SpecToDip
       ## Task
       Multiple candidates have validation errors. Fix all of them.
 
+      ## Critical: Dippin Syntax
+      The #1 cause of DIP001/DIP002 ("node not found") is WRONG SYNTAX — the parser
+      cannot find nodes if they are declared incorrectly. Correct dippin syntax:
+      - `workflow Name` on its own line (NO `with` keyword, NO curly braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented 2 spaces under their node
+      - `parallel X -> A, B, C` (comma-separated targets, NOT inline agent blocks)
+      - `fan_in Y <- A, B, C` (comma-separated sources)
+      - `edges` section at end with all edge declarations
+      - Indentation-based structure (like YAML), never curly braces
+
+      If you see `tool X with`, `workflow X {`, `parallel X (`, or any `with` keyword
+      after a node declaration — that is the root cause. Rewrite the entire file using
+      correct indentation-based syntax before attempting individual error fixes.
+
       ## Process
       For each of claude, gpt, gemini:
-      1. Read .ai/candidates/{name}_check.json
+      1. Read .ai/candidates/{name}_check.txt
       2. If errors exist, read .ai/candidates/{name}.dip
-      3. Fix the minimum necessary
-      4. Write fixed version back
+      3. Check for fundamental syntax errors FIRST (with keyword, curly braces, parenthetical blocks)
+      4. If syntax is fundamentally wrong, rewrite the file in correct dippin format
+      5. If syntax is correct, fix the minimum necessary for each diagnostic
+      6. Write fixed version back
 
       Fix each candidate independently — do not merge or cross-pollinate.
 
@@ -884,7 +1150,7 @@ workflow SpecToDip
       Fix validation errors introduced by the merge.
 
       ## Process
-      1. Read .ai/candidates/final_check.json for diagnostics
+      1. Read .ai/candidates/final_check.txt for diagnostics
       2. Read .ai/candidates/final.dip
       3. Fix the minimum necessary
       4. Write back to .ai/candidates/final.dip
