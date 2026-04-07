@@ -582,6 +582,122 @@ workflow SpecToDip
 
   fan_in compliance_join <- compliance_claude, compliance_gpt, compliance_gemini
 
+  # ── Phase 7: Review Panel ──────────────────────
+
+  parallel review_parallel -> review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+
+  agent review_structure
+    label: "Structure Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate graph structure of all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. Read docs/plans/dip_analysis.md for recommended topology
+      3. For each candidate, evaluate:
+         - Are edges exhaustive? (success/fail pairs, fallback edges)
+         - Are conditions syntactically correct? (ctx.* namespace prefix)
+         - Are parallel/fan_in correctly matched?
+         - Does the topology match the recommended architecture?
+         - Are all nodes reachable from start?
+         - Can execution reach exit from every path?
+      4. Write .ai/reviews/structure.md with scores and detailed reasoning for each candidate
+
+  agent review_compliance
+    label: "Compliance Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis, compliance_claude, compliance_gpt, compliance_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Cross-check compliance matrices against the spec. Score each candidate 1-10.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md (spec requirements checklist)
+      2. Read all three compliance matrices from .ai/candidates/*_compliance.md
+      3. For each candidate, evaluate:
+         - Are all requirements genuinely addressed or just superficially mentioned?
+         - Do the mapped nodes actually implement the requirement?
+         - Are there requirements marked "Full" that are really "Partial"?
+         - Are required patterns (TDD, security, scenarios, fresh-eyes, human gate) real or perfunctory?
+      4. Write .ai/reviews/compliance.md with scores and evidence
+
+  agent review_robustness
+    label: "Robustness Review"
+    model: gemini-2.5-pro
+    provider: gemini
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate error handling and robustness of all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate:
+         - Do retry loops have max_retries set?
+         - Do critical nodes have fallback_target?
+         - Are tool timeouts realistic (not 5s for a build, not 10m for a grep)?
+         - Are goal_gate nodes placed at critical quality checks?
+         - Is max_restarts sufficient for the number of restart edges?
+         - Can the pipeline recover from partial failures?
+         - Do shell commands use set -eu?
+      3. Write .ai/reviews/robustness.md with scores and specific weaknesses found
+
+  agent review_efficiency
+    label: "Efficiency Review"
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Check for efficiency issues in all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate:
+         - Are there unnecessary serial bottlenecks? (could parallel fan-out help?)
+         - Are model choices appropriate? (Opus for analysis, Sonnet for routine tasks)
+         - Are reasoning_effort levels justified? (high only where needed)
+         - Is the pipeline longer than necessary? (unnecessary nodes?)
+         - Could any adjacent agent nodes be combined without loss?
+      3. Write .ai/reviews/efficiency.md with scores and optimization suggestions
+
+  agent review_prompts
+    label: "Prompt Quality Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate prompt quality across all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate every agent node's prompt:
+         - Is it specific enough to produce good output? (not "review the code")
+         - Does it include success criteria?
+         - Does it reference context variables correctly? (${ctx.*} syntax)
+         - Are instructions contradictory or ambiguous?
+         - Does it tell the agent what format to output in?
+         - For auto_status agents: does the prompt instruct STATUS: success/fail output?
+      3. Write .ai/reviews/prompts.md with scores and specific prompt improvements
+
+  fan_in review_join <- review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -615,3 +731,14 @@ workflow SpecToDip
     compliance_gpt -> compliance_join
     compliance_gemini -> compliance_join
     compliance_join -> review_parallel
+    review_parallel -> review_structure
+    review_parallel -> review_compliance
+    review_parallel -> review_robustness
+    review_parallel -> review_efficiency
+    review_parallel -> review_prompts
+    review_structure -> review_join
+    review_compliance -> review_join
+    review_robustness -> review_join
+    review_efficiency -> review_join
+    review_prompts -> review_join
+    review_join -> synthesize_scores
