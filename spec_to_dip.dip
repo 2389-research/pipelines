@@ -893,6 +893,82 @@ workflow SpecToDip
       3. Fix each issue in .ai/candidates/final.dip
       4. Focus on: missing timeouts, empty prompts, unused writes, missing fallbacks
 
+  # ── Phase 12: Simmer Refinement ────────────────
+
+  agent simmer_judge
+    label: "Simmer Judge"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Investigation-first judge. Evaluate the final .dip pipeline against quality criteria.
+
+      ## Investigation (do this BEFORE scoring)
+      1. Read the original spec file
+      2. Read docs/plans/dip_analysis.md
+      3. Read .ai/candidates/final.dip thoroughly
+      4. Read the compliance matrix for the winning candidate
+      5. Read .ai/candidates/tournament_results.md
+
+      ## Scoring Criteria (1-10 each)
+      - **Spec fidelity**: Does the pipeline do what the spec says? Every requirement addressed?
+      - **Prompt specificity**: Are prompts actionable with success criteria? Not vague?
+      - **Edge exhaustiveness**: Can execution get stuck? Missing fallbacks?
+      - **Error recovery**: Retry loops bounded? Fallback targets set? Goal gates on critical nodes?
+      - **TDD quality**: Is the test-first loop real or perfunctory? Tests before implementation?
+      - **Security depth**: Tech-stack-specific scan tool? OWASP-aware review agent?
+      - **Scenario testing**: Real dependencies? No mocks? Infrastructure setup?
+
+      ## Output
+      Write scores and reasoning to .ai/simmer/judge_round_N.md (increment N each round).
+
+      If ALL scores >= 8: STATUS: success
+      If ANY score < 8: STATUS: fail
+
+      When STATUS: fail, include ONE Actionable Side Information (ASI):
+      The single highest-leverage improvement. Be specific:
+      - BAD: "improve prompts"
+      - GOOD: "Node build_feature has a vague prompt 'implement the feature' — add success criteria, expected artifacts, and the tech stack context from the analysis"
+
+  agent simmer_refine
+    label: "Simmer Refine"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Apply the judge's ASI (Actionable Side Information) to improve the .dip file.
+
+      ## Process
+      1. Read the latest .ai/simmer/judge_round_N.md for the ASI
+      2. Read .ai/candidates/final.dip
+      3. Make the MINIMUM change to address the ASI
+      4. Write the improved version back to .ai/candidates/final.dip
+
+      ## Rules
+      - You do NOT see scores. Only the ASI.
+      - Make one focused improvement, not scattered edits
+      - Preserve structural validity
+      - Do not add nodes/edges not implied by the ASI
+
+  tool simmer_revalidate
+    label: "Simmer Revalidate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
+      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+      if [ -n "$valid" ]; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -953,3 +1029,8 @@ workflow SpecToDip
     final_fix -> final_validate              restart: true
     final_validate -> simmer_judge           when ctx.tool_stdout = grade_A
     final_validate -> simmer_judge           when ctx.tool_stdout = grade_B
+    simmer_judge -> fresh_eyes               when ctx.outcome = success
+    simmer_judge -> simmer_refine            when ctx.outcome = fail
+    simmer_refine -> simmer_revalidate
+    simmer_revalidate -> simmer_judge        when ctx.tool_stdout = valid    restart: true
+    simmer_revalidate -> simmer_refine       when ctx.tool_stdout = errors   restart: true
