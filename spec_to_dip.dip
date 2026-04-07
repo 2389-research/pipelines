@@ -853,6 +853,46 @@ workflow SpecToDip
       4. Write updated analysis back to docs/plans/dip_analysis.md
       5. Commit: git add -A && git commit -m 'docs(analysis): update analysis with rework feedback'
 
+  # ── Phase 11: Final Validation ─────────────────
+
+  tool final_validate
+    label: "Final Validation Suite"
+    timeout: 60s
+    command:
+      #!/bin/sh
+      set -eu
+      f=".ai/candidates/final.dip"
+      check=$(dippin check --format json "$f" 2>&1)
+      errors=$(printf '%s' "$check" | grep -o '"errors":[0-9]*' | grep -o '[0-9]*')
+      warnings=$(printf '%s' "$check" | grep -o '"warnings":[0-9]*' | grep -o '[0-9]*')
+      if [ "$errors" -gt 0 ]; then
+        printf 'grade_F'
+        exit 0
+      fi
+      doctor=$(dippin doctor "$f" 2>&1)
+      grade=$(printf '%s' "$doctor" | grep -o 'Grade: [A-F]' | grep -o '[A-F]' || printf 'C')
+      if [ "$grade" = "A" ]; then
+        printf 'grade_A'
+      elif [ "$grade" = "B" ]; then
+        printf 'grade_B'
+      else
+        printf 'grade_C'
+      fi
+
+  agent final_fix
+    label: "Fix Final Issues"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The final .dip file has lint warnings or doctor suggestions. Fix them.
+
+      ## Process
+      1. Run dippin lint .ai/candidates/final.dip and read output
+      2. Run dippin doctor .ai/candidates/final.dip and read suggestions
+      3. Fix each issue in .ai/candidates/final.dip
+      4. Focus on: missing timeouts, empty prompts, unused writes, missing fallbacks
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -908,3 +948,8 @@ workflow SpecToDip
     validate_merge -> final_validate         when ctx.tool_stdout = valid
     rework_feedback -> rework_analysis
     rework_analysis -> gen_parallel          restart: true
+    final_validate -> final_fix              when ctx.tool_stdout = grade_C
+    final_validate -> final_fix              when ctx.tool_stdout = grade_F
+    final_fix -> final_validate              restart: true
+    final_validate -> simmer_judge           when ctx.tool_stdout = grade_A
+    final_validate -> simmer_judge           when ctx.tool_stdout = grade_B
