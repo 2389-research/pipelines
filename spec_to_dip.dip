@@ -698,6 +698,61 @@ workflow SpecToDip
 
   fan_in review_join <- review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
 
+  # ── Phase 8: Scoring & Recommendation ──────────
+
+  agent synthesize_scores
+    label: "Synthesize Tournament Results"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    auto_status: true
+    reads: compliance_claude, compliance_gpt, compliance_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize all review panel findings and compliance matrices into tournament results.
+
+      ## Process
+      1. Read all review files from .ai/reviews/ (structure, compliance, robustness, efficiency, prompts)
+      2. Read all compliance matrices from .ai/candidates/*_compliance.md
+      3. Produce .ai/candidates/tournament_results.md containing:
+
+      ### Score Summary
+      | Dimension | Claude | GPT | Gemini |
+      |-----------|--------|-----|--------|
+      | Structure | X/10 | X/10 | X/10 |
+      | Compliance | X/10 | X/10 | X/10 |
+      | Robustness | X/10 | X/10 | X/10 |
+      | Efficiency | X/10 | X/10 | X/10 |
+      | Prompts | X/10 | X/10 | X/10 |
+      | **Total** | **X/50** | **X/50** | **X/50** |
+
+      ### Ranking
+      1st, 2nd, 3rd with reasoning.
+
+      ### Tensions
+      Where reviewers disagreed. Surface the tension — do not paper over it.
+
+      ### Synthesis Opportunities
+      Specific elements from non-winning candidates worth merging:
+      - "GPT's prompt for node X is clearer than Claude's"
+      - "Gemini's retry pattern on node Y is more robust"
+
+      ### Compliance Status
+      Which candidates have gaps? Which are fully compliant?
+
+      ### Recommendation
+      If clear winner with 5+ point lead: STATUS: clear_winner
+      If top two are close or synthesis opportunities are significant: STATUS: merge_recommended
+      If all candidates have major gaps: STATUS: rework_needed
+
+  # ── Phase 9: Human Decision ────────────────────
+
+  human human_select
+    label: "Tournament results are in. Pick winner, merge best elements, or rework?"
+    mode: choice
+    default: "pick"
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -742,3 +797,7 @@ workflow SpecToDip
     review_efficiency -> review_join
     review_prompts -> review_join
     review_join -> synthesize_scores
+    synthesize_scores -> human_select
+    human_select -> copy_winner        label: "[P] Pick winner"
+    human_select -> merge_candidates   label: "[M] Merge best elements"
+    human_select -> rework_feedback    label: "[R] Rework with feedback"
