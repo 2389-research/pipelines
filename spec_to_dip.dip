@@ -1,6 +1,3 @@
-# ABOUTME: Meta-pipeline that generates production-quality .dip pipeline files from specs.
-# ABOUTME: Uses multi-model tournament with domain-specific review panels and spec compliance verification.
-
 workflow SpecToDip
   goal: "Generate a validated, production-quality .dip pipeline from a spec using multi-model tournament with domain-specific review panels and spec compliance verification"
   start: Start
@@ -26,8 +23,6 @@ workflow SpecToDip
       Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
 
       To use this pipeline, place a spec file in the working directory and re-run.
-
-  # ── Phase 1: Discovery ──────────────────────────
 
   tool find_spec
     label: "Find Spec File"
@@ -70,8 +65,6 @@ workflow SpecToDip
       else
         printf 'no_plan'
       fi
-
-  # ── Phase 2: Spec Analysis ─────────────────────
 
   agent analyze_spec
     label: "Analyze Spec"
@@ -159,8 +152,6 @@ workflow SpecToDip
       done
       printf 'analysis_ok'
 
-  # ── Phase 3: Perspective Generation (Jam) ──────
-
   agent identify_perspectives
     label: "Identify Perspectives"
     model: claude-opus-4-6
@@ -191,8 +182,6 @@ workflow SpecToDip
       API: API design specialist, performance engineer, integration specialist
 
       Pick perspectives that will produce genuinely different pipeline designs, not slight variations of the same approach.
-
-  # ── Phase 4: Generation Tournament ─────────────
 
   parallel gen_parallel -> gen_claude, gen_gpt, gen_gemini
 
@@ -397,11 +386,9 @@ workflow SpecToDip
 
   fan_in gen_join <- gen_claude, gen_gpt, gen_gemini
 
-  # ── Phase 5: Validation + Fix Loop ─────────────
-
   tool validate_all
     label: "Validate All Candidates"
-    timeout: 60s
+    timeout: 1m
     command:
       #!/bin/sh
       set -eu
@@ -410,7 +397,7 @@ workflow SpecToDip
       for name in claude gpt gemini; do
         f=".ai/candidates/${name}.dip"
         if [ ! -f "$f" ]; then
-          errors="${errors}${name}_missing "
+          errors="${errors}${name} "
           continue
         fi
         result=$(dippin check --format json "$f" 2>&1)
@@ -426,8 +413,12 @@ workflow SpecToDip
         count=$(printf '%s' "$errors" | wc -w | tr -d ' ')
         if [ "$count" -gt 1 ]; then
           printf 'multiple_errors'
+        elif printf '%s' "$errors" | grep -q 'claude'; then
+          printf 'claude_errors'
+        elif printf '%s' "$errors" | grep -q 'gpt'; then
+          printf 'gpt_errors'
         else
-          printf '%s_errors' "$(printf '%s' "$errors" | tr -d ' ')"
+          printf 'gemini_errors'
         fi
       fi
 
@@ -507,8 +498,6 @@ workflow SpecToDip
 
       Fix each candidate independently — do not merge or cross-pollinate.
 
-  # ── Phase 6: Spec Compliance Check ─────────────
-
   parallel compliance_parallel -> compliance_claude, compliance_gpt, compliance_gemini
 
   agent compliance_claude
@@ -581,8 +570,6 @@ workflow SpecToDip
       Output STATUS: compliant or STATUS: gaps_found
 
   fan_in compliance_join <- compliance_claude, compliance_gpt, compliance_gemini
-
-  # ── Phase 7: Review Panel ──────────────────────
 
   parallel review_parallel -> review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
 
@@ -698,8 +685,6 @@ workflow SpecToDip
 
   fan_in review_join <- review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
 
-  # ── Phase 8: Scoring & Recommendation ──────────
-
   agent synthesize_scores
     label: "Synthesize Tournament Results"
     model: claude-opus-4-6
@@ -746,14 +731,10 @@ workflow SpecToDip
       If top two are close or synthesis opportunities are significant: STATUS: merge_recommended
       If all candidates have major gaps: STATUS: rework_needed
 
-  # ── Phase 9: Human Decision ────────────────────
-
   human human_select
     label: "Tournament results are in. Pick winner, merge best elements, or rework?"
     mode: choice
-    default: "pick"
-
-  # ── Phase 10a: Pick Winner ─────────────────────
+    default: pick
 
   agent copy_winner
     label: "Copy Winner to Final"
@@ -768,8 +749,6 @@ workflow SpecToDip
       2. Copy .ai/candidates/{winner}.dip to .ai/candidates/final.dip
       3. Apply any trivial fixes noted by reviewers (missing labels, lint warnings)
       4. Do NOT make structural changes — the winner was already validated
-
-  # ── Phase 10b: Merge Path ──────────────────────
 
   agent merge_candidates
     label: "Merge Best Elements"
@@ -827,8 +806,6 @@ workflow SpecToDip
       3. Fix the minimum necessary
       4. Write back to .ai/candidates/final.dip
 
-  # ── Phase 10c: Rework Path ─────────────────────
-
   human rework_feedback
     label: "What needs to change? Provide specific feedback."
     mode: freeform
@@ -853,11 +830,9 @@ workflow SpecToDip
       4. Write updated analysis back to docs/plans/dip_analysis.md
       5. Commit: git add -A && git commit -m 'docs(analysis): update analysis with rework feedback'
 
-  # ── Phase 11: Final Validation ─────────────────
-
   tool final_validate
     label: "Final Validation Suite"
-    timeout: 60s
+    timeout: 1m
     command:
       #!/bin/sh
       set -eu
@@ -870,7 +845,7 @@ workflow SpecToDip
         exit 0
       fi
       doctor=$(dippin doctor "$f" 2>&1)
-      grade=$(printf '%s' "$doctor" | grep -o 'Grade: [A-F]' | grep -o '[A-F]' || printf 'C')
+      grade=$(printf '%s' "$doctor" | grep -o 'Grade: [A-F]' | grep -o '[A-F]' || true)
       if [ "$grade" = "A" ]; then
         printf 'grade_A'
       elif [ "$grade" = "B" ]; then
@@ -892,8 +867,6 @@ workflow SpecToDip
       2. Run dippin doctor .ai/candidates/final.dip and read suggestions
       3. Fix each issue in .ai/candidates/final.dip
       4. Focus on: missing timeouts, empty prompts, unused writes, missing fallbacks
-
-  # ── Phase 12: Simmer Refinement ────────────────
 
   agent simmer_judge
     label: "Simmer Judge"
@@ -969,8 +942,6 @@ workflow SpecToDip
         printf 'errors'
       fi
 
-  # ── Phase 13: Fresh-Eyes Review ────────────────
-
   agent fresh_eyes
     label: "Fresh-Eyes Review"
     model: claude-opus-4-6
@@ -1018,8 +989,6 @@ workflow SpecToDip
         printf 'errors'
       fi
 
-  # ── Phase 14: Publish ──────────────────────────
-
   agent publish_output
     label: "Publish Final Pipeline"
     prompt:
@@ -1045,13 +1014,13 @@ workflow SpecToDip
 
   edges
     Start -> find_spec
-    find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
-    find_spec -> no_spec_exit      when ctx.tool_stdout = no_spec_found
+    find_spec -> find_plan  when ctx.tool_stdout != no_spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found
     find_plan -> analyze_spec
     no_spec_exit -> Done
     analyze_spec -> check_analysis
     check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
-    check_analysis -> analyze_spec           when ctx.tool_stdout = analysis_missing  restart: true
+    check_analysis -> analyze_spec  when ctx.tool_stdout = analysis_missing  restart: true
     identify_perspectives -> gen_parallel
     gen_parallel -> gen_claude
     gen_parallel -> gen_gpt
@@ -1060,15 +1029,15 @@ workflow SpecToDip
     gen_gpt -> gen_join
     gen_gemini -> gen_join
     gen_join -> validate_all
-    validate_all -> compliance_parallel       when ctx.tool_stdout = all_valid
-    validate_all -> fix_claude                when ctx.tool_stdout = claude_errors
-    validate_all -> fix_gpt                   when ctx.tool_stdout = gpt_errors
-    validate_all -> fix_gemini                when ctx.tool_stdout = gemini_errors
-    validate_all -> fix_all                   when ctx.tool_stdout = multiple_errors
-    fix_claude -> validate_all                restart: true
-    fix_gpt -> validate_all                   restart: true
-    fix_gemini -> validate_all                restart: true
-    fix_all -> validate_all                   restart: true
+    validate_all -> compliance_parallel  when ctx.tool_stdout = all_valid
+    validate_all -> fix_claude  when ctx.tool_stdout = claude_errors
+    validate_all -> fix_gpt  when ctx.tool_stdout = gpt_errors
+    validate_all -> fix_gemini  when ctx.tool_stdout = gemini_errors
+    validate_all -> fix_all  when ctx.tool_stdout = multiple_errors
+    fix_claude -> validate_all  restart: true
+    fix_gpt -> validate_all  restart: true
+    fix_gemini -> validate_all  restart: true
+    fix_all -> validate_all  restart: true
     compliance_parallel -> compliance_claude
     compliance_parallel -> compliance_gpt
     compliance_parallel -> compliance_gemini
@@ -1088,27 +1057,27 @@ workflow SpecToDip
     review_prompts -> review_join
     review_join -> synthesize_scores
     synthesize_scores -> human_select
-    human_select -> copy_winner        label: "[P] Pick winner"
-    human_select -> merge_candidates   label: "[M] Merge best elements"
-    human_select -> rework_feedback    label: "[R] Rework with feedback"
+    human_select -> copy_winner  label: "[P] Pick winner"
+    human_select -> merge_candidates  label: "[M] Merge best elements"
+    human_select -> rework_feedback  label: "[R] Rework with feedback"
     copy_winner -> final_validate
     merge_candidates -> validate_merge
-    validate_merge -> fix_merge              when ctx.tool_stdout = errors
-    fix_merge -> validate_merge              restart: true
-    validate_merge -> final_validate         when ctx.tool_stdout = valid
+    validate_merge -> fix_merge  when ctx.tool_stdout = errors
+    fix_merge -> validate_merge  restart: true
+    validate_merge -> final_validate  when ctx.tool_stdout = valid
     rework_feedback -> rework_analysis
-    rework_analysis -> gen_parallel          restart: true
-    final_validate -> final_fix              when ctx.tool_stdout = grade_C
-    final_validate -> final_fix              when ctx.tool_stdout = grade_F
-    final_fix -> final_validate              restart: true
-    final_validate -> simmer_judge           when ctx.tool_stdout = grade_A
-    final_validate -> simmer_judge           when ctx.tool_stdout = grade_B
-    simmer_judge -> fresh_eyes               when ctx.outcome = success
-    simmer_judge -> simmer_refine            when ctx.outcome = fail
+    rework_analysis -> gen_parallel  restart: true
+    final_validate -> final_fix  when ctx.tool_stdout = grade_C
+    final_validate -> final_fix  when ctx.tool_stdout = grade_F
+    final_fix -> final_validate  restart: true
+    final_validate -> simmer_judge  when ctx.tool_stdout = grade_A
+    final_validate -> simmer_judge  when ctx.tool_stdout = grade_B
+    simmer_judge -> fresh_eyes  when ctx.outcome = success
+    simmer_judge -> simmer_refine  when ctx.outcome = fail
     simmer_refine -> simmer_revalidate
-    simmer_revalidate -> simmer_judge        when ctx.tool_stdout = valid    restart: true
-    simmer_revalidate -> simmer_refine       when ctx.tool_stdout = errors   restart: true
-    fresh_eyes -> publish_output             when ctx.outcome = success
-    fresh_eyes -> fresh_eyes_revalidate      when ctx.outcome = fail
-    fresh_eyes_revalidate -> fresh_eyes      restart: true
+    simmer_revalidate -> simmer_judge  when ctx.tool_stdout = valid  restart: true
+    simmer_revalidate -> simmer_refine  when ctx.tool_stdout = errors  restart: true
+    fresh_eyes -> publish_output  when ctx.outcome = success
+    fresh_eyes -> fresh_eyes_revalidate  when ctx.outcome = fail
+    fresh_eyes_revalidate -> fresh_eyes  restart: true
     publish_output -> Done
