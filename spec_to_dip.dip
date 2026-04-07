@@ -1304,8 +1304,10 @@ workflow SpecToDip
       fi
       lint_out=$(dippin lint "$f" 2>&1 || true)
       printf '%s' "$lint_out" > .ai/candidates/final_lint.txt
-      lint_warns=$(printf '%s' "$lint_out" | grep -c 'warning\[' || echo 0)
-      error_warns=$(printf '%s' "$lint_out" | grep -c 'error\[' || echo 0)
+      lint_warns=$(printf '%s' "$lint_out" | grep -c 'warning\[' || true)
+      error_warns=$(printf '%s' "$lint_out" | grep -c 'error\[' || true)
+      : "${lint_warns:=0}"
+      : "${error_warns:=0}"
       if [ "$error_warns" -gt 0 ]; then
         printf 'grade_F'
       elif [ "$lint_warns" -lt 5 ]; then
