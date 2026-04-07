@@ -969,6 +969,80 @@ workflow SpecToDip
         printf 'errors'
       fi
 
+  # ── Phase 13: Fresh-Eyes Review ────────────────
+
+  agent fresh_eyes
+    label: "Fresh-Eyes Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Final sanity check. Re-read the .dip file from scratch as if seeing it for the first time.
+
+      Passing validation proves the .dip works as designed. Fresh-eyes proves the design is correct.
+
+      ## Systematic Checks
+      1. **Security**: Do tool commands have injection risks? Are shell scripts using set -eu? Are API keys or secrets hardcoded in prompts?
+      2. **Logic errors**: Can edge conditions deadlock? Are there unreachable nodes the validator missed? Do restart loops have bounded retries?
+      3. **Spec fidelity**: Re-read the original spec one more time. Is anything missing that slipped through the compliance matrix?
+      4. **Prompt correctness**: Do prompts reference context variables (${ctx.*}) that upstream nodes actually produce? Are instructions contradictory?
+      5. **Operational safety**: Are tool timeouts realistic? Could any tool command cause data loss? Are fallback paths sensible?
+
+      ## Process
+      1. Read the original spec file
+      2. Read .ai/candidates/final.dip from top to bottom
+      3. For each check above, note any issues found
+      4. If issues found:
+         - Fix them directly in .ai/candidates/final.dip
+         - List what you fixed in .ai/fresh_eyes_report.md
+         - STATUS: fail (to trigger revalidation)
+      5. If clean:
+         - Write .ai/fresh_eyes_report.md confirming clean review
+         - STATUS: success
+
+  tool fresh_eyes_revalidate
+    label: "Fresh-Eyes Revalidate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin check --format json .ai/candidates/final.dip 2>&1)
+      valid=$(printf '%s' "$result" | grep -o '"valid":true' || true)
+      if [ -n "$valid" ]; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  # ── Phase 14: Publish ──────────────────────────
+
+  agent publish_output
+    label: "Publish Final Pipeline"
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Copy the final .dip to the working directory root and commit.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md for the project name
+      2. Derive a filename: {project_name_snake_case}.dip
+      3. Copy .ai/candidates/final.dip to ./{filename}.dip
+      4. Write .ai/summary.md containing:
+         - Final dippin doctor grade
+         - Simmer judge scores (from latest .ai/simmer/judge_round_*.md)
+         - Fresh-eyes review result
+         - Compliance matrix summary
+         - Tournament results summary (winner, scores)
+         - Generation provenance (which model contributed what)
+      5. Commit:
+         git add ./{filename}.dip .ai/summary.md
+         git commit -m "feat: generate {filename}.dip from spec via multi-model tournament"
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -1034,3 +1108,7 @@ workflow SpecToDip
     simmer_refine -> simmer_revalidate
     simmer_revalidate -> simmer_judge        when ctx.tool_stdout = valid    restart: true
     simmer_revalidate -> simmer_refine       when ctx.tool_stdout = errors   restart: true
+    fresh_eyes -> publish_output             when ctx.outcome = success
+    fresh_eyes -> fresh_eyes_revalidate      when ctx.outcome = fail
+    fresh_eyes_revalidate -> fresh_eyes      restart: true
+    publish_output -> Done
