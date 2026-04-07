@@ -507,6 +507,81 @@ workflow SpecToDip
 
       Fix each candidate independently — do not merge or cross-pollinate.
 
+  # ── Phase 6: Spec Compliance Check ─────────────
+
+  parallel compliance_parallel -> compliance_claude, compliance_gpt, compliance_gemini
+
+  agent compliance_claude
+    label: "Claude Compliance Check"
+    reads: spec_analysis, candidate_claude
+    writes: compliance_claude
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the Claude candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/claude.dip
+      3. For each numbered requirement (R1, R2, ...), find the node(s) that implement it
+      4. Write .ai/candidates/claude_compliance.md as a table:
+
+      | # | Requirement | Node(s) | Coverage | Gap |
+      |---|------------|---------|----------|-----|
+
+      Coverage values: Full, Partial, MISSING
+      5. Also check for required patterns:
+         - TDD loop present? (write_tests -> run -> implement -> verify)
+         - Security review present? (scan tool + review agent with goal_gate)
+         - Code quality gates present? (lint, type check, format tools)
+         - Scenario testing present? (real deps, no mocks)
+         - Fresh-eyes before commit? (goal_gate agent before commit node)
+         - Human review gate present?
+
+      If any requirement is MISSING or any required pattern is absent, output STATUS: gaps_found
+      If all requirements are Full/Partial and all patterns present, output STATUS: compliant
+
+  agent compliance_gpt
+    label: "GPT Compliance Check"
+    reads: spec_analysis, candidate_gpt
+    writes: compliance_gpt
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the GPT candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/gpt.dip
+      3. For each numbered requirement, find implementing node(s)
+      4. Write .ai/candidates/gpt_compliance.md as a compliance matrix table
+      5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
+
+      Output STATUS: compliant or STATUS: gaps_found
+
+  agent compliance_gemini
+    label: "Gemini Compliance Check"
+    reads: spec_analysis, candidate_gemini
+    writes: compliance_gemini
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the Gemini candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/gemini.dip
+      3. For each numbered requirement, find implementing node(s)
+      4. Write .ai/candidates/gemini_compliance.md as a compliance matrix table
+      5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
+
+      Output STATUS: compliant or STATUS: gaps_found
+
+  fan_in compliance_join <- compliance_claude, compliance_gpt, compliance_gemini
+
   edges
     Start -> find_spec
     find_spec -> find_plan         when ctx.tool_stdout != no_spec_found
@@ -533,3 +608,10 @@ workflow SpecToDip
     fix_gpt -> validate_all                   restart: true
     fix_gemini -> validate_all                restart: true
     fix_all -> validate_all                   restart: true
+    compliance_parallel -> compliance_claude
+    compliance_parallel -> compliance_gpt
+    compliance_parallel -> compliance_gemini
+    compliance_claude -> compliance_join
+    compliance_gpt -> compliance_join
+    compliance_gemini -> compliance_join
+    compliance_join -> review_parallel
