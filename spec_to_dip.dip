@@ -270,11 +270,11 @@ workflow SpecToDip
 
         edges
           begin -> run_tests
-          run_tests -> implement [when ctx.tool_stdout = fail]
-          run_tests -> review_gate [when ctx.tool_stdout = pass]
-          implement -> run_tests [restart: true]
-          review_gate -> build_parallel [when ctx.outcome = success]
-          review_gate -> implement [when ctx.outcome = fail] [restart: true]
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
           build_parallel -> build_frontend
           build_parallel -> build_backend
           build_frontend -> build_join
@@ -288,6 +288,10 @@ workflow SpecToDip
       - Fields indented under their node (2-space indent)
       - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
       - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
       - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
 
@@ -295,13 +299,15 @@ workflow SpecToDip
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
       2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
       3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
-      4. Missing start: or exit: field
-      5. Edge references undeclared node
-      6. parallel targets without matching fan_in sources
-      7. Bare variable names in conditions (use ctx.outcome, not outcome)
-      8. Agent node with empty prompt
-      9. Missing tool timeout
-      10. Back-edges without restart: true
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
@@ -432,11 +438,11 @@ workflow SpecToDip
 
         edges
           begin -> run_tests
-          run_tests -> implement [when ctx.tool_stdout = fail]
-          run_tests -> review_gate [when ctx.tool_stdout = pass]
-          implement -> run_tests [restart: true]
-          review_gate -> build_parallel [when ctx.outcome = success]
-          review_gate -> implement [when ctx.outcome = fail] [restart: true]
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
           build_parallel -> build_frontend
           build_parallel -> build_backend
           build_frontend -> build_join
@@ -450,6 +456,10 @@ workflow SpecToDip
       - Fields indented under their node (2-space indent)
       - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
       - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
       - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
 
@@ -457,13 +467,15 @@ workflow SpecToDip
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
       2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
       3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
-      4. Missing start: or exit: field
-      5. Edge references undeclared node
-      6. parallel targets without matching fan_in sources
-      7. Bare variable names in conditions (use ctx.outcome, not outcome)
-      8. Agent node with empty prompt
-      9. Missing tool timeout
-      10. Back-edges without restart: true
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
@@ -593,11 +605,11 @@ workflow SpecToDip
 
         edges
           begin -> run_tests
-          run_tests -> implement [when ctx.tool_stdout = fail]
-          run_tests -> review_gate [when ctx.tool_stdout = pass]
-          implement -> run_tests [restart: true]
-          review_gate -> build_parallel [when ctx.outcome = success]
-          review_gate -> implement [when ctx.outcome = fail] [restart: true]
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
           build_parallel -> build_frontend
           build_parallel -> build_backend
           build_frontend -> build_join
@@ -611,6 +623,10 @@ workflow SpecToDip
       - Fields indented under their node (2-space indent)
       - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
       - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
       - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
 
@@ -618,13 +634,15 @@ workflow SpecToDip
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
       2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
       3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
-      4. Missing start: or exit: field
-      5. Edge references undeclared node
-      6. parallel targets without matching fan_in sources
-      7. Bare variable names in conditions (use ctx.outcome, not outcome)
-      8. Agent node with empty prompt
-      9. Missing tool timeout
-      10. Back-edges without restart: true
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
 
       ## Required Patterns in Generated Pipeline
       Every pipeline MUST include ALL of these:
