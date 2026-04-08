@@ -293,6 +293,8 @@ workflow SpecToDip
       - NO `[otherwise]` keyword — use explicit condition pairs instead
       - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
 
       ## Common LLM Mistakes to Avoid
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
@@ -460,6 +462,8 @@ workflow SpecToDip
       - NO `[otherwise]` keyword — use explicit condition pairs instead
       - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
 
       ## Common LLM Mistakes to Avoid
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
@@ -626,6 +630,8 @@ workflow SpecToDip
       - NO `[otherwise]` keyword — use explicit condition pairs instead
       - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
 
       ## Common LLM Mistakes to Avoid
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
