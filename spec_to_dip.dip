@@ -233,7 +233,6 @@ workflow SpecToDip
           command:
             #!/bin/sh
             set -eu
-            cd "$WORKING_DIR"
             uv run pytest -q 2>&1
             if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
 
@@ -401,7 +400,6 @@ workflow SpecToDip
           command:
             #!/bin/sh
             set -eu
-            cd "$WORKING_DIR"
             uv run pytest -q 2>&1
             if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
 
@@ -568,7 +566,6 @@ workflow SpecToDip
           command:
             #!/bin/sh
             set -eu
-            cd "$WORKING_DIR"
             uv run pytest -q 2>&1
             if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
 
@@ -753,6 +750,8 @@ workflow SpecToDip
       5. Write the fixed version back to .ai/candidates/claude.dip
 
       ## Common Fixes
+      - Bracket edge syntax: WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true` — no brackets on edges
       - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
         find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
         `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
@@ -783,6 +782,8 @@ workflow SpecToDip
       5. Write the fixed version back to .ai/candidates/gpt.dip
 
       ## Common Fixes
+      - Bracket edge syntax: WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true` — no brackets on edges
       - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
         find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
         `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
@@ -813,6 +814,8 @@ workflow SpecToDip
       5. Write the fixed version back to .ai/candidates/gemini.dip
 
       ## Common Fixes
+      - Bracket edge syntax: WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true` — no brackets on edges
       - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
         find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
         `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
@@ -843,6 +846,9 @@ workflow SpecToDip
       - `fan_in Y <- A, B, C` (comma-separated sources)
       - `edges` section at end with all edge declarations
       - Indentation-based structure (like YAML), never curly braces
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true`
 
       If you see `tool X with`, `workflow X {`, `parallel X (`, or any `with` keyword
       after a node declaration — that is the root cause. Rewrite the entire file using
@@ -906,7 +912,6 @@ workflow SpecToDip
           command:
             #!/bin/sh
             set -eu
-            cd "$WORKING_DIR"
             uv run pytest -q 2>&1
             if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
 
@@ -1282,6 +1287,11 @@ workflow SpecToDip
       ## Task
       Fix validation errors introduced by the merge.
 
+      ## Dippin Edge Syntax (CRITICAL)
+      WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+      RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      Brackets in edges cause parse errors. Use keyword syntax only.
+
       ## Process
       1. Read .ai/candidates/final_check.txt for diagnostics
       2. Read .ai/candidates/final.dip
@@ -1358,6 +1368,11 @@ workflow SpecToDip
 
       ## Task
       The final .dip file has lint warnings or doctor suggestions. Fix them.
+
+      ## Dippin Edge Syntax (CRITICAL)
+      WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+      RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      Brackets in edges cause parse errors. Use keyword syntax only.
 
       ## Process
       1. Run dippin lint .ai/candidates/final.dip and read output
@@ -1471,6 +1486,12 @@ workflow SpecToDip
       3. **Spec fidelity**: Re-read the original spec one more time. Is anything missing that slipped through the compliance matrix?
       4. **Prompt correctness**: Do prompts reference context variables (${ctx.*}) that upstream nodes actually produce? Are instructions contradictory?
       5. **Operational safety**: Are tool timeouts realistic? Could any tool command cause data loss? Are fallback paths sensible?
+
+      ## Dippin Edge Syntax (CRITICAL)
+      When reviewing or editing edges, verify KEYWORD syntax, NOT bracket syntax:
+        WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      If you see bracket syntax in edges, fix it. This causes parse errors.
 
       ## Process
       1. Read the original spec file
