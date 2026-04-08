@@ -232,9 +232,7 @@ workflow SpecToDip
           timeout: 120s
           command:
             #!/bin/sh
-            set -eu
-            uv run pytest -q 2>&1
-            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
 
         agent implement
           label: "Write Code"
@@ -295,6 +293,9 @@ workflow SpecToDip
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
       - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
         any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
 
       ## Common LLM Mistakes to Avoid
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
@@ -401,9 +402,7 @@ workflow SpecToDip
           timeout: 120s
           command:
             #!/bin/sh
-            set -eu
-            uv run pytest -q 2>&1
-            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
 
         agent implement
           label: "Write Code"
@@ -464,6 +463,9 @@ workflow SpecToDip
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
       - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
         any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
 
       ## Common LLM Mistakes to Avoid
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
@@ -569,9 +571,7 @@ workflow SpecToDip
           timeout: 120s
           command:
             #!/bin/sh
-            set -eu
-            uv run pytest -q 2>&1
-            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
 
         agent implement
           label: "Write Code"
@@ -632,6 +632,9 @@ workflow SpecToDip
       - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
       - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
         any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
 
       ## Common LLM Mistakes to Avoid
       1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
@@ -917,9 +920,7 @@ workflow SpecToDip
           timeout: 120s
           command:
             #!/bin/sh
-            set -eu
-            uv run pytest -q 2>&1
-            if [ $? -eq 0 ]; then printf 'pass'; else printf 'fail'; fi
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
 
         agent implement
           label: "Write Code"
