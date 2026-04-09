@@ -476,3 +476,44 @@ workflow SpecToSprints
       count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
       git commit -m "feat(sprints): decompose spec into ${count} sprints"
       printf 'committed-%s-sprints' "$count"
+
+  edges
+    Start -> find_spec
+    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found  label: no_spec
+    no_spec_exit -> Exit
+    analyze_spec -> DecomposeParallel
+    DecomposeParallel -> decompose_claude
+    DecomposeParallel -> decompose_gpt
+    DecomposeParallel -> decompose_gemini
+    decompose_claude -> DecomposeJoin
+    decompose_gpt -> DecomposeJoin
+    decompose_gemini -> DecomposeJoin
+    DecomposeJoin -> CritiqueParallel
+    CritiqueParallel -> critique_claude_on_gpt
+    CritiqueParallel -> critique_claude_on_gemini
+    CritiqueParallel -> critique_gpt_on_claude
+    CritiqueParallel -> critique_gpt_on_gemini
+    CritiqueParallel -> critique_gemini_on_claude
+    CritiqueParallel -> critique_gemini_on_gpt
+    critique_claude_on_gpt -> CritiqueJoin
+    critique_claude_on_gemini -> CritiqueJoin
+    critique_gpt_on_claude -> CritiqueJoin
+    critique_gpt_on_gemini -> CritiqueJoin
+    critique_gemini_on_claude -> CritiqueJoin
+    critique_gemini_on_gpt -> CritiqueJoin
+    CritiqueJoin -> merge_decomposition
+    merge_decomposition -> present_plan
+    present_plan -> approval_gate
+    approval_gate -> apply_feedback  label: "[A] Revise plan"
+    approval_gate -> skip_approval  label: "[S] Approve / Skip"
+    apply_feedback -> approval_gate  restart: true
+    skip_approval -> setup_workspace
+    setup_workspace -> write_sprint_docs
+    write_sprint_docs -> write_ledger
+    write_ledger -> validate_output
+    validate_output -> commit_output  when ctx.outcome = success  label: valid
+    validate_output -> write_sprint_docs  when ctx.outcome = fail  label: fix_validation  restart: true
+    validate_output -> validation_failed  when ctx.outcome = exhausted  label: give_up
+    commit_output -> Exit
+    validation_failed -> Exit
