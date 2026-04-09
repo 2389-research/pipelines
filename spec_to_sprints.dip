@@ -465,7 +465,13 @@ workflow SpecToSprints
         printf 'no-git-skipped'
         exit 0
       fi
-      git add .ai/ledger.tsv .ai/sprints/ .ai/spec_analysis.md .ai/sprint_plan.md
+      for f in .ai/ledger.tsv .ai/sprints .ai/spec_analysis.md .ai/sprint_plan.md; do
+        [ -e "$f" ] && git add "$f"
+      done
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+        exit 0
+      fi
       count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
       git commit -m "feat(sprints): decompose spec into ${count} sprints"
       printf 'committed-%s-sprints' "$count"
