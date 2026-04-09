@@ -419,11 +419,16 @@ workflow SpecToSprints
     command:
       set -eu
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      fi
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
         id=$(basename "$f" .md | sed 's/SPRINT-//')
-        title=$(head -1 "$f" | sed 's/^# Sprint [0-9]* — //' | sed 's/^# //')
+        if awk -F '\t' -v target="$id" 'NR>1 && $1==target {found=1} END{exit found?0:1}' .ai/ledger.tsv; then
+          continue
+        fi
+        title=$(head -1 "$f" | sed 's/^# Sprint [0-9]* *[-—–]* *//' | sed 's/^# //' | tr -d '\t')
         printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$title" "planned" "$now" "$now" >> .ai/ledger.tsv
       done
       count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
