@@ -93,6 +93,11 @@ workflow SpecToSprints
       ## Output
       Write the analysis to .ai/spec_analysis.md. Create the .ai directory if it does not exist.
 
+      ## Critical Rules
+      - Only extract requirements explicitly stated in the spec. Do not invent, infer, or add requirements.
+      - If the spec is ambiguous, note the ambiguity in Open Questions rather than guessing.
+      - Every FR must have a direct spec section reference.
+
       ## Success Criteria
       - .ai/spec_analysis.md exists with ALL sections filled in
       - Every functional requirement is numbered
@@ -135,6 +140,10 @@ workflow SpecToSprints
       - Every sprint must be independently verifiable (has its own validation)
       - Prefer fewer, well-scoped sprints over many tiny ones
       - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
 
       ## Output
       Write your complete decomposition to .ai/drafts/decomposition_claude.md.
@@ -175,6 +184,10 @@ workflow SpecToSprints
       - Every sprint must be independently verifiable (has its own validation)
       - Prefer fewer, well-scoped sprints over many tiny ones
       - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
 
       ## Output
       Write your complete decomposition to .ai/drafts/decomposition_gpt.md.
@@ -215,6 +228,10 @@ workflow SpecToSprints
       - Every sprint must be independently verifiable (has its own validation)
       - Prefer fewer, well-scoped sprints over many tiny ones
       - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
 
       ## Output
       Write your complete decomposition to .ai/drafts/decomposition_gemini.md.
@@ -559,6 +576,9 @@ workflow SpecToSprints
       - Expected artifacts should use realistic file paths based on the tech stack from spec analysis
       - Write ALL sprint docs in one pass for cross-sprint consistency
       - If .ai/sprints/ already contains files, overwrite them
+      - Every sprint DoD MUST include at least one test item: "Write tests for X" or "Tests for X pass"
+      - DoD items must be concrete and machine-verifiable. Good: "pytest tests/test_capture.py passes". Bad: "Capture works correctly"
+      - The first DoD item for each sprint should be writing a failing test for the sprint's core deliverable
 
   tool write_ledger
     label: "Write Ledger"
