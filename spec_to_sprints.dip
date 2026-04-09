@@ -46,6 +46,7 @@ workflow SpecToSprints
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    writes: spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -102,6 +103,8 @@ workflow SpecToSprints
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_claude
     prompt:
       You are working in `run.working_dir`.
 
@@ -130,11 +133,17 @@ workflow SpecToSprints
       - Prefer fewer, well-scoped sprints over many tiny ones
       - Target 8-20 sprints for a typical project
 
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_claude.md.
+      Create the .ai/drafts directory if it does not exist.
+
   agent decompose_gpt
     label: "GPT Decomposition"
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gpt
     prompt:
       You are working in `run.working_dir`.
 
@@ -163,11 +172,17 @@ workflow SpecToSprints
       - Prefer fewer, well-scoped sprints over many tiny ones
       - Target 8-20 sprints for a typical project
 
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gpt.md.
+      Create the .ai/drafts directory if it does not exist.
+
   agent decompose_gemini
     label: "Gemini Decomposition"
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gemini
     prompt:
       You are working in `run.working_dir`.
 
@@ -196,6 +211,10 @@ workflow SpecToSprints
       - Prefer fewer, well-scoped sprints over many tiny ones
       - Target 8-20 sprints for a typical project
 
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gemini.md.
+      Create the .ai/drafts directory if it does not exist.
+
   fan_in DecomposeJoin <- decompose_claude, decompose_gpt, decompose_gemini
 
   parallel CritiqueParallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
@@ -205,60 +224,168 @@ workflow SpecToSprints
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
     prompt:
-      Review the GPT decomposition for: missed functional requirements, dependency ordering errors, sprints that are too large or too small, unclear DoD items, missing validation criteria, and coverage gaps against the spec analysis.
+      You are working in `run.working_dir`.
 
-      Be specific. Cite sprint numbers and FR IDs when identifying issues.
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
 
   agent critique_claude_on_gemini
     label: "Claude Critique of Gemini"
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
     prompt:
-      Review the Gemini decomposition for: missed functional requirements, dependency ordering errors, sprints that are too large or too small, unclear DoD items, missing validation criteria, and coverage gaps against the spec analysis.
+      You are working in `run.working_dir`.
 
-      Be specific. Cite sprint numbers and FR IDs when identifying issues.
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
 
   agent critique_gpt_on_claude
     label: "GPT Critique of Claude"
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
     prompt:
-      Review the Claude decomposition for: missed functional requirements, dependency ordering errors, sprints that are too large or too small, unclear DoD items, missing validation criteria, and coverage gaps against the spec analysis.
+      You are working in `run.working_dir`.
 
-      Be specific. Cite sprint numbers and FR IDs when identifying issues.
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
 
   agent critique_gpt_on_gemini
     label: "GPT Critique of Gemini"
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
     prompt:
-      Review the Gemini decomposition for: missed functional requirements, dependency ordering errors, sprints that are too large or too small, unclear DoD items, missing validation criteria, and coverage gaps against the spec analysis.
+      You are working in `run.working_dir`.
 
-      Be specific. Cite sprint numbers and FR IDs when identifying issues.
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
 
   agent critique_gemini_on_claude
     label: "Gemini Critique of Claude"
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
     prompt:
-      Review the Claude decomposition for: missed functional requirements, dependency ordering errors, sprints that are too large or too small, unclear DoD items, missing validation criteria, and coverage gaps against the spec analysis.
+      You are working in `run.working_dir`.
 
-      Be specific. Cite sprint numbers and FR IDs when identifying issues.
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
 
   agent critique_gemini_on_gpt
     label: "Gemini Critique of GPT"
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
     prompt:
-      Review the GPT decomposition for: missed functional requirements, dependency ordering errors, sprints that are too large or too small, unclear DoD items, missing validation criteria, and coverage gaps against the spec analysis.
+      You are working in `run.working_dir`.
 
-      Be specific. Cite sprint numbers and FR IDs when identifying issues.
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
 
   fan_in CritiqueJoin <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
 
@@ -267,6 +394,8 @@ workflow SpecToSprints
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    reads: decomposition_claude, decomposition_gpt, decomposition_gemini, spec_analysis
+    writes: sprint_plan
     prompt:
       You are working in `run.working_dir`.
 
@@ -274,6 +403,12 @@ workflow SpecToSprints
       Synthesize the three decompositions and six cross-critiques into one final sprint plan.
 
       ## Process
+      Read the three decomposition files:
+      - .ai/drafts/decomposition_claude.md
+      - .ai/drafts/decomposition_gpt.md
+      - .ai/drafts/decomposition_gemini.md
+      And the spec analysis: .ai/spec_analysis.md
+
       1. Compare the three decompositions side by side
       2. Incorporate valid critique findings — fix ordering errors, fill coverage gaps, adjust sprint sizes
       3. Produce a single merged sprint list that takes the best from each decomposition
@@ -317,6 +452,7 @@ workflow SpecToSprints
     label: "Present Sprint Plan"
     model: claude-sonnet-4-6
     provider: anthropic
+    reads: sprint_plan
     prompt:
       You are working in `run.working_dir`.
 
@@ -337,6 +473,8 @@ workflow SpecToSprints
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    reads: sprint_plan
+    writes: sprint_plan
     prompt:
       You are working in `run.working_dir`.
 
@@ -368,6 +506,7 @@ workflow SpecToSprints
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    reads: sprint_plan, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
