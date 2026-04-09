@@ -594,10 +594,13 @@ workflow SpecToSprints
       fi
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
-        if ! grep -q '## DoD' "$f"; then
-          base=$(basename "$f")
-          errors="${errors}missing-dod-${base} "
-        fi
+        base=$(basename "$f")
+        for section in "## Scope" "## Requirements" "## Dependencies" "## Expected Artifacts" "## DoD" "## Validation"; do
+          if ! grep -q "$section" "$f"; then
+            tag=$(printf '%s' "$section" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+            errors="${errors}missing-${tag}-${base} "
+          fi
+        done
       done
       if [ -z "$(awk 'NR>1' .ai/ledger.tsv)" ]; then
         errors="${errors}empty-ledger "
