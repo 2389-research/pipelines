@@ -74,6 +74,7 @@ workflow SpecToDip
     goal_gate: true
     max_retries: 3
     retry_target: analyze_spec
+    fallback_target: Done
     writes: spec_analysis
     prompt:
       You are working in `run.working_dir`.
@@ -159,6 +160,7 @@ workflow SpecToDip
     reasoning_effort: high
     reads: spec_analysis
     writes: perspectives
+    fallback_target: gen_parallel
     prompt:
       You are working in `run.working_dir`.
 
@@ -207,7 +209,7 @@ workflow SpecToDip
 
       ## Dippin Syntax Reference — CONCRETE EXAMPLE
       Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
-      Study this example carefully — it shows EVERY construct you need:
+      Study this example carefully — it shows the most common constructs:
 
       ```
       workflow MyPipeline
@@ -238,11 +240,13 @@ workflow SpecToDip
           label: "Write Code"
           model: claude-sonnet-4-6
           provider: anthropic
+          reasoning_effort: high
           auto_status: true
           goal_gate: true
           reads: test_results
           writes: source_code
           max_retries: 2
+          retry_target: run_tests
           fallback_target: done
           prompt:
             You are working in `run.working_dir`.
@@ -315,10 +319,14 @@ workflow SpecToDip
       Every pipeline MUST include ALL of these:
 
       ### TDD Loop
-      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
 
       ### Security Review
-      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
       Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
 
       ### Code Quality Gates
@@ -326,18 +334,25 @@ workflow SpecToDip
       All with timeouts.
 
       ### Scenario Testing (The Iron Law)
-      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
       Real dependencies only. No mocks.
 
       ### Fresh-Eyes Review Before Commit
-      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
       Immediately before EVERY commit node.
 
       ### Human Review Gate
       At least one human gate at a meaningful decision point (after implementation, before shipping).
 
       ### Simmer Refinement (for complex output artifacts)
-      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
 
       ### Integration Testing
       After components are built, test them together with real APIs and real data flows.
@@ -350,6 +365,15 @@ workflow SpecToDip
       - All back-edges have restart: true
       - Use auto_status: true on decision-point agents
       - Use goal_gate: true on critical quality checks
+
+      ## Self-Test Checklist (verify BEFORE writing the .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
 
       ## Output
       Write the complete .dip file to .ai/candidates/claude.dip
@@ -377,7 +401,7 @@ workflow SpecToDip
 
       ## Dippin Syntax Reference — CONCRETE EXAMPLE
       Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
-      Study this example carefully — it shows EVERY construct you need:
+      Study this example carefully — it shows the most common constructs:
 
       ```
       workflow MyPipeline
@@ -408,11 +432,13 @@ workflow SpecToDip
           label: "Write Code"
           model: claude-sonnet-4-6
           provider: anthropic
+          reasoning_effort: high
           auto_status: true
           goal_gate: true
           reads: test_results
           writes: source_code
           max_retries: 2
+          retry_target: run_tests
           fallback_target: done
           prompt:
             You are working in `run.working_dir`.
@@ -485,10 +511,14 @@ workflow SpecToDip
       Every pipeline MUST include ALL of these:
 
       ### TDD Loop
-      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
 
       ### Security Review
-      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
       Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
 
       ### Code Quality Gates
@@ -496,18 +526,25 @@ workflow SpecToDip
       All with timeouts.
 
       ### Scenario Testing (The Iron Law)
-      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
       Real dependencies only. No mocks.
 
       ### Fresh-Eyes Review Before Commit
-      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
       Immediately before EVERY commit node.
 
       ### Human Review Gate
       At least one human gate at a meaningful decision point (after implementation, before shipping).
 
       ### Simmer Refinement (for complex output artifacts)
-      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
 
       ### Integration Testing
       After components are built, test them together with real APIs and real data flows.
@@ -519,6 +556,15 @@ workflow SpecToDip
       - Node IDs are descriptive and consistent (PascalCase or snake_case, pick one)
       - Parallel branches are symmetric and balanced
       - Edge routing is immediately understandable
+
+      ## Self-Test Checklist (verify BEFORE writing the .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
 
       ## Output
       Write the complete .dip file to .ai/candidates/gpt.dip
@@ -546,7 +592,7 @@ workflow SpecToDip
 
       ## Dippin Syntax Reference — CONCRETE EXAMPLE
       Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
-      Study this example carefully — it shows EVERY construct you need:
+      Study this example carefully — it shows the most common constructs:
 
       ```
       workflow MyPipeline
@@ -577,11 +623,13 @@ workflow SpecToDip
           label: "Write Code"
           model: claude-sonnet-4-6
           provider: anthropic
+          reasoning_effort: high
           auto_status: true
           goal_gate: true
           reads: test_results
           writes: source_code
           max_retries: 2
+          retry_target: run_tests
           fallback_target: done
           prompt:
             You are working in `run.working_dir`.
@@ -654,10 +702,14 @@ workflow SpecToDip
       Every pipeline MUST include ALL of these:
 
       ### TDD Loop
-      write_tests -> run_tests (expect fail) -> implement -> verify_tests -> [pass: continue] / [fail: implement restart: true]
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
 
       ### Security Review
-      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true) -> [pass: continue] / [fail: fix restart: true]
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
       Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
 
       ### Code Quality Gates
@@ -665,18 +717,25 @@ workflow SpecToDip
       All with timeouts.
 
       ### Scenario Testing (The Iron Law)
-      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool) -> [pass: continue] / [fail: fix restart: true]
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
       Real dependencies only. No mocks.
 
       ### Fresh-Eyes Review Before Commit
-      fresh_eyes (agent, goal_gate: true, auto_status: true) -> [pass: commit] / [fail: fix restart: true]
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
       Immediately before EVERY commit node.
 
       ### Human Review Gate
       At least one human gate at a meaningful decision point (after implementation, before shipping).
 
       ### Simmer Refinement (for complex output artifacts)
-      judge (agent, auto_status: true) -> [pass: continue] / [fail: refine -> revalidate -> judge restart: true]
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
 
       ### Integration Testing
       After components are built, test them together with real APIs and real data flows.
@@ -685,10 +744,19 @@ workflow SpecToDip
       Your strength is error handling and edge case coverage. Make sure:
       - Every decision point has explicit failure handling
       - Retry loops are bounded with max_retries and fallback_target
-      - Tool commands use set -eu and handle failure gracefully
+      - Non-routing tool scripts use set -eu; routing tools that must printf a value use if/then/else instead (set -e kills the script before printf runs)
       - Pipeline can recover from partial failures
       - Fallback edges exist for every conditional routing point
       - max_restarts is set appropriately for the number of loops
+
+      ## Self-Test Checklist (verify BEFORE writing the .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
 
       ## Output
       Write the complete .dip file to .ai/candidates/gemini.dip
@@ -896,6 +964,7 @@ workflow SpecToDip
 
       ## Dippin Syntax Reference — CONCRETE EXAMPLE
       Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows the most common constructs:
 
       ```
       workflow MyPipeline
@@ -924,10 +993,23 @@ workflow SpecToDip
 
         agent implement
           label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          reasoning_effort: high
           auto_status: true
           goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          retry_target: run_tests
+          fallback_target: done
           prompt:
+            You are working in `run.working_dir`.
             Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
 
         parallel build_parallel -> build_frontend, build_backend
         fan_in build_join <- build_frontend, build_backend
@@ -944,9 +1026,11 @@ workflow SpecToDip
 
         edges
           begin -> run_tests
-          run_tests -> implement [when ctx.tool_stdout = fail]
-          run_tests -> build_parallel [when ctx.tool_stdout = pass]
-          implement -> run_tests [restart: true]
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
           build_parallel -> build_frontend
           build_parallel -> build_backend
           build_frontend -> build_join
@@ -960,6 +1044,82 @@ workflow SpecToDip
       - Fields indented under their node (2-space indent)
       - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
       - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
+
+      ## Common LLM Mistakes to Avoid
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
+
+      ## Self-Test Checklist (verify BEFORE writing each .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
 
       ## CRITICAL: Do NOT skip any missing candidate. Generate ALL of them.
       If only one is missing, generate that one. If two are missing, generate both.
@@ -1114,7 +1274,7 @@ workflow SpecToDip
          - Are goal_gate nodes placed at critical quality checks?
          - Is max_restarts sufficient for the number of restart edges?
          - Can the pipeline recover from partial failures?
-         - Do shell commands use set -eu?
+         - Do non-routing tool scripts use set -eu? Do routing tools that must printf a value use if/then/else instead of set -e?
       3. Write .ai/reviews/robustness.md with scores and specific weaknesses found
 
   agent review_efficiency
@@ -1170,6 +1330,7 @@ workflow SpecToDip
     reasoning_effort: high
     reads: compliance_claude, compliance_gpt, compliance_gemini, review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
     writes: tournament_results
+    fallback_target: rework_feedback
     prompt:
       You are working in `run.working_dir`.
 
@@ -1232,6 +1393,7 @@ workflow SpecToDip
 
   agent copy_winner
     label: "Copy Winner to Final"
+    fallback_target: final_validate
     prompt:
       You are working in `run.working_dir`.
 
@@ -1248,6 +1410,7 @@ workflow SpecToDip
     label: "Merge Best Elements"
     model: claude-opus-4-6
     reasoning_effort: high
+    fallback_target: rework_feedback
     prompt:
       You are working in `run.working_dir`.
 
@@ -1323,6 +1486,7 @@ workflow SpecToDip
     label: "Incorporate Rework Feedback"
     model: claude-opus-4-6
     reasoning_effort: high
+    fallback_target: rework_feedback
     prompt:
       You are working in `run.working_dir`.
 
@@ -1392,6 +1556,7 @@ workflow SpecToDip
     model: claude-opus-4-6
     reasoning_effort: high
     auto_status: true
+    fallback_target: fresh_eyes
     prompt:
       You are working in `run.working_dir`.
 
@@ -1488,7 +1653,7 @@ workflow SpecToDip
       Passing validation proves the .dip works as designed. Fresh-eyes proves the design is correct.
 
       ## Systematic Checks
-      1. **Security**: Do tool commands have injection risks? Are shell scripts using set -eu? Are API keys or secrets hardcoded in prompts?
+      1. **Security**: Do tool commands have injection risks? Do non-routing tool scripts use set -eu? Do routing tools that must printf a value use if/then/else instead of set -e? Are API keys or secrets hardcoded in prompts?
       2. **Logic errors**: Can edge conditions deadlock? Are there unreachable nodes the validator missed? Do restart loops have bounded retries?
       3. **Spec fidelity**: Re-read the original spec one more time. Is anything missing that slipped through the compliance matrix?
       4. **Prompt correctness**: Do prompts reference context variables (${ctx.*}) that upstream nodes actually produce? Are instructions contradictory?
@@ -1558,6 +1723,7 @@ workflow SpecToDip
 
   agent publish_output
     label: "Publish Final Pipeline"
+    fallback_target: Done
     prompt:
       You are working in `run.working_dir`.
 
