@@ -540,7 +540,7 @@ workflow SpecToSprints
     provider: anthropic
     reasoning_effort: high
     reads: sprint_plan, spec_analysis
-    fallback_target: validation_failed
+    fallback_target: Exit
     prompt:
       You are working in `run.working_dir`.
 
@@ -640,16 +640,6 @@ workflow SpecToSprints
       fi
       printf 'valid'
 
-  agent validation_failed
-    label: "Validation Failed"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    reasoning_effort: medium
-    prompt:
-      You are working in `run.working_dir`.
-
-      The output validation failed after exhausting retries. Diagnose what went wrong by examining the .ai/sprints/ directory and .ai/ledger.tsv. Report what is missing or malformed so the issue can be addressed manually.
-
   tool commit_output
     label: "Commit Output"
     timeout: 30s
@@ -708,4 +698,3 @@ workflow SpecToSprints
     validate_output -> commit_output  when ctx.tool_stdout = valid  label: valid
     validate_output -> write_sprint_docs  when ctx.tool_stdout != valid  label: fix_validation  restart: true
     commit_output -> Exit
-    validation_failed -> Exit
