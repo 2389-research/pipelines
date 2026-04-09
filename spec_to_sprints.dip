@@ -456,13 +456,6 @@ workflow SpecToSprints
       fi
       printf 'valid'
 
-  agent validation_failed
-    label: "Validation Failed"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    prompt:
-      The output validation failed after exhausting retries. Diagnose what went wrong by examining the .ai/sprints/ directory and .ai/ledger.tsv. Report what is missing or malformed so the issue can be addressed manually.
-
   tool commit_output
     label: "Commit Output"
     timeout: 30s
@@ -512,8 +505,6 @@ workflow SpecToSprints
     setup_workspace -> write_sprint_docs
     write_sprint_docs -> write_ledger
     write_ledger -> validate_output
-    validate_output -> commit_output  when ctx.outcome = success  label: valid
-    validate_output -> write_sprint_docs  when ctx.outcome = fail  label: fix_validation  restart: true
-    validate_output -> validation_failed  when ctx.outcome = exhausted  label: give_up
+    validate_output -> commit_output  when ctx.tool_stdout = valid  label: valid
+    validate_output -> write_sprint_docs  when ctx.tool_stdout != valid  label: fix_validation  restart: true
     commit_output -> Exit
-    validation_failed -> Exit
