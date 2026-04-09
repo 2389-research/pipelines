@@ -10,9 +10,13 @@ workflow SpecToSprints
 
   agent Start
     label: Start
+    prompt:
+      Begin spec-to-sprints decomposition pipeline.
 
   agent Exit
     label: Exit
+    prompt:
+      Spec-to-sprints pipeline complete.
 
   tool find_spec
     label: "Find Spec File"
@@ -25,7 +29,7 @@ workflow SpecToSprints
           exit 0
         fi
       done
-      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | head -1)
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
       if [ -n "$first" ]; then
         printf '%s' "$first"
         exit 0
@@ -103,7 +107,7 @@ workflow SpecToSprints
       - Every functional requirement is numbered
       - Every component dependency is mapped
 
-  parallel DecomposeParallel -> decompose_claude, decompose_gpt, decompose_gemini
+  parallel decompose_parallel -> decompose_claude, decompose_gpt, decompose_gemini
 
   agent decompose_claude
     label: "Claude Decomposition"
@@ -112,7 +116,7 @@ workflow SpecToSprints
     reasoning_effort: high
     reads: spec_analysis
     writes: decomposition_claude
-    fallback_target: DecomposeJoin
+    fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -156,7 +160,7 @@ workflow SpecToSprints
     reasoning_effort: high
     reads: spec_analysis
     writes: decomposition_gpt
-    fallback_target: DecomposeJoin
+    fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -200,7 +204,7 @@ workflow SpecToSprints
     reasoning_effort: high
     reads: spec_analysis
     writes: decomposition_gemini
-    fallback_target: DecomposeJoin
+    fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
 
@@ -237,9 +241,9 @@ workflow SpecToSprints
       Write your complete decomposition to .ai/drafts/decomposition_gemini.md.
       Create the .ai/drafts directory if it does not exist.
 
-  fan_in DecomposeJoin <- decompose_claude, decompose_gpt, decompose_gemini
+  fan_in decompose_join <- decompose_claude, decompose_gpt, decompose_gemini
 
-  parallel CritiqueParallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+  parallel critique_parallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
 
   agent critique_claude_on_gpt
     label: "Claude Critique of GPT"
@@ -409,7 +413,7 @@ workflow SpecToSprints
 
       Be specific. Vague critiques like "could be better" are not useful.
 
-  fan_in CritiqueJoin <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+  fan_in critique_join <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
 
   agent merge_decomposition
     label: "Merge Decomposition"
@@ -477,6 +481,7 @@ workflow SpecToSprints
     model: claude-sonnet-4-6
     provider: anthropic
     reads: sprint_plan
+    reasoning_effort: medium
     prompt:
       You are working in `run.working_dir`.
 
@@ -506,13 +511,17 @@ workflow SpecToSprints
 
       Preserve the same format. Update sprint numbers if sprints are added, removed, or reordered. Ensure dependency references remain consistent after renumbering.
 
-  agent skip_approval
+  tool skip_approval
     label: "Skip Approval"
-    model: gemini-3-flash-preview
-    provider: gemini
-    reasoning_effort: low
-    prompt:
-      The sprint plan was approved or approval was skipped for autonomous execution. Document this decision for the audit trail by noting: sprint count, timestamp, and approval mode (human-approved or auto-skipped).
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      count="unknown"
+      if [ -f .ai/sprint_plan.md ]; then
+        count=$(grep -c '^### Sprint' .ai/sprint_plan.md || true)
+      fi
+      printf 'approved\t%s\t%s\tauto-skipped\n' "$count" "$now"
 
   tool setup_workspace
     label: "Setup .ai Workspace"
@@ -666,27 +675,27 @@ workflow SpecToSprints
     find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
     find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found  label: no_spec
     no_spec_exit -> Exit
-    analyze_spec -> DecomposeParallel
-    DecomposeParallel -> decompose_claude
-    DecomposeParallel -> decompose_gpt
-    DecomposeParallel -> decompose_gemini
-    decompose_claude -> DecomposeJoin
-    decompose_gpt -> DecomposeJoin
-    decompose_gemini -> DecomposeJoin
-    DecomposeJoin -> CritiqueParallel
-    CritiqueParallel -> critique_claude_on_gpt
-    CritiqueParallel -> critique_claude_on_gemini
-    CritiqueParallel -> critique_gpt_on_claude
-    CritiqueParallel -> critique_gpt_on_gemini
-    CritiqueParallel -> critique_gemini_on_claude
-    CritiqueParallel -> critique_gemini_on_gpt
-    critique_claude_on_gpt -> CritiqueJoin
-    critique_claude_on_gemini -> CritiqueJoin
-    critique_gpt_on_claude -> CritiqueJoin
-    critique_gpt_on_gemini -> CritiqueJoin
-    critique_gemini_on_claude -> CritiqueJoin
-    critique_gemini_on_gpt -> CritiqueJoin
-    CritiqueJoin -> merge_decomposition
+    analyze_spec -> decompose_parallel
+    decompose_parallel -> decompose_claude
+    decompose_parallel -> decompose_gpt
+    decompose_parallel -> decompose_gemini
+    decompose_claude -> decompose_join
+    decompose_gpt -> decompose_join
+    decompose_gemini -> decompose_join
+    decompose_join -> critique_parallel
+    critique_parallel -> critique_claude_on_gpt
+    critique_parallel -> critique_claude_on_gemini
+    critique_parallel -> critique_gpt_on_claude
+    critique_parallel -> critique_gpt_on_gemini
+    critique_parallel -> critique_gemini_on_claude
+    critique_parallel -> critique_gemini_on_gpt
+    critique_claude_on_gpt -> critique_join
+    critique_claude_on_gemini -> critique_join
+    critique_gpt_on_claude -> critique_join
+    critique_gpt_on_gemini -> critique_join
+    critique_gemini_on_claude -> critique_join
+    critique_gemini_on_gpt -> critique_join
+    critique_join -> merge_decomposition
     merge_decomposition -> present_plan
     present_plan -> approval_gate
     approval_gate -> apply_feedback  label: "[A] Revise plan"
