@@ -1,0 +1,441 @@
+workflow SprintRunner
+  goal: "Execute all sprints from .ai/ledger.tsv in sequence, looping until every sprint is completed or one fails. Inlines full sprint execution with multi-model review tournament and human approval gate between sprints."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 50
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Begin sprint runner pipeline. Will loop through all incomplete sprints in the ledger.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Sprint runner pipeline complete.
+
+  tool check_ledger
+    label: "Check Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'no_ledger'
+        exit 0
+      fi
+      target=$(awk -F '\t' 'NR>1 && $3!~/^completed$/ && $3!~/^skipped$/{print $1; exit}' .ai/ledger.tsv)
+      if [ -z "$target" ]; then
+        printf 'all_done'
+        exit 0
+      fi
+      printf '%s' "$target" > .ai/current_sprint_id.txt
+      printf 'next-%s' "$target"
+
+  agent no_ledger_exit
+    label: "No Ledger Found"
+    prompt:
+      No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.
+
+      To create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.
+
+  agent read_sprint
+    label: "Read Sprint"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/current_sprint_id.txt to get the target sprint ID.
+      Read the sprint document at .ai/sprints/SPRINT-<id>.md.
+
+      Summarize:
+      1. Sprint title and scope
+      2. Requirements covered (FR IDs)
+      3. Dependencies — confirm all dependency sprints are completed in .ai/ledger.tsv
+      4. Expected artifacts
+      5. DoD checklist items
+      6. Validation commands
+
+      If a dependency sprint is NOT completed, flag this as a blocker.
+
+  tool mark_in_progress
+    label: "Mark In Progress"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="in_progress"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'in_progress-%s' "$target"
+
+  agent implement_sprint
+    label: "Implement Sprint"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    fidelity: summary:high
+    goal_gate: true
+    retry_target: implement_sprint
+    fallback_target: failure_summary
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/current_sprint_id.txt to get the sprint ID. Read the sprint doc at .ai/sprints/SPRINT-<id>.md. Implement all requirements end-to-end.
+
+      ## Process
+      1. Read the sprint doc thoroughly — understand scope, requirements, expected artifacts, DoD
+      2. Read .ai/spec_analysis.md for broader context
+      3. Review existing code to understand current state
+      4. Write failing tests FIRST for each DoD item
+      5. Implement minimum code to pass tests
+      6. Run the project's test suite and linter — fix all issues
+      7. Update the sprint doc checklist as work is completed
+
+      ## If Prior Review Feedback Exists
+      If you have context from a prior review/critique cycle, treat those findings as required fixes. Address every finding before declaring done.
+
+      ## Success Criteria
+      - All DoD items checked off in the sprint doc
+      - All tests pass
+      - Linter passes
+      - Expected artifacts exist
+
+  tool validate_build
+    label: "Validate Build and Tests"
+    timeout: 300s
+    command:
+      set +e
+      fail=0
+      if [ -f Package.swift ]; then
+        swift build 2>&1 || fail=1
+        swift test 2>&1 || fail=1
+        if [ "$fail" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi
+        exit 0
+      fi
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v 2>&1 || fail=1
+        uv run ruff check . 2>&1 || fail=1
+        if [ "$fail" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi
+        exit 0
+      fi
+      if [ -f package.json ]; then
+        npm test 2>&1 || fail=1
+        if [ "$fail" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi
+        exit 0
+      fi
+      if [ -f Cargo.toml ]; then
+        cargo build 2>&1 || fail=1
+        cargo test 2>&1 || fail=1
+        if [ "$fail" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi
+        exit 0
+      fi
+      if [ -f go.mod ]; then
+        go build ./... 2>&1 || fail=1
+        go test ./... 2>&1 || fail=1
+        if [ "$fail" -eq 0 ]; then printf 'validation-pass'; else printf 'validation-fail'; fi
+        exit 0
+      fi
+      printf 'validation-pass-no-known-build-system'
+
+  agent commit_work
+    label: "Commit Sprint Work"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    goal_gate: true
+    retry_target: commit_work
+    fallback_target: failure_summary
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/current_sprint_id.txt to get the sprint ID.
+      Review all changes with git diff and git status.
+      Stage all relevant files and commit.
+
+      ## Rules
+      - Use conventional commit format: feat(sprint-NNN): <description>
+      - Do NOT commit generated files, __pycache__, node_modules, .env, or build artifacts
+      - If no changes exist, report that no commit was needed
+      - Verify the commit succeeded with git log --oneline -1
+      - Include the commit hash in your summary
+
+  parallel review_parallel -> review_claude, review_codex, review_gemini
+
+  agent review_claude
+    label: "Claude Review"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+      Run commands. Read output. Check exit codes. THEN make claims.
+
+      ## Context (MANDATORY)
+      1. Read .ai/current_sprint_id.txt and .ai/sprints/SPRINT-<id>.md
+      2. Get the full diff: git log --oneline -3 and git diff HEAD~1
+      3. Read every changed file
+      4. Run the test suite yourself
+
+      DO NOT trust the implementer's claims. Verify independently.
+
+      ## Review Focus
+      - Sprint doc checklist: is every DoD item genuinely satisfied?
+      - Implementation correctness: does the code match the requirements?
+      - Test quality: do tests cover the DoD items meaningfully?
+      - No regressions: does existing functionality still work?
+
+      ## Verdict
+      Return clear PASS or FAIL with specific reasoning. If FAIL, list required fixes.
+
+  agent review_codex
+    label: "Codex Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+      Run commands. Read output. Check exit codes. THEN make claims.
+
+      ## Context (MANDATORY)
+      1. Read .ai/current_sprint_id.txt and .ai/sprints/SPRINT-<id>.md
+      2. Get the full diff: git log --oneline -3 and git diff HEAD~1
+      3. Read every changed file
+      4. Run the test suite yourself
+
+      DO NOT trust the implementer's claims. Verify independently.
+
+      ## Review Focus
+      - Implementation quality: is the code clean, readable, well-structured?
+      - Regression risk: could these changes break other sprints?
+      - Checklist completeness: are all DoD items genuinely done?
+      - Edge cases: are error paths and boundary conditions handled?
+
+      ## Verdict
+      Return clear PASS or FAIL with specific reasoning. If FAIL, list required fixes.
+
+  agent review_gemini
+    label: "Gemini Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+      Run commands. Read output. Check exit codes. THEN make claims.
+
+      ## Context (MANDATORY)
+      1. Read .ai/current_sprint_id.txt and .ai/sprints/SPRINT-<id>.md
+      2. Get the full diff: git log --oneline -3 and git diff HEAD~1
+      3. Read every changed file
+      4. Run the test suite yourself
+
+      DO NOT trust the implementer's claims. Verify independently.
+
+      ## Review Focus
+      - Delivery robustness: is the sprint complete enough to build on?
+      - Test coverage: are the critical paths tested?
+      - Checklist completeness: are all DoD items genuinely done?
+      - Scope discipline: did the implementation add anything not in the sprint doc?
+
+      ## Verdict
+      Return clear PASS or FAIL with specific reasoning. If FAIL, list required fixes.
+
+  fan_in reviews_join <- review_claude, review_codex, review_gemini
+
+  parallel critiques_parallel -> critique_claude_on_codex, critique_claude_on_gemini, critique_codex_on_claude, critique_codex_on_gemini, critique_gemini_on_claude, critique_gemini_on_codex
+
+  agent critique_claude_on_codex
+    label: "Claude Critique of Codex"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Critique the Codex review for: missing checks, weak evidence, overly lenient verdicts, or mistaken conclusions. Be specific — cite what was missed and why it matters.
+
+  agent critique_claude_on_gemini
+    label: "Claude Critique of Gemini"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Critique the Gemini review for: missing checks, weak evidence, overly lenient verdicts, or mistaken conclusions. Be specific — cite what was missed and why it matters.
+
+  agent critique_codex_on_claude
+    label: "Codex Critique of Claude"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Critique the Claude review for: missing checks, weak evidence, overly lenient verdicts, or mistaken conclusions. Be specific — cite what was missed and why it matters.
+
+  agent critique_codex_on_gemini
+    label: "Codex Critique of Gemini"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Critique the Gemini review for: missing checks, weak evidence, overly lenient verdicts, or mistaken conclusions. Be specific — cite what was missed and why it matters.
+
+  agent critique_gemini_on_claude
+    label: "Gemini Critique of Claude"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Critique the Claude review for: missing checks, weak evidence, overly lenient verdicts, or mistaken conclusions. Be specific — cite what was missed and why it matters.
+
+  agent critique_gemini_on_codex
+    label: "Gemini Critique of Codex"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Critique the Codex review for: missing checks, weak evidence, overly lenient verdicts, or mistaken conclusions. Be specific — cite what was missed and why it matters.
+
+  fan_in critiques_join <- critique_claude_on_codex, critique_claude_on_gemini, critique_codex_on_claude, critique_codex_on_gemini, critique_gemini_on_claude, critique_gemini_on_codex
+
+  agent review_analysis
+    label: "Review Analysis"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    max_retries: 3
+    retry_target: implement_sprint
+    fallback_target: failure_summary
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize all three reviews and six cross-critiques into a single verdict for this sprint.
+
+      ## Process
+      1. Weight each review by the critiques it received — heavily critiqued reviews get less weight
+      2. Identify consensus findings (multiple reviewers agree)
+      3. Identify disputed findings (reviewers disagree) — resolve by examining the code yourself
+
+      ## Verdicts
+      - **success**: Sprint is genuinely complete. All DoD items satisfied, tests pass, no regressions. Only return this if you are confident.
+      - **retry**: Sprint needs rework. List specific findings that must be addressed. The implementation agent will see your findings as required fixes.
+      - **fail**: Sprint is blocked by something outside the implementation agent's control (missing dependency, broken toolchain, spec ambiguity). Explain what is blocking.
+
+  tool mark_complete
+    label: "Complete Sprint"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="completed"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'completed-%s' "$target"
+
+  tool report_progress
+    label: "Report Progress"
+    timeout: 10s
+    command:
+      set -eu
+      total=$(awk -F '\t' 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      done=$(awk -F '\t' 'NR>1 && ($3=="completed" || $3=="skipped")' .ai/ledger.tsv | wc -l | tr -d ' ')
+      if [ "$total" -gt 0 ]; then
+        pct=$((done * 100 / total))
+      else
+        pct=0
+      fi
+      printf 'progress-%s-of-%s-%spct' "$done" "$total" "$pct"
+
+  human sprint_gate
+    label: "Continue to Next Sprint?"
+
+  tool skip_gate
+    label: "Skip Gate"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "unknown")
+      printf 'continue\t%s\t%s\n' "$target" "$now"
+
+  agent failure_summary
+    label: "Failure Summary"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      Sprint execution failed. Diagnose what went wrong:
+
+      1. Read .ai/current_sprint_id.txt to identify which sprint failed
+      2. Read the sprint doc and the ledger
+      3. Check git log for recent commits
+      4. Examine build/test output if available
+
+      Report:
+      - Which sprint failed and why
+      - What was completed before the failure
+      - Concrete next steps for recovery
+      - Whether downstream sprints are likely affected
+
+  edges
+    Start -> check_ledger
+    check_ledger -> Exit  when ctx.tool_stdout = all_done  label: all_done
+    check_ledger -> no_ledger_exit  when ctx.tool_stdout = no_ledger  label: no_ledger
+    check_ledger -> read_sprint  when ctx.tool_stdout != all_done  label: next_sprint
+    no_ledger_exit -> Exit
+    read_sprint -> mark_in_progress
+    mark_in_progress -> implement_sprint
+    implement_sprint -> validate_build
+    validate_build -> commit_work  when ctx.tool_stdout startswith "validation-pass"  label: validated
+    validate_build -> implement_sprint  when ctx.tool_stdout = validation-fail  label: fix_validation  restart: true
+    validate_build -> failure_summary
+    commit_work -> review_parallel
+    review_parallel -> review_claude
+    review_parallel -> review_codex
+    review_parallel -> review_gemini
+    review_claude -> reviews_join
+    review_codex -> reviews_join
+    review_gemini -> reviews_join
+    reviews_join -> critiques_parallel
+    critiques_parallel -> critique_claude_on_codex
+    critiques_parallel -> critique_claude_on_gemini
+    critiques_parallel -> critique_codex_on_claude
+    critiques_parallel -> critique_codex_on_gemini
+    critiques_parallel -> critique_gemini_on_claude
+    critiques_parallel -> critique_gemini_on_codex
+    critique_claude_on_codex -> critiques_join
+    critique_claude_on_gemini -> critiques_join
+    critique_codex_on_claude -> critiques_join
+    critique_codex_on_gemini -> critiques_join
+    critique_gemini_on_claude -> critiques_join
+    critique_gemini_on_codex -> critiques_join
+    critiques_join -> review_analysis
+    review_analysis -> mark_complete  when ctx.outcome = success  label: pass
+    review_analysis -> implement_sprint  when ctx.outcome = retry  label: rework  restart: true
+    review_analysis -> failure_summary  when ctx.outcome = fail  label: fail
+    review_analysis -> failure_summary
+    mark_complete -> report_progress
+    report_progress -> sprint_gate
+    sprint_gate -> skip_gate  label: "[S] Continue"
+    sprint_gate -> Exit  label: "[A] Pause"
+    skip_gate -> check_ledger  restart: true
+    failure_summary -> Exit
