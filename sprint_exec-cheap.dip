@@ -1,0 +1,359 @@
+workflow SprintExecCheap
+  goal: "Execute the next incomplete sprint using cheap models (Haiku, GPT-5.4 Nano, Gemini Flash-Lite) with retry loops and escalation to Sonnet on failure."
+  start: Start
+  exit: Exit
+
+  defaults
+    fidelity: summary:low
+
+  agent Start
+    label: Start
+    prompt:
+      Begin cheap sprint execution pipeline.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Cheap sprint execution pipeline complete.
+
+  tool EnsureLedger
+    label: "Ensure Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      mkdir -p .ai .ai/drafts .ai/sprints
+      if [ ! -f .ai/ledger.tsv ]; then
+        now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n001\tBootstrap sprint\tplanned\t%s\t%s\n' "$now" "$now" > .ai/ledger.tsv
+      fi
+      printf 'ledger-ready'
+
+  agent FindNextSprint
+    label: "Find Next Sprint"
+    model: gemini-3.1-flash-lite-preview
+    provider: gemini
+    reasoning_effort: medium
+    prompt:
+      Identify the next non-completed sprint in .ai/ledger.tsv and summarize the target sprint ID and why it is next.
+
+  tool SetCurrentSprint
+    label: "Set Current Sprint"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(awk -F '\t' 'NR>1 && $3!~/^completed$/ && $3!~/^skipped$/{print $1; exit}' .ai/ledger.tsv)
+      if [ -z "$target" ]; then
+        target=$(awk -F '\t' 'NR>1 && $3!~/^completed$/{print $1; exit}' .ai/ledger.tsv)
+      fi
+      if [ -z "$target" ]; then
+        target=$(awk -F '\t' 'END{print $1}' .ai/ledger.tsv)
+      fi
+      printf '%s' "$target" > .ai/current_sprint_id.txt
+      printf 'current-%s' "$target"
+
+  agent ReadSprint
+    label: "Read Sprint"
+    model: gemini-3.1-flash-lite-preview
+    provider: gemini
+    reasoning_effort: medium
+    prompt:
+      Read the target sprint document under .ai/sprints/SPRINT-<id>.md and summarize requirements, DoD checklist status, and expected artifacts.
+
+  tool MarkInProgress
+    label: "Mark In Progress"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="in_progress"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'in_progress-%s' "$target"
+
+  # === CHEAP IMPLEMENTATION LANE ===
+
+  agent ImplementCheap
+    label: "Implement Sprint (Cheap)"
+    model: claude-haiku-4-5
+    provider: anthropic
+    reasoning_effort: high
+    fidelity: summary:medium
+    prompt:
+      Implement the sprint requirements end-to-end using minimal, focused changes. If prior review/critique/squad context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
+
+  tool ValidateBuild
+    label: "Validate Build and Tests"
+    timeout: 300s
+    command:
+      set -eu
+      if [ -f Package.swift ]; then
+        swift build >/tmp/sprint-exec-build.log 2>&1
+        swift test >/tmp/sprint-exec-test.log 2>&1 || true
+        cat /tmp/sprint-exec-build.log
+        cat /tmp/sprint-exec-test.log
+        if rg -n 'error:' /tmp/sprint-exec-build.log >/dev/null 2>&1; then exit 1; fi
+        if rg -n 'failed' /tmp/sprint-exec-test.log >/dev/null 2>&1; then exit 1; fi
+        printf 'validation-pass-swift'
+        exit 0
+      fi
+      if [ -f package.json ]; then
+        npm test >/tmp/sprint-exec-test.log 2>&1 || { cat /tmp/sprint-exec-test.log; exit 1; }
+        printf 'validation-pass-node'
+        exit 0
+      fi
+      if [ -f pyproject.toml ]; then
+        uv run pytest >/tmp/sprint-exec-test.log 2>&1 || { cat /tmp/sprint-exec-test.log; exit 1; }
+        printf 'validation-pass-python'
+        exit 0
+      fi
+      printf 'validation-pass-no-known-build-system'
+
+  agent CommitCheap
+    label: "Commit Sprint Work (Cheap)"
+    model: gpt-5.4-nano
+    provider: openai
+    reasoning_effort: medium
+    prompt:
+      Prepare and execute a clean commit for sprint implementation changes if there are staged/unstaged changes. If no changes are present, report that no commit was needed. Include commit hash in your summary.
+
+  # === REVIEW SQUADS ===
+
+  parallel SquadParallel -> PracticalDev, Nitpicker, FreshEyes
+
+  agent PracticalDev
+    label: "Squad: Practical Dev"
+    model: claude-haiku-4-5
+    provider: anthropic
+    reasoning_effort: medium
+    fidelity: summary:medium
+    prompt:
+      You are a pragmatic mid-level developer picking up this sprint's work for the first time. Review the implementation for: does it actually work as specified? Are there obvious bugs or missing pieces? Does the code flow make sense? Check the sprint doc checklist against what was actually delivered. Be concrete — cite files and line numbers.
+
+  agent Nitpicker
+    label: "Squad: Nitpicker"
+    model: gpt-5.4-nano
+    provider: openai
+    reasoning_effort: medium
+    fidelity: summary:medium
+    prompt:
+      You are an obsessively detail-oriented code reviewer. Find every edge case that isn't handled, every naming inconsistency, every missing validation, every code smell. You care about error paths, boundary conditions, and things that will break at 2am. Rank findings by severity.
+
+  agent FreshEyes
+    label: "Squad: Fresh Eyes"
+    model: gemini-3.1-flash-lite-preview
+    provider: gemini
+    reasoning_effort: medium
+    fidelity: summary:medium
+    prompt:
+      You have never seen this codebase before. Read the sprint output cold and report: what's confusing? What assumptions does the code make that aren't documented? What would trip up a new contributor? Focus on readability, structure, and whether the code is self-explanatory.
+
+  fan_in SquadJoin <- PracticalDev, Nitpicker, FreshEyes
+
+  # === REVIEWS + CROSS-CRITIQUE ===
+
+  parallel ReviewParallel -> ReviewHaiku, ReviewNano
+
+  agent ReviewHaiku
+    label: "Haiku Review"
+    model: claude-haiku-4-5
+    provider: anthropic
+    reasoning_effort: medium
+    fidelity: summary:medium
+    prompt:
+      Review sprint execution using squad findings as additional context. Evaluate: sprint doc checklist completion, implementation correctness, and validation evidence. Return clear PASS/FAIL reasoning and required fixes.
+
+  agent ReviewNano
+    label: "Nano Review"
+    model: gpt-5.4-nano
+    provider: openai
+    reasoning_effort: medium
+    fidelity: summary:medium
+    prompt:
+      Review sprint execution using squad findings as additional context. Evaluate: implementation quality, regression risk, and checklist completeness. Return clear PASS/FAIL reasoning and required fixes.
+
+  fan_in ReviewsJoin <- ReviewHaiku, ReviewNano
+
+  parallel CrossCritiqueParallel -> HaikuCritiqueNano, NanoCritiqueHaiku
+
+  agent HaikuCritiqueNano
+    label: "Haiku Critique of Nano Review"
+    model: claude-haiku-4-5
+    provider: anthropic
+    reasoning_effort: medium
+    fidelity: summary:low
+    prompt:
+      Critique the Nano review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent NanoCritiqueHaiku
+    label: "Nano Critique of Haiku Review"
+    model: gpt-5.4-nano
+    provider: openai
+    reasoning_effort: medium
+    fidelity: summary:low
+    prompt:
+      Critique the Haiku review for missing checks, weak evidence, or mistaken conclusions.
+
+  fan_in CritiquesJoin <- HaikuCritiqueNano, NanoCritiqueHaiku
+
+  # === CHEAP GATE ===
+
+  agent GateCheap
+    label: "Gate (Cheap)"
+    model: claude-haiku-4-5
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    max_retries: 3
+    retry_target: ImplementCheap
+    prompt:
+      Synthesize all squad findings, reviews, and critiques into one verdict. Return success only if sprint is truly complete and checklist is satisfied. Return retry if rework is needed with specific fix instructions. Return fail if blocked by issues beyond implementation scope.
+
+  # === RESCUE LANE ===
+
+  agent ImplementRescue
+    label: "Implement Sprint (Rescue)"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    fidelity: summary:high
+    prompt:
+      ESCALATION: Cheap implementation failed after multiple attempts. You have all prior context — squad findings, review critiques, gate verdicts, and implementation history. Fix the remaining issues definitively. This is the last attempt before failure.
+
+  tool ValidateRescue
+    label: "Validate Rescue Build"
+    timeout: 300s
+    command:
+      set -eu
+      if [ -f Package.swift ]; then
+        swift build >/tmp/sprint-exec-build.log 2>&1
+        swift test >/tmp/sprint-exec-test.log 2>&1 || true
+        cat /tmp/sprint-exec-build.log
+        cat /tmp/sprint-exec-test.log
+        if rg -n 'error:' /tmp/sprint-exec-build.log >/dev/null 2>&1; then exit 1; fi
+        if rg -n 'failed' /tmp/sprint-exec-test.log >/dev/null 2>&1; then exit 1; fi
+        printf 'validation-pass-swift'
+        exit 0
+      fi
+      if [ -f package.json ]; then
+        npm test >/tmp/sprint-exec-test.log 2>&1 || { cat /tmp/sprint-exec-test.log; exit 1; }
+        printf 'validation-pass-node'
+        exit 0
+      fi
+      if [ -f pyproject.toml ]; then
+        uv run pytest >/tmp/sprint-exec-test.log 2>&1 || { cat /tmp/sprint-exec-test.log; exit 1; }
+        printf 'validation-pass-python'
+        exit 0
+      fi
+      printf 'validation-pass-no-known-build-system'
+
+  agent CommitRescue
+    label: "Commit Rescue Work"
+    model: gpt-5.4-nano
+    provider: openai
+    reasoning_effort: medium
+    prompt:
+      Prepare and execute a clean commit for rescue implementation changes if there are staged/unstaged changes. If no changes are present, report that no commit was needed. Include commit hash in your summary.
+
+  agent RescueReview
+    label: "Rescue Sanity Check"
+    model: claude-haiku-4-5
+    provider: anthropic
+    reasoning_effort: medium
+    fidelity: summary:medium
+    prompt:
+      Quick sanity check on the rescue implementation. Verify the Sonnet rescue addressed the issues that caused cheap implementation to fail. Return PASS if the sprint checklist is satisfied, FAIL if critical issues remain.
+
+  # === TERMINAL ===
+
+  tool CompleteSprint
+    label: "Complete Sprint"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="completed"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'completed-%s' "$target"
+
+  agent FailureSummary
+    label: "Failure Summary"
+    model: gpt-5.4-nano
+    provider: openai
+    reasoning_effort: medium
+    prompt:
+      Summarize why sprint execution failed across both cheap and rescue lanes. Include: what was attempted, what failed, what remains unresolved, and concrete next steps for recovery.
+
+  # === EDGES ===
+
+  edges
+    # Discovery
+    Start -> EnsureLedger
+    EnsureLedger -> FindNextSprint
+    FindNextSprint -> SetCurrentSprint
+    SetCurrentSprint -> ReadSprint
+    ReadSprint -> MarkInProgress
+
+    # Cheap implementation lane
+    MarkInProgress -> ImplementCheap
+    ImplementCheap -> ValidateBuild
+    ValidateBuild -> CommitCheap  when ctx.outcome = success  label: validated
+    ValidateBuild -> ImplementCheap  when ctx.outcome = fail  label: fix_validation  restart: true
+    ValidateBuild -> FailureSummary
+
+    # Discovery fail-safes
+    FindNextSprint -> FailureSummary
+    ReadSprint -> FailureSummary
+
+    # Commit fail-safes
+    CommitCheap -> FailureSummary
+    CommitRescue -> FailureSummary
+
+    # Review squads
+    CommitCheap -> SquadParallel
+    SquadParallel -> PracticalDev
+    SquadParallel -> Nitpicker
+    SquadParallel -> FreshEyes
+    PracticalDev -> SquadJoin
+    Nitpicker -> SquadJoin
+    FreshEyes -> SquadJoin
+
+    # Reviews + cross-critique
+    SquadJoin -> ReviewParallel
+    ReviewParallel -> ReviewHaiku
+    ReviewParallel -> ReviewNano
+    ReviewHaiku -> ReviewsJoin
+    ReviewNano -> ReviewsJoin
+    ReviewsJoin -> CrossCritiqueParallel
+    CrossCritiqueParallel -> HaikuCritiqueNano
+    CrossCritiqueParallel -> NanoCritiqueHaiku
+    HaikuCritiqueNano -> CritiquesJoin
+    NanoCritiqueHaiku -> CritiquesJoin
+
+    # Cheap gate
+    CritiquesJoin -> GateCheap
+    GateCheap -> CompleteSprint  when ctx.outcome = success  label: pass
+    GateCheap -> ImplementCheap  when ctx.outcome = retry  label: rework  restart: true
+    GateCheap -> ImplementRescue  when ctx.outcome = fail  label: escalate
+    GateCheap -> ImplementRescue
+
+    # Rescue lane
+    ImplementRescue -> ValidateRescue
+    ImplementRescue -> FailureSummary
+    ValidateRescue -> CommitRescue  when ctx.outcome = success  label: rescue_validated
+    ValidateRescue -> FailureSummary  when ctx.outcome = fail  label: rescue_failed
+    ValidateRescue -> FailureSummary
+    CommitRescue -> RescueReview
+    RescueReview -> CompleteSprint  when ctx.outcome = success  label: rescue_pass
+    RescueReview -> FailureSummary  when ctx.outcome = fail  label: rescue_fail
+    RescueReview -> FailureSummary
+
+    # Terminal
+    CompleteSprint -> Exit
+    FailureSummary -> Exit
