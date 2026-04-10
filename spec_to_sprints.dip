@@ -578,8 +578,9 @@ workflow SpecToSprints
       ```
 
       ## Rules
-      - File naming: .ai/sprints/SPRINT-001.md, SPRINT-002.md, etc.
-      - Zero-padded 3-digit IDs matching the sprint plan
+      - CRITICAL: All sprint files MUST be written to .ai/sprints/ — NEVER to the project root
+      - File paths: .ai/sprints/SPRINT-001.md, .ai/sprints/SPRINT-002.md, etc.
+      - IDs MUST be zero-padded 3-digit: 001, 002, ... 016 — NOT 1, 2, ... 16
       - Every sprint doc must have all sections above
       - DoD items must be concrete and verifiable, not vague
       - Expected artifacts should use realistic file paths based on the tech stack from spec analysis
@@ -612,6 +613,10 @@ workflow SpecToSprints
     command:
       set -eu
       errors=""
+      stray=$(ls SPRINT-*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$stray" -gt 0 ]; then
+        errors="${errors}sprint-files-in-root "
+      fi
       ledger_ids=$(awk -F '\t' 'NR>1{print $1}' .ai/ledger.tsv | sort)
       file_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
       if [ "$ledger_ids" != "$file_ids" ]; then
@@ -629,6 +634,10 @@ workflow SpecToSprints
       done
       if [ -z "$(awk 'NR>1' .ai/ledger.tsv)" ]; then
         errors="${errors}empty-ledger "
+      fi
+      bad_cols=$(awk -F '\t' 'NR>1 && NF!=5' .ai/ledger.tsv | wc -l | tr -d ' ')
+      if [ "$bad_cols" -gt 0 ]; then
+        errors="${errors}ledger-wrong-column-count "
       fi
       if [ -n "$errors" ]; then
         printf 'invalid-%s' "$errors"
