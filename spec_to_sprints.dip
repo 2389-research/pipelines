@@ -585,6 +585,7 @@ workflow SpecToSprints
       - Expected artifacts should use realistic file paths based on the tech stack from spec analysis
       - Write ALL sprint docs in one pass for cross-sprint consistency
       - If .ai/sprints/ already contains files, overwrite them
+      - Do NOT write or modify .ai/ledger.tsv — a separate tool handles that
       - Every sprint DoD MUST include at least one test item: "Write tests for X" or "Tests for X pass"
       - DoD items must be concrete and machine-verifiable. Good: "pytest tests/test_capture.py passes". Bad: "Capture works correctly"
       - The first DoD item for each sprint should be writing a failing test for the sprint's core deliverable
@@ -595,15 +596,10 @@ workflow SpecToSprints
     command:
       set -eu
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      if [ ! -f .ai/ledger.tsv ]; then
-        printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
-      fi
+      printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
         id=$(basename "$f" .md | sed 's/SPRINT-//')
-        if awk -F '\t' -v target="$id" 'NR>1 && $1==target {found=1} END{exit found?0:1}' .ai/ledger.tsv; then
-          continue
-        fi
         title=$(head -1 "$f" | sed 's/^# Sprint [0-9]* *[-—–]* *//' | sed 's/^# //' | tr -d '\t')
         printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$title" "planned" "$now" "$now" >> .ai/ledger.tsv
       done
@@ -636,7 +632,7 @@ workflow SpecToSprints
       fi
       if [ -n "$errors" ]; then
         printf 'invalid-%s' "$errors"
-        exit 1
+        exit 0
       fi
       printf 'valid'
 
