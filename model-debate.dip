@@ -84,7 +84,7 @@ workflow model_debate
 
   human ConfirmPositions
     label: "Good matchup?"
-    mode: yes_no
+    mode: choice
 
   parallel OpeningFanOut -> ProOpening, ConOpening, ModerateOpening
 
@@ -390,7 +390,7 @@ workflow model_debate
 
   human DebateAgain
     label: "Another debate?"
-    mode: yes_no
+    mode: choice
 
   edges
     Start -> ResetDebate
@@ -398,8 +398,9 @@ workflow model_debate
     Welcome -> GetTopic
     GetTopic -> AssignPositions
     AssignPositions -> ConfirmPositions
-    ConfirmPositions -> OpeningFanOut  label: "[Y] Fight!"  weight: 2
-    ConfirmPositions -> AssignPositions  label: "[N] Redo"  restart: true
+    ConfirmPositions -> OpeningFanOut  when ctx.preferred_label = "[Y] Fight!"  label: "[Y] Fight!"  weight: 2
+    ConfirmPositions -> AssignPositions  when ctx.preferred_label = "[N] Redo"  label: "[N] Redo"  restart: true
+    ConfirmPositions -> OpeningFanOut
     OpeningFanOut -> ProOpening
     OpeningFanOut -> ConOpening
     OpeningFanOut -> ModerateOpening
@@ -424,5 +425,6 @@ workflow model_debate
     Synthesize -> HumanJudge
     HumanJudge -> Wrap
     Wrap -> DebateAgain
-    DebateAgain -> ResetDebate  when ctx.outcome = success  label: "[Y] New debate!"  weight: 2  restart: true
-    DebateAgain -> Exit  label: "[N] Done"
+    DebateAgain -> ResetDebate  when ctx.preferred_label = "[Y] New debate!"  label: "[Y] New debate!"  weight: 2  restart: true
+    DebateAgain -> Exit  when ctx.preferred_label = "[N] Done"  label: "[N] Done"
+    DebateAgain -> Exit
