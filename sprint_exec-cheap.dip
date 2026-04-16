@@ -81,6 +81,14 @@ workflow SprintExecCheap
       mv .ai/ledger.tsv.tmp .ai/ledger.tsv
       printf 'in_progress-%s' "$target"
 
+  tool SnapshotLedger
+    label: "Snapshot Ledger"
+    timeout: 5s
+    command:
+      set -eu
+      cp .ai/ledger.tsv .ai/ledger-snapshot.tsv
+      printf 'snapshot-saved'
+
   # === PRE-FLIGHT ===
 
   tool PreFlight
@@ -126,6 +134,29 @@ workflow SprintExecCheap
       Read the PreFlight output for environment context — follow standard practices for the detected stack. If prior review/critique/squad context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
 
       HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify the ledger. Do NOT mark sprints as completed — that is handled by a separate pipeline node. If you finish early, stop and report what you did.
+
+  tool CheckLedgerIntegrity
+    label: "Check Ledger Integrity"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger-snapshot.tsv ]; then
+        printf 'no-snapshot-skipping'
+        exit 0
+      fi
+      target=$(cat .ai/current_sprint_id.txt)
+      before=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger-snapshot.tsv | sort)
+      after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
+      if [ "$before" != "$after" ]; then
+        printf 'LEDGER_TAMPERED — agent modified non-target sprints:\n'
+        diff <(echo "$before") <(echo "$after") || true
+        cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
+        printf '\nLedger restored from snapshot.\n'
+        rm -f .ai/ledger-snapshot.tsv
+        exit 1
+      fi
+      rm -f .ai/ledger-snapshot.tsv
+      printf 'ledger-ok'
 
   tool ValidateBuild
     label: "Validate Build and Tests"
@@ -287,6 +318,29 @@ workflow SprintExecCheap
 
       HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify the ledger. Do NOT mark sprints as completed — that is handled by a separate pipeline node.
 
+  tool CheckLedgerRescue
+    label: "Check Ledger Integrity (Rescue)"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger-snapshot.tsv ]; then
+        printf 'no-snapshot-skipping'
+        exit 0
+      fi
+      target=$(cat .ai/current_sprint_id.txt)
+      before=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger-snapshot.tsv | sort)
+      after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
+      if [ "$before" != "$after" ]; then
+        printf 'LEDGER_TAMPERED — rescue agent modified non-target sprints:\n'
+        diff <(echo "$before") <(echo "$after") || true
+        cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
+        printf '\nLedger restored from snapshot.\n'
+        rm -f .ai/ledger-snapshot.tsv
+        exit 1
+      fi
+      rm -f .ai/ledger-snapshot.tsv
+      printf 'ledger-ok'
+
   tool ValidateRescue
     label: "Validate Rescue Build"
     timeout: 300s
@@ -375,9 +429,13 @@ workflow SprintExecCheap
     ReadSprint -> MarkInProgress
 
     # Pre-flight and cheap implementation lane
-    MarkInProgress -> PreFlight
+    MarkInProgress -> SnapshotLedger
+    SnapshotLedger -> PreFlight
     PreFlight -> ImplementCheap
-    ImplementCheap -> ValidateBuild
+    ImplementCheap -> CheckLedgerIntegrity
+    CheckLedgerIntegrity -> ValidateBuild  when ctx.outcome = success  label: ledger_ok
+    CheckLedgerIntegrity -> FailureSummary  when ctx.outcome = fail  label: ledger_tampered
+    CheckLedgerIntegrity -> FailureSummary
     ValidateBuild -> CommitCheap  when ctx.outcome = success  label: validated
     ValidateBuild -> ImplementCheap  when ctx.outcome = fail  label: fix_validation  restart: true
     ValidateBuild -> FailureSummary
@@ -419,7 +477,10 @@ workflow SprintExecCheap
     GateCheap -> ImplementRescue
 
     # Rescue lane
-    ImplementRescue -> ValidateRescue
+    ImplementRescue -> CheckLedgerRescue
+    CheckLedgerRescue -> ValidateRescue  when ctx.outcome = success  label: rescue_ledger_ok
+    CheckLedgerRescue -> FailureSummary  when ctx.outcome = fail  label: rescue_ledger_tampered
+    CheckLedgerRescue -> FailureSummary
     ImplementRescue -> FailureSummary
     ValidateRescue -> CommitRescue  when ctx.outcome = success  label: rescue_validated
     ValidateRescue -> FailureSummary  when ctx.outcome = fail  label: rescue_failed
