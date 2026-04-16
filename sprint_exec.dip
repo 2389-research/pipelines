@@ -73,6 +73,35 @@ workflow SprintExec
       mv .ai/ledger.tsv.tmp .ai/ledger.tsv
       printf 'in_progress-%s' "$target"
 
+  tool PreFlight
+    label: "Pre-Flight Environment Check"
+    timeout: 60s
+    command:
+      set -eu
+      printf '=== Environment Pre-Flight ===\n'
+      printf 'docker: '
+      if docker info >/dev/null 2>&1; then printf 'running\n'; else printf 'NOT running\n'; fi
+      printf 'uv: '
+      if command -v uv >/dev/null 2>&1; then uv --version 2>&1; else printf 'NOT found\n'; fi
+      printf 'node: '
+      if command -v node >/dev/null 2>&1; then node --version 2>&1; else printf 'NOT found\n'; fi
+      printf 'swift: '
+      if command -v swift >/dev/null 2>&1; then swift --version 2>&1 | head -1; else printf 'NOT found\n'; fi
+      printf '\n=== Docker Compose Services ===\n'
+      if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ] || [ -f compose.yml ] || [ -f compose.yaml ]; then
+        if docker info >/dev/null 2>&1; then
+          docker compose ps 2>&1 || docker-compose ps 2>&1 || printf 'compose not available\n'
+        else
+          printf 'docker not running — services unavailable\n'
+          printf 'WARN: tests requiring databases must use in-memory alternatives (SQLite, etc.)\n'
+        fi
+      else
+        printf 'no compose file found\n'
+      fi
+      printf '\n=== Existing Project Structure ===\n'
+      find . -maxdepth 3 -name "*.py" -o -name "*.ts" -o -name "*.swift" -o -name "*.go" -o -name "*.rs" 2>/dev/null | grep -v node_modules | grep -v .venv | grep -v __pycache__ | head -50
+      printf '\npreflight-done'
+
   agent ImplementSprint
     label: "Implement Sprint"
     model: claude-sonnet-4-6
@@ -80,7 +109,7 @@ workflow SprintExec
     reasoning_effort: high
     fidelity: summary:high
     prompt:
-      Implement the sprint requirements end-to-end. If prior review/critique context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
+      Implement the sprint requirements end-to-end. Read the PreFlight output for environment context — follow standard practices for the detected stack. If prior review/critique context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
 
   tool ValidateBuild
     label: "Validate Build and Tests"
@@ -88,18 +117,32 @@ workflow SprintExec
     command:
       set -eu
       if [ -f Package.swift ]; then
-        swift build >/tmp/sprint-exec-build.log 2>&1
-        swift test >/tmp/sprint-exec-test.log 2>&1 || true
-        cat /tmp/sprint-exec-build.log
-        cat /tmp/sprint-exec-test.log
-        if rg -n 'error:' /tmp/sprint-exec-build.log >/dev/null 2>&1; then exit 1; fi
-        if rg -n 'failed' /tmp/sprint-exec-test.log >/dev/null 2>&1; then exit 1; fi
+        swift build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        swift test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
         printf 'validation-pass-swift'
         exit 0
       fi
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        uv run ruff check . >/tmp/sprint-lint.log 2>&1 || { cat /tmp/sprint-lint.log; exit 1; }
+        printf 'validation-pass-python'
+        exit 0
+      fi
       if [ -f package.json ]; then
-        npm test >/tmp/sprint-exec-test.log 2>&1 || { cat /tmp/sprint-exec-test.log; exit 1; }
+        npm test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
         printf 'validation-pass-node'
+        exit 0
+      fi
+      if [ -f Cargo.toml ]; then
+        cargo build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        cargo test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-rust'
+        exit 0
+      fi
+      if [ -f go.mod ]; then
+        go build ./... >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        go test ./... >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-go'
         exit 0
       fi
       printf 'validation-pass-no-known-build-system'
@@ -231,7 +274,8 @@ workflow SprintExec
     FindNextSprint -> SetCurrentSprint
     SetCurrentSprint -> ReadSprint
     ReadSprint -> MarkInProgress
-    MarkInProgress -> ImplementSprint
+    MarkInProgress -> PreFlight
+    PreFlight -> ImplementSprint
     ImplementSprint -> ValidateBuild
     ValidateBuild -> CommitSprintWork  when ctx.outcome = success  label: validated
     ValidateBuild -> ImplementSprint  when ctx.outcome = fail  label: fix_validation  restart: true
