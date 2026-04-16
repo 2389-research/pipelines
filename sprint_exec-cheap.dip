@@ -151,7 +151,8 @@ workflow SprintExecCheap
       after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
       if [ "$before" != "$after" ]; then
         printf 'LEDGER_TAMPERED — agent modified non-target sprints:\n'
-        diff <(echo "$before") <(echo "$after") || true
+        printf 'before:\n%s\n' "$before"
+        printf 'after:\n%s\n' "$after"
         cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
         printf '\nLedger restored from snapshot.\n'
         rm -f .ai/ledger-snapshot.tsv
@@ -368,7 +369,8 @@ workflow SprintExecCheap
       after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
       if [ "$before" != "$after" ]; then
         printf 'LEDGER_TAMPERED — rescue agent modified non-target sprints:\n'
-        diff <(echo "$before") <(echo "$after") || true
+        printf 'before:\n%s\n' "$before"
+        printf 'after:\n%s\n' "$after"
         cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
         printf '\nLedger restored from snapshot.\n'
         rm -f .ai/ledger-snapshot.tsv
