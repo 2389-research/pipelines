@@ -16,7 +16,9 @@ workflow SprintExecCheap
   agent Exit
     label: Exit
     prompt:
-      Cheap sprint execution pipeline complete.
+      The cheap sprint execution pipeline is complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT run tests. Do NOT debug anything. Your ONLY job is to acknowledge completion. If prior nodes left work undone, that is not your problem — the pipeline will handle retries.
 
   tool EnsureLedger
     label: "Ensure Ledger"
@@ -255,7 +257,18 @@ workflow SprintExecCheap
     max_retries: 3
     retry_target: ImplementCheap
     prompt:
-      Synthesize all squad findings, reviews, and critiques into one verdict. Return success only if sprint is truly complete and checklist is satisfied. Return retry if rework is needed with specific fix instructions. Return fail if blocked by issues beyond implementation scope.
+      Synthesize all squad findings, reviews, and critiques into one verdict.
+
+      After your analysis, you MUST end your response with exactly one of these lines (no other text after it):
+        OUTCOME:SUCCESS
+        OUTCOME:RETRY
+        OUTCOME:FAIL
+
+      Return SUCCESS only if the sprint is truly complete — code committed, tests passing, checklist satisfied.
+      Return RETRY if rework is needed (uncommitted fixes, failing tests, missing DoD items). Include specific fix instructions.
+      Return FAIL if blocked by issues beyond implementation scope.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete project files. Do NOT implement fixes. Your ONLY job is to analyze and render a verdict.
 
   # === RESCUE LANE ===
 
