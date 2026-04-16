@@ -127,6 +127,8 @@ workflow SprintExec
     prompt:
       Read .ai/current_sprint_id.txt to identify the target sprint. Read the corresponding sprint doc under .ai/sprints/SPRINT-<id>.md. Implement ONLY that sprint's requirements end-to-end.
 
+      IMPORTANT: Check what already exists on disk before writing anything. If prior implementation work is present from a previous attempt, continue from where it left off — do NOT start over or rewrite existing files that already work. Focus on completing the remaining items.
+
       Read the PreFlight output for environment context — follow standard practices for the detected stack. If prior review/critique context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
 
       HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify the ledger. Do NOT mark sprints as completed — that is handled by a separate pipeline node. If you finish early, stop and report what you did.
@@ -151,8 +153,41 @@ workflow SprintExec
         rm -f .ai/ledger-snapshot.tsv
         exit 1
       fi
-      rm -f .ai/ledger-snapshot.tsv
+      rm -f .ai/ledger-snapshot.tsv .ai/implement-resume-count.txt
       printf 'ledger-ok'
+
+  tool ResumeCheck
+    label: "Resume Check"
+    timeout: 10s
+    command:
+      set -eu
+      # Check ledger integrity first
+      if [ -f .ai/ledger-snapshot.tsv ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        before=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger-snapshot.tsv | sort)
+        after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
+        if [ "$before" != "$after" ]; then
+          cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
+          rm -f .ai/ledger-snapshot.tsv .ai/implement-resume-count.txt
+          printf 'ledger-tampered'
+          exit 1
+        fi
+      fi
+      # Track resume count (max 3 resumes)
+      count=0
+      if [ -f .ai/implement-resume-count.txt ]; then
+        count=$(cat .ai/implement-resume-count.txt)
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > .ai/implement-resume-count.txt
+      if [ "$count" -ge 3 ]; then
+        rm -f .ai/implement-resume-count.txt .ai/ledger-snapshot.tsv
+        printf 'max-resumes-reached-%s' "$count"
+        exit 1
+      fi
+      # Re-snapshot ledger for next attempt
+      cp .ai/ledger.tsv .ai/ledger-snapshot.tsv
+      printf 'resume-%s' "$count"
 
   tool ValidateBuild
     label: "Validate Build and Tests"
@@ -331,10 +366,15 @@ workflow SprintExec
     MarkInProgress -> SnapshotLedger
     SnapshotLedger -> PreFlight
     PreFlight -> ImplementSprint
-    ImplementSprint -> CheckLedgerIntegrity
+    ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
+    ImplementSprint -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
+    ImplementSprint -> FailureSummary
     CheckLedgerIntegrity -> ValidateBuild  when ctx.outcome = success  label: ledger_ok
     CheckLedgerIntegrity -> FailureSummary  when ctx.outcome = fail  label: ledger_tampered
     CheckLedgerIntegrity -> FailureSummary
+    ResumeCheck -> ImplementSprint  when ctx.outcome = success  label: resume  restart: true
+    ResumeCheck -> FailureSummary   when ctx.outcome = fail     label: resume_failed
+    ResumeCheck -> FailureSummary
     ValidateBuild -> CommitSprintWork  when ctx.outcome = success  label: validated
     ValidateBuild -> ImplementSprint  when ctx.outcome = fail  label: fix_validation  restart: true
     ValidateBuild -> FailureSummary

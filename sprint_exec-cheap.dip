@@ -131,6 +131,8 @@ workflow SprintExecCheap
     prompt:
       Read .ai/current_sprint_id.txt to identify the target sprint. Read the corresponding sprint doc under .ai/sprints/SPRINT-<id>.md. Implement ONLY that sprint's requirements end-to-end using minimal, focused changes.
 
+      IMPORTANT: Check what already exists on disk before writing anything. If prior implementation work is present from a previous attempt, continue from where it left off — do NOT start over or rewrite existing files that already work. Focus on completing the remaining items.
+
       Read the PreFlight output for environment context — follow standard practices for the detected stack. If prior review/critique/squad context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
 
       HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify the ledger. Do NOT mark sprints as completed — that is handled by a separate pipeline node. If you finish early, stop and report what you did.
@@ -155,8 +157,38 @@ workflow SprintExecCheap
         rm -f .ai/ledger-snapshot.tsv
         exit 1
       fi
-      rm -f .ai/ledger-snapshot.tsv
+      rm -f .ai/ledger-snapshot.tsv .ai/implement-resume-count.txt
       printf 'ledger-ok'
+
+  tool ResumeCheck
+    label: "Resume Check"
+    timeout: 10s
+    command:
+      set -eu
+      if [ -f .ai/ledger-snapshot.tsv ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        before=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger-snapshot.tsv | sort)
+        after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
+        if [ "$before" != "$after" ]; then
+          cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
+          rm -f .ai/ledger-snapshot.tsv .ai/implement-resume-count.txt
+          printf 'ledger-tampered'
+          exit 1
+        fi
+      fi
+      count=0
+      if [ -f .ai/implement-resume-count.txt ]; then
+        count=$(cat .ai/implement-resume-count.txt)
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > .ai/implement-resume-count.txt
+      if [ "$count" -ge 3 ]; then
+        rm -f .ai/implement-resume-count.txt .ai/ledger-snapshot.tsv
+        printf 'max-resumes-reached-%s' "$count"
+        exit 1
+      fi
+      cp .ai/ledger.tsv .ai/ledger-snapshot.tsv
+      printf 'resume-%s' "$count"
 
   tool ValidateBuild
     label: "Validate Build and Tests"
@@ -314,7 +346,11 @@ workflow SprintExecCheap
     reasoning_effort: high
     fidelity: summary:high
     prompt:
-      ESCALATION: Cheap implementation failed after multiple attempts. Read .ai/current_sprint_id.txt to identify the target sprint. You have all prior context — squad findings, review critiques, gate verdicts, and implementation history. Read the PreFlight output for environment context — follow standard practices for the detected stack. Fix the remaining issues definitively. This is the last attempt before failure.
+      ESCALATION: Cheap implementation failed after multiple attempts. Read .ai/current_sprint_id.txt to identify the target sprint. You have all prior context — squad findings, review critiques, gate verdicts, and implementation history.
+
+      IMPORTANT: Check what already exists on disk before writing anything. If prior implementation work is present from a previous attempt, continue from where it left off — do NOT start over or rewrite existing files that already work. Focus on completing the remaining items.
+
+      Read the PreFlight output for environment context — follow standard practices for the detected stack. Fix the remaining issues definitively. This is the last attempt before failure.
 
       HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify the ledger. Do NOT mark sprints as completed — that is handled by a separate pipeline node.
 
@@ -338,8 +374,38 @@ workflow SprintExecCheap
         rm -f .ai/ledger-snapshot.tsv
         exit 1
       fi
-      rm -f .ai/ledger-snapshot.tsv
+      rm -f .ai/ledger-snapshot.tsv .ai/implement-resume-count.txt
       printf 'ledger-ok'
+
+  tool ResumeCheckRescue
+    label: "Resume Check (Rescue)"
+    timeout: 10s
+    command:
+      set -eu
+      if [ -f .ai/ledger-snapshot.tsv ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        before=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger-snapshot.tsv | sort)
+        after=$(awk -F '\t' -v t="$target" 'NR>1 && $1!=t{print $1"\t"$3}' .ai/ledger.tsv | sort)
+        if [ "$before" != "$after" ]; then
+          cp .ai/ledger-snapshot.tsv .ai/ledger.tsv
+          rm -f .ai/ledger-snapshot.tsv .ai/implement-resume-count.txt
+          printf 'ledger-tampered'
+          exit 1
+        fi
+      fi
+      count=0
+      if [ -f .ai/implement-resume-count.txt ]; then
+        count=$(cat .ai/implement-resume-count.txt)
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > .ai/implement-resume-count.txt
+      if [ "$count" -ge 3 ]; then
+        rm -f .ai/implement-resume-count.txt .ai/ledger-snapshot.tsv
+        printf 'max-resumes-reached-%s' "$count"
+        exit 1
+      fi
+      cp .ai/ledger.tsv .ai/ledger-snapshot.tsv
+      printf 'resume-%s' "$count"
 
   tool ValidateRescue
     label: "Validate Rescue Build"
@@ -432,10 +498,15 @@ workflow SprintExecCheap
     MarkInProgress -> SnapshotLedger
     SnapshotLedger -> PreFlight
     PreFlight -> ImplementCheap
-    ImplementCheap -> CheckLedgerIntegrity
+    ImplementCheap -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
+    ImplementCheap -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
+    ImplementCheap -> FailureSummary
     CheckLedgerIntegrity -> ValidateBuild  when ctx.outcome = success  label: ledger_ok
     CheckLedgerIntegrity -> FailureSummary  when ctx.outcome = fail  label: ledger_tampered
     CheckLedgerIntegrity -> FailureSummary
+    ResumeCheck -> ImplementCheap  when ctx.outcome = success  label: resume  restart: true
+    ResumeCheck -> FailureSummary  when ctx.outcome = fail     label: resume_failed
+    ResumeCheck -> FailureSummary
     ValidateBuild -> CommitCheap  when ctx.outcome = success  label: validated
     ValidateBuild -> ImplementCheap  when ctx.outcome = fail  label: fix_validation  restart: true
     ValidateBuild -> FailureSummary
@@ -477,11 +548,15 @@ workflow SprintExecCheap
     GateCheap -> ImplementRescue
 
     # Rescue lane
-    ImplementRescue -> CheckLedgerRescue
+    ImplementRescue -> CheckLedgerRescue    when ctx.outcome = success  label: rescue_impl_done
+    ImplementRescue -> ResumeCheckRescue    when ctx.outcome = fail     label: rescue_interrupted
+    ImplementRescue -> FailureSummary
     CheckLedgerRescue -> ValidateRescue  when ctx.outcome = success  label: rescue_ledger_ok
     CheckLedgerRescue -> FailureSummary  when ctx.outcome = fail  label: rescue_ledger_tampered
     CheckLedgerRescue -> FailureSummary
-    ImplementRescue -> FailureSummary
+    ResumeCheckRescue -> ImplementRescue  when ctx.outcome = success  label: rescue_resume  restart: true
+    ResumeCheckRescue -> FailureSummary   when ctx.outcome = fail     label: rescue_resume_failed
+    ResumeCheckRescue -> FailureSummary
     ValidateRescue -> CommitRescue  when ctx.outcome = success  label: rescue_validated
     ValidateRescue -> FailureSummary  when ctx.outcome = fail  label: rescue_failed
     ValidateRescue -> FailureSummary
