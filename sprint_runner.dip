@@ -77,6 +77,35 @@ workflow SprintRunner
       mv .ai/ledger.tsv.tmp .ai/ledger.tsv
       printf 'in_progress-%s' "$target"
 
+  tool preflight
+    label: "Pre-Flight Environment Check"
+    timeout: 60s
+    command:
+      set -eu
+      printf '=== Environment Pre-Flight ===\n'
+      printf 'docker: '
+      if docker info >/dev/null 2>&1; then printf 'running\n'; else printf 'NOT running\n'; fi
+      printf 'uv: '
+      if command -v uv >/dev/null 2>&1; then uv --version 2>&1; else printf 'NOT found\n'; fi
+      printf 'node: '
+      if command -v node >/dev/null 2>&1; then node --version 2>&1; else printf 'NOT found\n'; fi
+      printf 'swift: '
+      if command -v swift >/dev/null 2>&1; then swift --version 2>&1 | head -1; else printf 'NOT found\n'; fi
+      printf '\n=== Docker Compose Services ===\n'
+      if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ] || [ -f compose.yml ] || [ -f compose.yaml ]; then
+        if docker info >/dev/null 2>&1; then
+          docker compose ps 2>&1 || docker-compose ps 2>&1 || printf 'compose not available\n'
+        else
+          printf 'docker not running — services unavailable\n'
+          printf 'WARN: tests requiring databases must use in-memory alternatives (SQLite, etc.)\n'
+        fi
+      else
+        printf 'no compose file found\n'
+      fi
+      printf '\n=== Existing Project Structure ===\n'
+      find . -maxdepth 3 -name "*.py" -o -name "*.ts" -o -name "*.swift" -o -name "*.go" -o -name "*.rs" 2>/dev/null | grep -v node_modules | grep -v .venv | grep -v __pycache__ | head -50
+      printf '\npreflight-done'
+
   agent implement_sprint
     label: "Implement Sprint"
     model: claude-sonnet-4-6
@@ -100,6 +129,8 @@ workflow SprintRunner
       5. Implement minimum code to pass tests
       6. Run the project's test suite and linter — fix all issues
       7. Update the sprint doc checklist as work is completed
+
+      Read the PreFlight output for environment context — follow standard practices for the detected stack.
 
       ## If Prior Review Feedback Exists
       If you have context from a prior review/critique cycle, treat those findings as required fixes. Address every finding before declaring done.
@@ -403,7 +434,8 @@ workflow SprintRunner
     check_ledger -> read_sprint  when ctx.tool_stdout != all_done  label: next_sprint
     no_ledger_exit -> Exit
     read_sprint -> mark_in_progress
-    mark_in_progress -> implement_sprint
+    mark_in_progress -> preflight
+    preflight -> implement_sprint
     implement_sprint -> validate_build
     validate_build -> commit_work  when ctx.tool_stdout startswith "validation-pass"  label: validated
     validate_build -> implement_sprint  when ctx.tool_stdout = validation-fail  label: fix_validation  restart: true
