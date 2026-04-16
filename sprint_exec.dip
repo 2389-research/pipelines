@@ -117,7 +117,11 @@ workflow SprintExec
     reasoning_effort: high
     fidelity: summary:high
     prompt:
-      Implement the sprint requirements end-to-end. Read the PreFlight output for environment context — follow standard practices for the detected stack. If prior review/critique context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
+      Read .ai/current_sprint_id.txt to identify the target sprint. Read the corresponding sprint doc under .ai/sprints/SPRINT-<id>.md. Implement ONLY that sprint's requirements end-to-end.
+
+      Read the PreFlight output for environment context — follow standard practices for the detected stack. If prior review/critique context exists, treat those findings as required fixes. Update the sprint doc checklist as work is completed, and provide a concrete summary of changes and validation evidence.
+
+      HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify the ledger. Do NOT mark sprints as completed — that is handled by a separate pipeline node. If you finish early, stop and report what you did.
 
   tool ValidateBuild
     label: "Validate Build and Tests"
