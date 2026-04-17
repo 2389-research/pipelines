@@ -152,3 +152,189 @@ LEDGER
       set -eu
       cp .ai/ledger.yaml .ai/ledger-snapshot.yaml
       printf 'snapshot-saved'
+
+  agent ImplementSprint
+    label: "Implement Sprint"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    fidelity: summary:high
+    prompt:
+      Read .ai/current_sprint_id.txt to identify the target sprint.
+
+      Then read BOTH sprint documents:
+      1. .ai/sprints/SPRINT-<id>.yaml — structured contract
+      2. .ai/sprints/SPRINT-<id>.md — narrative description
+
+      Also read .ai/ledger.yaml for the project tech stack under `project.stack`.
+
+      ## Before writing any code
+
+      1. Check `entry_preconditions.files_must_exist` from the YAML — verify each file exists. If any are missing, something is wrong with prior sprints.
+      2. Check `history.attempts` from the YAML — if prior attempts failed, read the failure reasons and avoid repeating the same mistakes.
+      3. Check what already exists on disk. If prior implementation work is present from a previous attempt, continue from where it left off — do NOT start over or rewrite existing files that already work.
+
+      ## During implementation
+
+      4. Follow the `dod` checklist items from the YAML as your task list.
+      5. Use `validation.commands` from the YAML to self-test as you go.
+      6. Respect `scope_fence.off_limits` — do NOT do anything listed there.
+      7. If `scope_fence.touch_only` is present, only modify files in that list (plus new files in `artifacts.creates`).
+
+      ## After implementation
+
+      8. Run each command in `validation.commands`. All must pass.
+      9. Update the sprint .md checklist with completed items.
+      10. Provide a concrete summary of changes and validation evidence.
+
+      HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify .ai/ledger.yaml. Do NOT mark sprints as completed — that is handled by a separate pipeline node. If you finish early, stop and report what you did.
+
+  tool CheckLedgerIntegrity
+    label: "Check Ledger Integrity"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger-snapshot.yaml ]; then
+        printf 'no-snapshot-skipping'
+        exit 0
+      fi
+      target=$(cat .ai/current_sprint_id.txt)
+      before=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger-snapshot.yaml | sort)
+      after=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger.yaml | sort)
+      if [ "$before" != "$after" ]; then
+        printf 'LEDGER_TAMPERED — agent modified non-target sprints:\n'
+        printf 'before:\n%s\n' "$before"
+        printf 'after:\n%s\n' "$after"
+        cp .ai/ledger-snapshot.yaml .ai/ledger.yaml
+        printf 'Ledger restored from snapshot.\n'
+        rm -f .ai/ledger-snapshot.yaml
+        exit 1
+      fi
+      rm -f .ai/ledger-snapshot.yaml .ai/implement-resume-count.txt
+      printf 'ledger-ok'
+
+  tool ResumeCheck
+    label: "Resume Check"
+    timeout: 10s
+    command:
+      set -eu
+      if [ -f .ai/ledger-snapshot.yaml ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        before=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger-snapshot.yaml | sort)
+        after=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger.yaml | sort)
+        if [ "$before" != "$after" ]; then
+          cp .ai/ledger-snapshot.yaml .ai/ledger.yaml
+          rm -f .ai/ledger-snapshot.yaml .ai/implement-resume-count.txt
+          printf 'ledger-tampered'
+          exit 1
+        fi
+      fi
+      count=0
+      if [ -f .ai/implement-resume-count.txt ]; then
+        count=$(cat .ai/implement-resume-count.txt)
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > .ai/implement-resume-count.txt
+      if [ "$count" -ge 3 ]; then
+        rm -f .ai/implement-resume-count.txt .ai/ledger-snapshot.yaml
+        printf 'max-resumes-reached-%s' "$count"
+        exit 1
+      fi
+      cp .ai/ledger.yaml .ai/ledger-snapshot.yaml
+      printf 'resume-%s' "$count"
+
+  tool ValidateBuild
+    label: "Validate Build and Tests"
+    timeout: 300s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sprint_yaml" ] && yq -e '.validation.commands' "$sprint_yaml" >/dev/null 2>&1; then
+        count=$(yq '.validation.commands | length' "$sprint_yaml")
+        i=0
+        while [ "$i" -lt "$count" ]; do
+          cmd=$(yq ".validation.commands[$i].cmd" "$sprint_yaml")
+          expect=$(yq ".validation.commands[$i].expect" "$sprint_yaml")
+          printf '=== Validation %s/%s ===\n' "$((i+1))" "$count"
+          printf 'cmd: %s\n' "$cmd"
+          if [ "$expect" = "exit_0" ]; then
+            eval "$cmd" > /tmp/sprint-validate.log 2>&1 || { cat /tmp/sprint-validate.log; exit 1; }
+          else
+            eval "$cmd" > /tmp/sprint-validate.log 2>&1 || { cat /tmp/sprint-validate.log; exit 1; }
+            if ! grep -q "$expect" /tmp/sprint-validate.log; then
+              printf 'Expected output containing: %s\n' "$expect"
+              printf 'Got:\n'
+              cat /tmp/sprint-validate.log
+              exit 1
+            fi
+          fi
+          printf 'PASS\n'
+          i=$((i+1))
+        done
+        printf 'validation-pass-yaml'
+        exit 0
+      fi
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        uv run ruff check . >/tmp/sprint-lint.log 2>&1 || { cat /tmp/sprint-lint.log; exit 1; }
+        printf 'validation-pass-python'
+        exit 0
+      fi
+      if [ -f package.json ]; then
+        npm test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-node'
+        exit 0
+      fi
+      if [ -f Package.swift ]; then
+        swift build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        swift test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-swift'
+        exit 0
+      fi
+      if [ -f Cargo.toml ]; then
+        cargo build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        cargo test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-rust'
+        exit 0
+      fi
+      if [ -f go.mod ]; then
+        go build ./... >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        go test ./... >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-go'
+        exit 0
+      fi
+      printf 'validation-pass-no-known-build-system'
+
+  agent CommitSprintWork
+    label: "Commit Sprint Work"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Prepare and execute a clean commit for sprint implementation changes if there are staged/unstaged changes. If no changes are present, report that no commit was needed. Include commit hash in your summary.
+
+  tool CompleteSprint
+    label: "Complete Sprint"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      yq -i "(.sprints[] | select(.id == \"$target\")).status = \"completed\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
+      if [ -f ".ai/sprints/SPRINT-${target}.yaml" ]; then
+        yq -i ".status = \"completed\"" ".ai/sprints/SPRINT-${target}.yaml"
+      fi
+      printf 'completed-%s' "$target"
+
+  human HumanBootstrapGate
+    label: "Bootstrap Failed — Human Intervention"
+    mode: choice
+
+  agent FailureSummary
+    label: "Failure Summary"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Summarize why sprint execution failed, what remains unresolved, and concrete next steps for recovery.
