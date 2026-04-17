@@ -505,3 +505,304 @@ workflow SpecToSprintsYaml
       - Sprint IDs are sequential zero-padded 3-digit (000, 001, ...)
       - Bootstrap sprints come first, feature sprints follow
       - Create .ai directory if it does not exist
+
+  agent present_plan
+    label: "Present Sprint Plan"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reads: sprint_plan
+    reasoning_effort: medium
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/sprint_plan.md and present a concise review summary for human approval:
+
+      1. Total sprint count (noting how many are bootstrap vs feature)
+      2. Sprint titles listed in order with dependencies noted
+      3. Requirement coverage: any FRs not covered?
+      4. Risk flags: any sprints that seem too large, too vague, or have unclear validation?
+
+      Keep the summary scannable. The human needs to decide: approve as-is, or request changes.
+
+  human approval_gate
+    label: "Approve Sprint Plan"
+
+  agent apply_feedback
+    label: "Apply Feedback"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan
+    writes: sprint_plan
+    prompt:
+      You are working in `run.working_dir`.
+
+      The human has provided feedback on the sprint plan. Read .ai/sprint_plan.md, incorporate the feedback, and rewrite .ai/sprint_plan.md with the changes applied.
+
+      Preserve the same format. Update sprint numbers if sprints are added, removed, or reordered. Ensure dependency references remain consistent after renumbering. Bootstrap sprints (000-002) should generally not be removed unless explicitly requested.
+
+  tool skip_approval
+    label: "Skip Approval"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      count="unknown"
+      if [ -f .ai/sprint_plan.md ]; then
+        count=$(grep -c '^### Sprint' .ai/sprint_plan.md || true)
+      fi
+      printf 'approved\t%s\t%s\tauto-skipped\n' "$count" "$now"
+
+  tool setup_workspace
+    label: "Setup .ai Workspace"
+    timeout: 10s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 1
+      fi
+      mkdir -p .ai/sprints .ai/drafts
+      printf 'ready'
+
+  agent write_sprint_docs
+    label: "Write Sprint Docs"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan, spec_analysis
+    fallback_target: Exit
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/sprint_plan.md and .ai/spec_analysis.md. For each sprint in the plan, write TWO files under .ai/sprints/:
+
+      ### 1. SPRINT-<id>.md (narrative — same format as before)
+      ```
+      # Sprint NNN — Title
+
+      ## Scope
+      What this sprint delivers (2-3 sentences).
+
+      ## Non-goals
+      - What is explicitly excluded
+
+      ## Requirements
+      - FR IDs covered, with one-line descriptions
+
+      ## Dependencies
+      - Sprint numbers that must complete first (or "None")
+
+      ## Expected Artifacts
+      - Specific file paths
+
+      ## DoD
+      - [ ] Checkable item 1
+      - [ ] Checkable item 2
+
+      ## Validation
+      - Exact commands
+      ```
+
+      ### 2. SPRINT-<id>.yaml (structured contract)
+      ```yaml
+      id: "NNN"
+      title: "Sprint Title"
+      status: planned
+      bootstrap: true/false
+      complexity: low/medium/high
+
+      depends_on: ["000", "001"]
+      dependents: ["004", "005"]
+
+      stack:
+        services: []
+
+      scope_fence:
+        off_limits:
+          - "do not modify .ai/ledger.yaml"
+          - "do not implement sprint NNN+1 or later"
+          - "do not add features beyond scope"
+        touch_only: []
+
+      entry_preconditions:
+        files_must_exist: []
+        sprints_must_be_complete: ["000"]
+
+      artifacts:
+        creates:
+          - path: "path/to/file"
+            type: module
+        modifies: []
+
+      validation:
+        commands:
+          - cmd: "exact command here"
+            expect: exit_0
+
+      dod:
+        - "First checkable item"
+        - "Second checkable item"
+
+      history:
+        attempts: []
+      ```
+
+      ## Rules
+      - CRITICAL: All files MUST be written to .ai/sprints/ — NEVER to the project root
+      - File paths: .ai/sprints/SPRINT-000.md, .ai/sprints/SPRINT-000.yaml, etc.
+      - IDs MUST be zero-padded 3-digit: 000, 001, ... 016
+      - The YAML must have ALL fields shown above — no missing sections
+      - `scope_fence.off_limits` must always include "do not modify .ai/ledger.yaml"
+      - `entry_preconditions.sprints_must_be_complete` must match `depends_on`
+      - `dependents` is the reverse index of `depends_on` — compute it from the full sprint list
+      - `validation.commands` must have exact, runnable commands — not pseudocode
+      - `stack.services` should list any external services this sprint introduces (database, message broker, etc.)
+      - Bootstrap sprints (000-002) must have `bootstrap: true`
+      - Write ALL sprint docs in one pass for cross-sprint consistency
+      - Do NOT write or modify .ai/ledger.yaml — a separate tool handles that
+
+  tool write_ledger
+    label: "Write Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      stack_lang=$(yq '.stack.lang // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
+      stack_runner=$(yq '.stack.runner // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
+      stack_test=$(yq '.stack.test // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
+      stack_lint=$(yq '.stack.lint // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
+      stack_build=$(yq '.stack.build // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
+      printf 'project:\n  name: "Unknown"\n  stack:\n    lang: %s\n    runner: %s\n    test: %s\n    lint: %s\n    build: %s\n  created_at: "%s"\n\nsprints:\n' "$stack_lang" "$stack_runner" "$stack_test" "$stack_lint" "$stack_build" "$now" > .ai/ledger.yaml
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        id=$(yq '.id' "$f")
+        title=$(yq '.title' "$f")
+        bootstrap=$(yq '.bootstrap // false' "$f")
+        complexity=$(yq '.complexity // "medium"' "$f")
+        deps=$(yq '.depends_on // []' "$f")
+        printf '  - id: "%s"\n    title: "%s"\n    status: planned\n    bootstrap: %s\n    depends_on: %s\n    complexity: %s\n    created_at: "%s"\n    updated_at: "%s"\n    attempts: 0\n    total_cost: "0.00"\n' "$id" "$title" "$bootstrap" "$deps" "$complexity" "$now" "$now" >> .ai/ledger.yaml
+      done
+      count=$(yq '.sprints | length' .ai/ledger.yaml)
+      printf 'wrote-%s-sprints' "$count"
+
+  tool validate_output
+    label: "Validate Output"
+    timeout: 30s
+    command:
+      set -eu
+      errors=""
+      stray=$(ls SPRINT-*.md SPRINT-*.yaml 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$stray" -gt 0 ]; then
+        errors="${errors}sprint-files-in-root "
+      fi
+      ledger_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
+      yaml_ids=$(ls .ai/sprints/SPRINT-*.yaml 2>/dev/null | sed 's|.*/SPRINT-||;s|\.yaml||' | sort)
+      md_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
+      if [ "$ledger_ids" != "$yaml_ids" ]; then
+        errors="${errors}ledger-yaml-mismatch "
+      fi
+      if [ "$ledger_ids" != "$md_ids" ]; then
+        errors="${errors}ledger-md-mismatch "
+      fi
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        if ! yq -e '.id' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-id-${base} "
+        fi
+        if ! yq -e '.validation.commands' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-validation-${base} "
+        fi
+        if ! yq -e '.dod' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-dod-${base} "
+        fi
+        if ! yq -e '.scope_fence' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-scope-fence-${base} "
+        fi
+        if ! yq -e '.artifacts' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-artifacts-${base} "
+        fi
+      done
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        for section in "## Scope" "## Requirements" "## Dependencies" "## Expected Artifacts" "## DoD" "## Validation"; do
+          if ! grep -q "$section" "$f"; then
+            tag=$(printf '%s' "$section" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+            errors="${errors}missing-${tag}-${base} "
+          fi
+        done
+      done
+      if [ -z "$(yq '.sprints[]' .ai/ledger.yaml 2>/dev/null)" ]; then
+        errors="${errors}empty-ledger "
+      fi
+      bootstrap_count=$(yq '[.sprints[] | select(.bootstrap == true)] | length' .ai/ledger.yaml)
+      if [ "$bootstrap_count" -lt 2 ]; then
+        errors="${errors}insufficient-bootstrap-sprints "
+      fi
+      if [ -n "$errors" ]; then
+        printf 'invalid-%s' "$errors"
+        exit 0
+      fi
+      printf 'valid'
+
+  tool commit_output
+    label: "Commit Output"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -d .git ]; then
+        printf 'no-git-skipped'
+        exit 0
+      fi
+      for f in .ai/ledger.yaml .ai/sprints .ai/spec_analysis.md .ai/sprint_plan.md; do
+        [ -e "$f" ] && git add "$f"
+      done
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+        exit 0
+      fi
+      count=$(yq '.sprints | length' .ai/ledger.yaml)
+      git commit -m "feat(sprints): decompose spec into ${count} sprints (YAML format)"
+      printf 'committed-%s-sprints' "$count"
+
+  edges
+    Start -> find_spec
+    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found   label: no_spec
+    no_spec_exit -> Exit
+    analyze_spec -> decompose_parallel
+    decompose_parallel -> decompose_claude
+    decompose_parallel -> decompose_gpt
+    decompose_parallel -> decompose_gemini
+    decompose_claude -> decompose_join
+    decompose_gpt -> decompose_join
+    decompose_gemini -> decompose_join
+    decompose_join -> critique_parallel
+    critique_parallel -> critique_claude_on_gpt
+    critique_parallel -> critique_claude_on_gemini
+    critique_parallel -> critique_gpt_on_claude
+    critique_parallel -> critique_gpt_on_gemini
+    critique_parallel -> critique_gemini_on_claude
+    critique_parallel -> critique_gemini_on_gpt
+    critique_claude_on_gpt -> critique_join
+    critique_claude_on_gemini -> critique_join
+    critique_gpt_on_claude -> critique_join
+    critique_gpt_on_gemini -> critique_join
+    critique_gemini_on_claude -> critique_join
+    critique_gemini_on_gpt -> critique_join
+    critique_join -> merge_decomposition
+    merge_decomposition -> present_plan
+    present_plan -> approval_gate
+    approval_gate -> apply_feedback  label: "[A] Revise plan"
+    approval_gate -> skip_approval   label: "[S] Approve / Skip"
+    apply_feedback -> approval_gate  restart: true
+    skip_approval -> setup_workspace
+    setup_workspace -> write_sprint_docs
+    write_sprint_docs -> write_ledger
+    write_ledger -> validate_output
+    validate_output -> commit_output       when ctx.tool_stdout = valid     label: valid
+    validate_output -> write_sprint_docs   when ctx.tool_stdout != valid    label: fix_validation  restart: true
+    commit_output -> Exit
