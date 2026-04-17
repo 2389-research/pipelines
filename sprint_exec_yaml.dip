@@ -1,0 +1,154 @@
+# ABOUTME: Sprint execution pipeline using YAML ledger and per-sprint YAML contracts.
+# ABOUTME: Fork of sprint_exec.dip — replaces TSV with structured YAML metadata.
+workflow SprintExecYaml
+  goal: "Execute the next incomplete sprint from .ai/ledger.yaml through implementation, validation, multi-model review, and completion. Uses per-sprint YAML contracts for structured metadata."
+  start: Start
+  exit: Exit
+
+  defaults
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Acknowledge that the sprint execution pipeline is starting. Report ready status.
+
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start. If you do anything else, the pipeline fails.
+
+  agent Exit
+    label: Exit
+    prompt:
+      The sprint execution pipeline is complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT run tests. Do NOT debug anything. Your ONLY job is to acknowledge completion. If prior nodes left work undone, that is not your problem — the pipeline will handle retries.
+
+  tool EnsureLedger
+    label: "Ensure Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      mkdir -p .ai .ai/drafts .ai/sprints
+      if [ ! -f .ai/ledger.yaml ]; then
+        now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        cat > .ai/ledger.yaml <<LEDGER
+project:
+  name: "Unknown"
+  stack:
+    lang: null
+    runner: null
+    test: null
+    lint: null
+    build: null
+  created_at: "$now"
+
+sprints:
+  - id: "000"
+    title: "Bootstrap sprint"
+    status: planned
+    bootstrap: true
+    depends_on: []
+    complexity: low
+    created_at: "$now"
+    updated_at: "$now"
+    attempts: 0
+    total_cost: "0.00"
+LEDGER
+      fi
+      printf 'ledger-ready'
+
+  tool CheckYq
+    label: "Check yq"
+    timeout: 5s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 0
+      fi
+      printf 'yq-ok'
+
+  agent YqMissing
+    label: "yq Not Found"
+    prompt:
+      The yq YAML processor is required but not installed.
+
+      Install it:
+        macOS:  brew install yq
+        Linux:  snap install yq  OR  wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+      After installing, re-run the pipeline.
+
+  agent FindNextSprint
+    label: "Find Next Sprint"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Read .ai/ledger.yaml. Find the first sprint entry where status is NOT "completed" or "skipped". Report that sprint ID and its title. That is the next sprint.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files other than reading .ai/ledger.yaml. Do NOT implement anything. Do NOT install dependencies. Your ONLY job is to identify and report which sprint is next.
+
+  tool SetCurrentSprint
+    label: "Set Current Sprint"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped") | .id' .ai/ledger.yaml | head -1)
+      if [ -z "$target" ]; then
+        target=$(yq '.sprints[-1].id' .ai/ledger.yaml)
+      fi
+      printf '%s' "$target" > .ai/current_sprint_id.txt
+      printf 'current-%s' "$target"
+
+  agent ReadSprint
+    label: "Read Sprint"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read BOTH:
+      1. .ai/sprints/SPRINT-<id>.yaml — the structured contract (scope fence, validation commands, artifacts, dependencies, failure history)
+      2. .ai/sprints/SPRINT-<id>.md — the narrative description
+
+      Summarize: (1) what the sprint requires, (2) which DoD checklist items are done vs pending, (3) expected artifacts, (4) any prior failure history from the YAML.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT implement anything. Do NOT install dependencies. Your ONLY job is to read and summarize the sprint documents.
+
+  tool CheckBootstrap
+    label: "Check Bootstrap"
+    timeout: 5s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sprint_yaml" ]; then
+        printf 'bootstrap-false'
+        exit 0
+      fi
+      is_bootstrap=$(yq '.bootstrap // false' "$sprint_yaml")
+      if [ "$is_bootstrap" = "true" ]; then
+        printf 'bootstrap-true'
+      else
+        printf 'bootstrap-false'
+      fi
+
+  tool MarkInProgress
+    label: "Mark In Progress"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      yq -i "(.sprints[] | select(.id == \"$target\")).status = \"in_progress\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
+      if [ -f ".ai/sprints/SPRINT-${target}.yaml" ]; then
+        yq -i ".status = \"in_progress\"" ".ai/sprints/SPRINT-${target}.yaml"
+      fi
+      printf 'in_progress-%s' "$target"
+
+  tool SnapshotLedger
+    label: "Snapshot Ledger"
+    timeout: 5s
+    command:
+      set -eu
+      cp .ai/ledger.yaml .ai/ledger-snapshot.yaml
+      printf 'snapshot-saved'
