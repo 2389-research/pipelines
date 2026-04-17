@@ -338,3 +338,198 @@ LEDGER
     reasoning_effort: high
     prompt:
       Summarize why sprint execution failed, what remains unresolved, and concrete next steps for recovery.
+
+  parallel ReviewParallel -> ReviewClaude, ReviewCodex, ReviewGemini
+
+  agent ReviewClaude
+    label: "Claude Review"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Review sprint execution thoroughly: sprint doc checklist completion, implementation correctness, and validation evidence. Return clear PASS/FAIL reasoning and required fixes.
+
+  agent ReviewCodex
+    label: "Codex Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Review sprint execution for implementation quality, regression risk, and checklist completeness. Return clear PASS/FAIL reasoning and required fixes.
+
+  agent ReviewGemini
+    label: "Gemini Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Review sprint execution for delivery robustness, test coverage, and checklist completeness. Return clear PASS/FAIL reasoning and required fixes.
+
+  fan_in ReviewsJoin <- ReviewClaude, ReviewCodex, ReviewGemini
+
+  parallel CritiquesParallel -> CritiqueClaudeOnCodex, CritiqueClaudeOnGemini, CritiqueCodexOnClaude, CritiqueCodexOnGemini, CritiqueGeminiOnClaude, CritiqueGeminiOnCodex
+
+  agent CritiqueClaudeOnCodex
+    label: "Claude Critique of Codex Review"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Critique the Codex review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueClaudeOnGemini
+    label: "Claude Critique of Gemini Review"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Critique the Gemini review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueCodexOnClaude
+    label: "Codex Critique of Claude Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Critique the Claude review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueCodexOnGemini
+    label: "Codex Critique of Gemini Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Critique the Gemini review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueGeminiOnClaude
+    label: "Gemini Critique of Claude Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Critique the Claude review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueGeminiOnCodex
+    label: "Gemini Critique of Codex Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Critique the Codex review for missing checks, weak evidence, or mistaken conclusions.
+
+  fan_in CritiquesJoin <- CritiqueClaudeOnCodex, CritiqueClaudeOnGemini, CritiqueCodexOnClaude, CritiqueCodexOnGemini, CritiqueGeminiOnClaude, CritiqueGeminiOnCodex
+
+  agent ReviewAnalysis
+    label: "Review Analysis"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    max_retries: 3
+    retry_target: ImplementSprint
+    prompt:
+      Synthesize all reviews and critiques into one verdict.
+
+      After your analysis, you MUST end your response with exactly one of these lines (no other text after it):
+        OUTCOME:SUCCESS
+        OUTCOME:RETRY
+        OUTCOME:FAIL
+
+      Return SUCCESS only if the sprint is truly complete — code committed, tests passing, checklist satisfied.
+      Return RETRY if rework is needed (uncommitted fixes, failing tests, missing DoD items).
+      Return FAIL if the sprint is blocked and cannot proceed.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete project files. Do NOT implement fixes. Your ONLY job is to analyze and render a verdict.
+
+  tool CheckBootstrapSkip
+    label: "Check Bootstrap Skip"
+    timeout: 5s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sprint_yaml" ]; then
+        is_bootstrap=$(yq '.bootstrap // false' "$sprint_yaml")
+        if [ "$is_bootstrap" = "true" ]; then
+          printf 'bootstrap-skip-reviews'
+          exit 0
+        fi
+      fi
+      printf 'normal-reviews'
+
+  edges
+    Start -> EnsureLedger
+    EnsureLedger -> CheckYq
+    CheckYq -> FindNextSprint          when ctx.tool_stdout = yq-ok         label: yq_ok
+    CheckYq -> YqMissing               when ctx.tool_stdout = yq-not-found  label: yq_missing
+    YqMissing -> Exit
+    FindNextSprint -> SetCurrentSprint
+    SetCurrentSprint -> ReadSprint
+    ReadSprint -> CheckBootstrap
+
+    # --- Bootstrap branch ---
+    CheckBootstrap -> MarkInProgress
+
+    # --- Shared: MarkInProgress through ImplementSprint ---
+    MarkInProgress -> SnapshotLedger
+    SnapshotLedger -> ImplementSprint
+
+    # --- ImplementSprint success: ledger integrity check ---
+    ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
+    ImplementSprint -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
+    ImplementSprint -> FailureSummary
+
+    CheckLedgerIntegrity -> ValidateBuild   when ctx.outcome = success  label: ledger_ok
+    CheckLedgerIntegrity -> FailureSummary  when ctx.outcome = fail     label: ledger_tampered
+    CheckLedgerIntegrity -> FailureSummary
+
+    # --- ResumeCheck: bootstrap gets human gate, normal gets failure ---
+    ResumeCheck -> ImplementSprint       when ctx.tool_stdout matches resume     label: resume          restart: true
+    ResumeCheck -> HumanBootstrapGate    when ctx.tool_stdout matches max-resumes  label: bootstrap_exhausted
+    ResumeCheck -> FailureSummary        when ctx.outcome = fail                 label: resume_failed
+    ResumeCheck -> FailureSummary
+
+    # --- HumanBootstrapGate: retry or abort ---
+    HumanBootstrapGate -> SnapshotLedger  label: "[S] Retry"  restart: true
+    HumanBootstrapGate -> FailureSummary  label: "[A] Abort"
+
+    # --- ValidateBuild ---
+    ValidateBuild -> CommitSprintWork  when ctx.outcome = success  label: validated
+    ValidateBuild -> ImplementSprint   when ctx.outcome = fail     label: fix_validation  restart: true
+    ValidateBuild -> FailureSummary
+
+    # --- CommitSprintWork: bootstrap skips reviews ---
+    CommitSprintWork -> CheckBootstrapSkip
+    CheckBootstrapSkip -> CompleteSprint   when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
+    CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
+    CheckBootstrapSkip -> ReviewParallel
+
+    # --- Review tournament (normal sprints only) ---
+    ReviewParallel -> ReviewClaude
+    ReviewParallel -> ReviewCodex
+    ReviewParallel -> ReviewGemini
+    ReviewClaude -> ReviewsJoin
+    ReviewCodex -> ReviewsJoin
+    ReviewGemini -> ReviewsJoin
+    ReviewsJoin -> CritiquesParallel
+    CritiquesParallel -> CritiqueClaudeOnCodex
+    CritiquesParallel -> CritiqueClaudeOnGemini
+    CritiquesParallel -> CritiqueCodexOnClaude
+    CritiquesParallel -> CritiqueCodexOnGemini
+    CritiquesParallel -> CritiqueGeminiOnClaude
+    CritiquesParallel -> CritiqueGeminiOnCodex
+    CritiqueClaudeOnCodex -> CritiquesJoin
+    CritiqueClaudeOnGemini -> CritiquesJoin
+    CritiqueCodexOnClaude -> CritiquesJoin
+    CritiqueCodexOnGemini -> CritiquesJoin
+    CritiqueGeminiOnClaude -> CritiquesJoin
+    CritiqueGeminiOnCodex -> CritiquesJoin
+    CritiquesJoin -> ReviewAnalysis
+    ReviewAnalysis -> CompleteSprint    when ctx.outcome = success  label: pass
+    ReviewAnalysis -> ImplementSprint   when ctx.outcome = retry    label: rework  restart: true
+    ReviewAnalysis -> FailureSummary    when ctx.outcome = fail     label: fail
+    ReviewAnalysis -> FailureSummary
+
+    # --- Terminal nodes ---
+    CompleteSprint -> Exit
+    FailureSummary -> Exit
