@@ -1,0 +1,507 @@
+# ABOUTME: Spec-to-sprints decomposition pipeline producing YAML ledger and dual YAML+md sprint files.
+# ABOUTME: Fork of spec_to_sprints.dip — adds bootstrap sprint generation and per-sprint YAML contracts.
+workflow SpecToSprintsYaml
+  goal: "Decompose a specification into .ai/ledger.yaml and SPRINT-*.md + SPRINT-*.yaml files ready for sprint_exec_yaml.dip execution, using multi-model tournament decomposition with human approval."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Begin spec-to-sprints decomposition pipeline.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Spec-to-sprints pipeline complete.
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    writes: spec_analysis
+    goal_gate: true
+    retry_target: analyze_spec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file found by the previous step and produce a structured analysis for sprint decomposition.
+
+      ## Process
+      1. Read the spec file thoroughly
+      2. Write .ai/spec_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      Name, purpose, one-paragraph description.
+
+      ### Tech Stack
+      Language, framework, database, test framework, linter, package manager — extracted from the spec or inferred from its requirements.
+
+      ### Functional Requirements (numbered)
+      Every discrete functional requirement extracted from the spec, numbered FR1-FRn. Each entry:
+      - ID (e.g., FR1)
+      - Spec section reference (e.g., "Section 5, FR1")
+      - One-line description
+      - Acceptance criteria if specified
+
+      ### Architectural Layers / Components (numbered)
+      For each component or layer the spec defines:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can be built in parallel, which must be sequential, and why.
+
+      ### Complexity Assessment
+      For each component: low / medium / high complexity with one-line justification.
+
+      ### Rollout Phases
+      If the spec defines phases (v0, v1, v2), list what belongs in each. If not, note "no phases defined."
+
+      ### Open Questions
+      Ambiguities, unresolved decisions, or contradictions found in the spec.
+
+      ## Output
+      Write the analysis to .ai/spec_analysis.md. Create the .ai directory if it does not exist.
+
+      ## Critical Rules
+      - Only extract requirements explicitly stated in the spec. Do not invent, infer, or add requirements.
+      - If the spec is ambiguous, note the ambiguity in Open Questions rather than guessing.
+      - Every FR must have a direct spec section reference.
+
+      ## Success Criteria
+      - .ai/spec_analysis.md exists with ALL sections filled in
+      - Every functional requirement is numbered
+      - Every component dependency is mapped
+
+  parallel decompose_parallel -> decompose_claude, decompose_gpt, decompose_gemini
+
+  agent decompose_claude
+    label: "Claude Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_claude
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Thoroughness
+      Focus on dependency ordering, risk sequencing, and DoD traceability. Every functional requirement (FR1-FRn) must be covered by at least one sprint. No requirement should be orphaned.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+      - Do NOT include bootstrap/scaffold sprints — those are generated separately. Start numbering at 001 for the first FEATURE sprint.
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_claude.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  agent decompose_gpt
+    label: "GPT Decomposition"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gpt
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Implementation Pragmatism
+      Focus on execution order, what can be parallelized, and build/test feasibility. Think about what a developer actually needs working first before the next piece can start.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+      - Do NOT include bootstrap/scaffold sprints — those are generated separately. Start numbering at 001 for the first FEATURE sprint.
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gpt.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  agent decompose_gemini
+    label: "Gemini Decomposition"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gemini
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Delivery Robustness
+      Focus on scope discipline, sprint size consistency, validation checkpoints, and risk mitigation. Flag any sprint that seems too large or has unclear validation criteria.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+      - Do NOT include bootstrap/scaffold sprints — those are generated separately. Start numbering at 001 for the first FEATURE sprint.
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gemini.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  fan_in decompose_join <- decompose_claude, decompose_gpt, decompose_gemini
+
+  parallel critique_parallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent critique_claude_on_gpt
+    label: "Claude Critique of GPT"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_claude_on_gemini
+    label: "Claude Critique of Gemini"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_claude
+    label: "GPT Critique of Claude"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_gemini
+    label: "GPT Critique of Gemini"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_claude
+    label: "Gemini Critique of Claude"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_gpt
+    label: "Gemini Critique of GPT"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  fan_in critique_join <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent merge_decomposition
+    label: "Merge Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_claude, decomposition_gpt, decomposition_gemini, spec_analysis
+    writes: sprint_plan
+    goal_gate: true
+    retry_target: merge_decomposition
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize the three decompositions and six cross-critiques into one final sprint plan, with bootstrap sprints prepended.
+
+      ## Process
+      Read the three decomposition files:
+      - .ai/drafts/decomposition_claude.md
+      - .ai/drafts/decomposition_gpt.md
+      - .ai/drafts/decomposition_gemini.md
+      And the spec analysis: .ai/spec_analysis.md
+
+      1. Compare the three decompositions side by side
+      2. Incorporate valid critique findings — fix ordering errors, fill coverage gaps, adjust sprint sizes
+      3. Produce a single merged sprint list
+
+      ## Bootstrap Sprint Generation
+
+      BEFORE the feature sprints, you MUST prepend bootstrap sprints:
+
+      ### Sprint 000 — Project Scaffold & Toolchain (ALWAYS)
+      - bootstrap: true, complexity: low
+      - Scope: Initialize repo, package manager, test harness, linter config, CI skeleton
+      - Derive specifics from the Tech Stack section of .ai/spec_analysis.md
+      - DoD: project builds, linter passes, test harness runs (even with zero tests), CI config exists
+
+      ### Sprint 001 — External Services & Dev Environment (IF services detected)
+      - bootstrap: true, complexity: low
+      - Only include this sprint if the spec analysis mentions databases, message brokers, caches, or other external services
+      - Scope: docker-compose, database migrations, service health checks, env var documentation
+      - DoD: services start, health checks pass, connection from app code works
+
+      ### Sprint 002 — Hello World End-to-End Proof (ALWAYS)
+      - bootstrap: true, complexity: low
+      - Scope: One endpoint/function, one test, full stack round-trip proving the scaffold works
+      - DoD: one passing integration test that exercises the full stack
+      - depends_on: ["000"] or ["001"] if Sprint 001 exists
+
+      Then renumber feature sprints starting at 003 (or 002 if Sprint 001 was skipped). All feature sprints must depends_on at minimum the last bootstrap sprint.
+
+      ## Output Format (.ai/sprint_plan.md)
+      Start with a summary: total sprint count, overall approach, key decisions made during merge.
+
+      Then for each sprint:
+      ### Sprint NNN — Title
+
+      **Scope:** What this sprint delivers (2-3 sentences)
+
+      **Non-goals:** What is explicitly excluded
+
+      **Requirements:** FR IDs covered (e.g., FR1, FR3, FR7)
+
+      **Dependencies:** Sprint numbers that must complete first
+
+      **Bootstrap:** true/false
+
+      **Expected Artifacts:**
+      - file/module paths this sprint produces
+
+      **DoD:**
+      - [ ] Checkable item 1
+      - [ ] Checkable item 2
+      ...
+
+      **Validation:**
+      - Exact build/test commands to verify completion
+
+      **Complexity:** low / medium / high
+
+      ## Rules
+      - Every FR from .ai/spec_analysis.md must appear in at least one sprint
+      - No dependency cycles
+      - Sprint IDs are sequential zero-padded 3-digit (000, 001, ...)
+      - Bootstrap sprints come first, feature sprints follow
+      - Create .ai directory if it does not exist
