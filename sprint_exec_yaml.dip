@@ -30,29 +30,7 @@ workflow SprintExecYaml
       mkdir -p .ai .ai/drafts .ai/sprints
       if [ ! -f .ai/ledger.yaml ]; then
         now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        cat > .ai/ledger.yaml <<LEDGER
-project:
-  name: "Unknown"
-  stack:
-    lang: null
-    runner: null
-    test: null
-    lint: null
-    build: null
-  created_at: "$now"
-
-sprints:
-  - id: "000"
-    title: "Bootstrap sprint"
-    status: planned
-    bootstrap: true
-    depends_on: []
-    complexity: low
-    created_at: "$now"
-    updated_at: "$now"
-    attempts: 0
-    total_cost: "0.00"
-LEDGER
+        printf 'project:\n  name: "Unknown"\n  stack:\n    lang: null\n    runner: null\n    test: null\n    lint: null\n    build: null\n  created_at: "%s"\n\nsprints:\n  - id: "000"\n    title: "Bootstrap sprint"\n    status: planned\n    bootstrap: true\n    depends_on: []\n    complexity: low\n    created_at: "%s"\n    updated_at: "%s"\n    attempts: 0\n    total_cost: "0.00"\n' "$now" "$now" "$now" > .ai/ledger.yaml
       fi
       printf 'ledger-ready'
 
@@ -466,45 +444,28 @@ LEDGER
     FindNextSprint -> SetCurrentSprint
     SetCurrentSprint -> ReadSprint
     ReadSprint -> CheckBootstrap
-
-    # --- Bootstrap branch ---
     CheckBootstrap -> MarkInProgress
-
-    # --- Shared: MarkInProgress through ImplementSprint ---
     MarkInProgress -> SnapshotLedger
     SnapshotLedger -> ImplementSprint
-
-    # --- ImplementSprint success: ledger integrity check ---
     ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
     ImplementSprint -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
     ImplementSprint -> FailureSummary
-
     CheckLedgerIntegrity -> ValidateBuild   when ctx.outcome = success  label: ledger_ok
     CheckLedgerIntegrity -> FailureSummary  when ctx.outcome = fail     label: ledger_tampered
     CheckLedgerIntegrity -> FailureSummary
-
-    # --- ResumeCheck: bootstrap gets human gate, normal gets failure ---
-    ResumeCheck -> ImplementSprint       when ctx.tool_stdout matches resume     label: resume          restart: true
-    ResumeCheck -> HumanBootstrapGate    when ctx.tool_stdout matches max-resumes  label: bootstrap_exhausted
-    ResumeCheck -> FailureSummary        when ctx.outcome = fail                 label: resume_failed
+    ResumeCheck -> ImplementSprint       when ctx.tool_stdout contains resume       label: resume              restart: true
+    ResumeCheck -> HumanBootstrapGate    when ctx.tool_stdout contains max-resumes  label: bootstrap_exhausted
+    ResumeCheck -> FailureSummary        when ctx.outcome = fail                   label: resume_failed
     ResumeCheck -> FailureSummary
-
-    # --- HumanBootstrapGate: retry or abort ---
     HumanBootstrapGate -> SnapshotLedger  label: "[S] Retry"  restart: true
     HumanBootstrapGate -> FailureSummary  label: "[A] Abort"
-
-    # --- ValidateBuild ---
     ValidateBuild -> CommitSprintWork  when ctx.outcome = success  label: validated
     ValidateBuild -> ImplementSprint   when ctx.outcome = fail     label: fix_validation  restart: true
     ValidateBuild -> FailureSummary
-
-    # --- CommitSprintWork: bootstrap skips reviews ---
     CommitSprintWork -> CheckBootstrapSkip
     CheckBootstrapSkip -> CompleteSprint   when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
     CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
     CheckBootstrapSkip -> ReviewParallel
-
-    # --- Review tournament (normal sprints only) ---
     ReviewParallel -> ReviewClaude
     ReviewParallel -> ReviewCodex
     ReviewParallel -> ReviewGemini
@@ -529,7 +490,5 @@ LEDGER
     ReviewAnalysis -> ImplementSprint   when ctx.outcome = retry    label: rework  restart: true
     ReviewAnalysis -> FailureSummary    when ctx.outcome = fail     label: fail
     ReviewAnalysis -> FailureSummary
-
-    # --- Terminal nodes ---
     CompleteSprint -> Exit
     FailureSummary -> Exit
