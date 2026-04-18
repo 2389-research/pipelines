@@ -12,13 +12,19 @@ workflow SprintRunnerYaml
 
   agent Start
     label: Start
+    max_turns: 1
     prompt:
-      Begin autonomous sprint runner. Will loop through all incomplete sprints, retrying failures once, skipping on repeated failure, and stopping if the failure budget (3 total failures) is exhausted.
+      Acknowledge that the sprint runner is starting. Report ready status.
+
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Do NOT install dependencies. Your ONLY job is to acknowledge the pipeline start.
 
   agent Exit
     label: Exit
+    max_turns: 1
     prompt:
-      Sprint runner pipeline complete.
+      Sprint runner pipeline complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
 
   tool check_yq
     label: "Check yq"
