@@ -47,6 +47,60 @@ workflow SpecToSprintsYaml
 
       To use this pipeline, place a spec file in the working directory and re-run.
 
+  tool check_resume
+    label: "Check Resume Point"
+    timeout: 10s
+    command:
+      set -eu
+      has_ledger=false
+      has_sprint_yamls=false
+      has_sprint_mds=false
+      has_plan=false
+      has_drafts=false
+      has_analysis=false
+      if [ -f .ai/ledger.yaml ] && yq -e '.sprints[0].id' .ai/ledger.yaml >/dev/null 2>&1; then
+        has_ledger=true
+      fi
+      yaml_count=$(ls .ai/sprints/SPRINT-*.yaml 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$yaml_count" -gt 0 ]; then
+        has_sprint_yamls=true
+      fi
+      md_count=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$md_count" -gt 0 ]; then
+        has_sprint_mds=true
+      fi
+      if [ -f .ai/sprint_plan.md ] && grep -q '^### Sprint' .ai/sprint_plan.md; then
+        has_plan=true
+      fi
+      draft_count=$(ls .ai/drafts/decomposition_*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$draft_count" -ge 2 ]; then
+        has_drafts=true
+      fi
+      if [ -f .ai/spec_analysis.md ] && [ "$(wc -c < .ai/spec_analysis.md | tr -d ' ')" -gt 100 ]; then
+        has_analysis=true
+      fi
+      if [ "$has_ledger" = "true" ] && [ "$has_sprint_yamls" = "true" ] && [ "$has_sprint_mds" = "true" ]; then
+        printf 'resume-validate ledger:%s yamls:%s mds:%s' "$has_ledger" "$yaml_count" "$md_count"
+        exit 0
+      fi
+      if [ "$has_sprint_yamls" = "true" ] && [ "$has_sprint_mds" = "true" ]; then
+        printf 'resume-ledger yamls:%s mds:%s' "$yaml_count" "$md_count"
+        exit 0
+      fi
+      if [ "$has_plan" = "true" ]; then
+        printf 'resume-write-docs plan:true'
+        exit 0
+      fi
+      if [ "$has_drafts" = "true" ] && [ "$has_analysis" = "true" ]; then
+        printf 'resume-merge drafts:%s' "$draft_count"
+        exit 0
+      fi
+      if [ "$has_analysis" = "true" ]; then
+        printf 'resume-decompose analysis:true'
+        exit 0
+      fi
+      printf 'fresh-start'
+
   agent analyze_spec
     label: "Analyze Spec"
     model: gpt-5.4
@@ -560,10 +614,14 @@ workflow SpecToSprintsYaml
       set -eu
       if ! command -v yq >/dev/null 2>&1; then
         printf 'yq-not-found'
-        exit 1
+        exit 0
       fi
       mkdir -p .ai/sprints .ai/drafts
       printf 'ready'
+
+  human yq_install_gate
+    label: "Install yq — then press [S] to retry"
+    mode: choice
 
   agent write_sprint_docs
     label: "Write Sprint Docs"
@@ -617,6 +675,11 @@ workflow SpecToSprintsYaml
       dependents: ["004", "005"]
 
       stack:
+        lang: python|javascript|swift|rust|go|null
+        runner: uv|npm|swiftpm|cargo|go|null
+        test: pytest|vitest|jest|swift-test|cargo-test|go-test|null
+        lint: ruff|eslint|swiftlint|clippy|golangci-lint|null
+        build: null
         services: []
 
       scope_fence:
@@ -654,6 +717,7 @@ workflow SpecToSprintsYaml
       - File paths: .ai/sprints/SPRINT-000.md, .ai/sprints/SPRINT-000.yaml, etc.
       - IDs MUST be zero-padded 3-digit: 000, 001, ... 016
       - The YAML must have ALL fields shown above — no missing sections
+      - `stack.lang`, `stack.runner`, `stack.test`, `stack.lint`, and `stack.build` must be populated from the Tech Stack section of .ai/spec_analysis.md. Use `null` only when the spec analysis truly does not provide enough information.
       - `scope_fence.off_limits` must always include "do not modify .ai/ledger.yaml"
       - `entry_preconditions.sprints_must_be_complete` must match `depends_on`
       - `dependents` is the reverse index of `depends_on` — compute it from the full sprint list
@@ -669,20 +733,20 @@ workflow SpecToSprintsYaml
     command:
       set -eu
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      stack_lang=$(yq '.stack.lang // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
-      stack_runner=$(yq '.stack.runner // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
-      stack_test=$(yq '.stack.test // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
-      stack_lint=$(yq '.stack.lint // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
-      stack_build=$(yq '.stack.build // "null"' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo "null")
+      stack_lang=$(yq '.stack.lang // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_runner=$(yq '.stack.runner // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_test=$(yq '.stack.test // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_lint=$(yq '.stack.lint // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_build=$(yq '.stack.build // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
       printf 'project:\n  name: "Unknown"\n  stack:\n    lang: %s\n    runner: %s\n    test: %s\n    lint: %s\n    build: %s\n  created_at: "%s"\n\nsprints:\n' "$stack_lang" "$stack_runner" "$stack_test" "$stack_lint" "$stack_build" "$now" > .ai/ledger.yaml
       for f in .ai/sprints/SPRINT-*.yaml; do
         [ -f "$f" ] || continue
         id=$(yq '.id' "$f")
-        title=$(yq '.title' "$f")
+        title=$(yq '.title | @json' "$f")
         bootstrap=$(yq '.bootstrap // false' "$f")
         complexity=$(yq '.complexity // "medium"' "$f")
-        deps=$(yq '.depends_on // []' "$f")
-        printf '  - id: "%s"\n    title: "%s"\n    status: planned\n    bootstrap: %s\n    depends_on: %s\n    complexity: %s\n    created_at: "%s"\n    updated_at: "%s"\n    attempts: 0\n    total_cost: "0.00"\n' "$id" "$title" "$bootstrap" "$deps" "$complexity" "$now" "$now" >> .ai/ledger.yaml
+        deps=$(yq '.depends_on // [] | @json' "$f")
+        printf '  - id: "%s"\n    title: %s\n    status: planned\n    bootstrap: %s\n    depends_on: %s\n    complexity: %s\n    created_at: "%s"\n    updated_at: "%s"\n    attempts: 0\n    total_cost: "0.00"\n' "$id" "$title" "$bootstrap" "$deps" "$complexity" "$now" "$now" >> .ai/ledger.yaml
       done
       count=$(yq '.sprints | length' .ai/ledger.yaml)
       printf 'wrote-%s-sprints' "$count"
@@ -709,8 +773,41 @@ workflow SpecToSprintsYaml
       for f in .ai/sprints/SPRINT-*.yaml; do
         [ -f "$f" ] || continue
         base=$(basename "$f")
+        if ! yq -e '.' "$f" >/dev/null 2>&1; then
+          errors="${errors}invalid-yaml-${base} "
+          continue
+        fi
         if ! yq -e '.id' "$f" >/dev/null 2>&1; then
           errors="${errors}missing-id-${base} "
+        fi
+        if ! yq -e '.title' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-title-${base} "
+        fi
+        if ! yq -e '.status' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-status-${base} "
+        fi
+        if ! yq -e '.stack.lang' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-lang-${base} "
+        fi
+        if ! yq -e '.stack.runner' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-runner-${base} "
+        fi
+        if ! yq -e '.stack.test' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-test-${base} "
+        fi
+        if ! yq -e '.stack.lint' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-lint-${base} "
+        fi
+        if ! yq -e '.stack.build' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-build-${base} "
+        fi
+        if [ "$base" = "SPRINT-000.yaml" ]; then
+          for field in lang runner test lint; do
+            value=$(yq ".stack.${field}" "$f" 2>/dev/null || printf 'null')
+            if [ "$value" = "null" ]; then
+              errors="${errors}null-stack-${field}-${base} "
+            fi
+          done
         fi
         if ! yq -e '.validation.commands' "$f" >/dev/null 2>&1; then
           errors="${errors}missing-validation-${base} "
@@ -770,9 +867,20 @@ workflow SpecToSprintsYaml
 
   edges
     Start -> find_spec
-    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
+    find_spec -> setup_workspace  when ctx.tool_stdout != no_spec_found  label: spec_found
     find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found   label: no_spec
+    find_spec -> no_spec_exit
     no_spec_exit -> Exit
+    setup_workspace -> check_resume       when ctx.tool_stdout = ready          label: workspace_ready
+    setup_workspace -> yq_install_gate    when ctx.tool_stdout = yq-not-found   label: yq_missing
+    setup_workspace -> Exit
+    check_resume -> validate_output       when ctx.tool_stdout startswith resume-validate    label: resume_validate
+    check_resume -> write_ledger          when ctx.tool_stdout startswith resume-ledger      label: resume_ledger
+    check_resume -> write_sprint_docs     when ctx.tool_stdout startswith resume-write-docs  label: resume_docs
+    check_resume -> merge_decomposition   when ctx.tool_stdout startswith resume-merge       label: resume_merge
+    check_resume -> decompose_parallel    when ctx.tool_stdout startswith resume-decompose   label: resume_decompose
+    check_resume -> analyze_spec          when ctx.tool_stdout = fresh-start                 label: fresh
+    check_resume -> analyze_spec
     analyze_spec -> decompose_parallel
     decompose_parallel -> decompose_claude
     decompose_parallel -> decompose_gpt
@@ -799,10 +907,12 @@ workflow SpecToSprintsYaml
     approval_gate -> apply_feedback  label: "[A] Revise plan"
     approval_gate -> skip_approval   label: "[S] Approve / Skip"
     apply_feedback -> approval_gate  restart: true
-    skip_approval -> setup_workspace
-    setup_workspace -> write_sprint_docs
+    skip_approval -> write_sprint_docs
+    yq_install_gate -> setup_workspace  label: "[S] Retry"  restart: true
+    yq_install_gate -> Exit             label: "[A] Abort"
     write_sprint_docs -> write_ledger
     write_ledger -> validate_output
     validate_output -> commit_output       when ctx.tool_stdout = valid     label: valid
     validate_output -> write_sprint_docs   when ctx.tool_stdout != valid    label: fix_validation  restart: true
+    validate_output -> write_sprint_docs   restart: true
     commit_output -> Exit

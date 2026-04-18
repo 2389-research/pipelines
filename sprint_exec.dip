@@ -319,20 +319,31 @@ workflow SprintExec
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    goal_gate: true
+    auto_status: true
     max_retries: 3
     retry_target: ImplementSprint
+    fallback_target: MarkFailed
     prompt:
       Synthesize all reviews and critiques into one verdict.
 
       After your analysis, you MUST end your response with exactly one of these lines (no other text after it):
-        OUTCOME:SUCCESS
-        OUTCOME:RETRY
-        OUTCOME:FAIL
+        STATUS: success
+        STATUS: fail
 
-      Return SUCCESS only if the sprint is truly complete — code committed, tests passing, checklist satisfied.
-      Return RETRY if rework is needed (uncommitted fixes, failing tests, missing DoD items).
-      Return FAIL if the sprint is blocked and cannot proceed.
+      Return "STATUS: success" ONLY if ALL of these are true:
+        1. All validation commands in the sprint YAML pass on committed code
+        2. Every item in the Definition of Done checklist is verifiably met
+        3. No reviewer identified material defects that remain unfixed
+        4. Code is committed to git (not just in the working tree)
+
+      Return "STATUS: fail" if ANY of these are true:
+        1. Any validation command fails
+        2. Any DoD item is not met, partially implemented, or stubbed
+        3. Any reviewer identified a material defect that was not addressed
+        4. Code changes exist only in working tree but are not committed
+        5. Tests are missing for implemented functionality
+
+      Be strict. "Tests pass" is necessary but not sufficient. Stubbed implementations, unimplemented methods, missing wiring, and partial features all mean STATUS: fail. When in doubt, fail.
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete project files. Do NOT implement fixes. Your ONLY job is to analyze and render a verdict.
 
@@ -401,7 +412,6 @@ workflow SprintExec
     CritiqueGeminiOnCodex -> CritiquesJoin
     CritiquesJoin -> ReviewAnalysis
     ReviewAnalysis -> CompleteSprint  when ctx.outcome = success  label: pass
-    ReviewAnalysis -> ImplementSprint  when ctx.outcome = retry  label: rework  restart: true
     ReviewAnalysis -> FailureSummary  when ctx.outcome = fail  label: fail
     ReviewAnalysis -> FailureSummary
     CompleteSprint -> Exit

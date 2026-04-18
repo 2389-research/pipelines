@@ -1,7 +1,7 @@
-# ABOUTME: Sprint runner loop controller using YAML ledger for sprint tracking.
-# ABOUTME: Fork of sprint_runner.dip — uses yq on .ai/ledger.yaml instead of awk on .ai/ledger.tsv.
+# ABOUTME: Autonomous sprint runner loop using YAML ledger for sprint tracking.
+# ABOUTME: Fork of sprint_runner.dip — fully autonomous with failure budget, auto-retry, and skip-on-repeated-failure.
 workflow SprintRunnerYaml
-  goal: "Execute all sprints from .ai/ledger.yaml in sequence, looping until every sprint is completed or one fails."
+  goal: "Execute all sprints from .ai/ledger.yaml autonomously in sequence, retrying failed sprints once and skipping on repeated failure, until every sprint is completed/skipped or the failure budget is exhausted."
   start: Start
   exit: Exit
 
@@ -13,7 +13,7 @@ workflow SprintRunnerYaml
   agent Start
     label: Start
     prompt:
-      Begin sprint runner pipeline. Will loop through all incomplete sprints in the ledger.
+      Begin autonomous sprint runner. Will loop through all incomplete sprints, retrying failures once, skipping on repeated failure, and stopping if the failure budget (3 total failures) is exhausted.
 
   agent Exit
     label: Exit
@@ -51,8 +51,9 @@ workflow SprintRunnerYaml
         printf 'no_ledger'
         exit 0
       fi
-      target=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped") | .id' .ai/ledger.yaml | head -1)
+      target=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml | head -1)
       if [ -z "$target" ]; then
+        rm -f .ai/runner-last-failed-sprint.txt .ai/runner-total-failures.txt
         printf 'all_done'
         exit 0
       fi
@@ -75,26 +76,44 @@ workflow SprintRunnerYaml
     command:
       set -eu
       total=$(yq '.sprints | length' .ai/ledger.yaml)
-      done=$(yq '[.sprints[] | select(.status == "completed" or .status == "skipped")] | length' .ai/ledger.yaml)
+      done=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
+      skipped=$(yq '[.sprints[] | select(.status == "skipped")] | length' .ai/ledger.yaml)
+      failed=$(yq '[.sprints[] | select(.status == "failed")] | length' .ai/ledger.yaml)
+      remaining=$((total - done - skipped - failed))
       if [ "$total" -gt 0 ]; then
-        pct=$((done * 100 / total))
+        pct=$(( (done + skipped) * 100 / total))
       else
         pct=0
       fi
-      printf 'progress-%s-of-%s-%spct' "$done" "$total" "$pct"
+      printf 'progress-%s-of-%s-%spct-failed-%s-remaining-%s' "$done" "$total" "$pct" "$failed" "$remaining"
 
-  human sprint_gate
-    label: "Continue to Next Sprint?"
-    mode: choice
-
-  tool skip_gate
-    label: "Skip Gate"
-    timeout: 5s
+  tool handle_failure
+    label: "Handle Sprint Failure"
+    timeout: 10s
     command:
       set -eu
-      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "unknown")
-      printf 'continue\t%s\t%s\n' "$target" "$now"
+      last_failed=$(cat .ai/runner-last-failed-sprint.txt 2>/dev/null || echo "none")
+      total_failures=$(cat .ai/runner-total-failures.txt 2>/dev/null || echo "0")
+      total_failures=$((total_failures + 1))
+      printf '%s' "$total_failures" > .ai/runner-total-failures.txt
+      if [ "$target" = "$last_failed" ]; then
+        now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        yq -i "(.sprints[] | select(.id == \"$target\")).status = \"failed\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
+        rm -f .ai/runner-last-failed-sprint.txt
+        if [ "$total_failures" -ge 3 ]; then
+          printf 'budget-exhausted-%s-total-failures' "$total_failures"
+        else
+          printf 'skipped-%s-moving-on' "$target"
+        fi
+      else
+        printf '%s' "$target" > .ai/runner-last-failed-sprint.txt
+        if [ "$total_failures" -ge 3 ]; then
+          printf 'budget-exhausted-%s-total-failures' "$total_failures"
+        else
+          printf 'retry-%s-attempt-2' "$target"
+        fi
+      fi
 
   agent failure_summary
     label: "Failure Summary"
@@ -102,24 +121,32 @@ workflow SprintRunnerYaml
     provider: anthropic
     reasoning_effort: high
     prompt:
-      Sprint execution failed. The subgraph sprint_exec_yaml.dip has already diagnosed the failure in detail.
+      The sprint runner has exhausted its failure budget (3 total failures across all sprints).
 
-      Read .ai/current_sprint_id.txt and .ai/ledger.yaml. Report which sprint failed and whether downstream sprints are affected. Keep it brief — the detailed diagnosis already happened inside sprint_exec_yaml.
+      Read .ai/ledger.yaml. Report:
+      1. Which sprints completed successfully
+      2. Which sprints failed and were skipped
+      3. Which sprints remain planned
+      4. Whether the project is in a usable partial state
+      5. Concrete next steps for recovery
 
   edges
     Start -> check_yq
     check_yq -> check_ledger           when ctx.tool_stdout = yq-ok         label: yq_ok
     check_yq -> yq_missing             when ctx.tool_stdout = yq-not-found  label: yq_missing
+    check_yq -> Exit
     yq_missing -> Exit
-    check_ledger -> Exit               when ctx.tool_stdout = all_done      label: all_done
+    check_ledger -> Exit               when ctx.tool_stdout = all_done       label: all_done
     check_ledger -> no_ledger_exit     when ctx.tool_stdout = no_ledger     label: no_ledger
-    check_ledger -> execute_sprint     when ctx.tool_stdout != all_done     label: next_sprint
+    check_ledger -> execute_sprint     when ctx.tool_stdout startswith next- label: next_sprint
+    check_ledger -> Exit
     no_ledger_exit -> Exit
     execute_sprint -> report_progress  when ctx.outcome = success           label: sprint_done
-    execute_sprint -> failure_summary  when ctx.outcome = fail              label: sprint_failed
-    execute_sprint -> failure_summary
-    report_progress -> sprint_gate
-    sprint_gate -> skip_gate           label: "[S] Continue"
-    sprint_gate -> Exit                label: "[A] Pause"
-    skip_gate -> check_ledger          restart: true
+    execute_sprint -> handle_failure   when ctx.outcome = fail              label: sprint_failed
+    execute_sprint -> handle_failure
+    report_progress -> check_ledger    restart: true
+    handle_failure -> check_ledger          when ctx.tool_stdout startswith retry-    label: retry_sprint    restart: true
+    handle_failure -> check_ledger          when ctx.tool_stdout startswith skipped-  label: skip_continue   restart: true
+    handle_failure -> failure_summary       when ctx.tool_stdout startswith budget-   label: budget_blown
+    handle_failure -> failure_summary
     failure_summary -> Exit
