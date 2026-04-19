@@ -63,7 +63,13 @@ workflow SprintExecYaml
     provider: gemini
     reasoning_effort: high
     prompt:
-      Read .ai/ledger.yaml. Find the first sprint entry where status is NOT "completed", "skipped", or "failed". Report that sprint ID and its title. That is the next sprint.
+      Read .ai/ledger.yaml. Find the first sprint entry where:
+        1. status is NOT "completed", "skipped", or "failed"
+        2. ALL entries listed in its depends_on array have status "completed"
+
+      If a sprint has no depends_on field or an empty depends_on array, it has no dependency requirement.
+      Skip any sprint whose dependencies are not all completed.
+      Report the matching sprint ID and its title. That is the next sprint.
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files other than reading .ai/ledger.yaml. Do NOT implement anything. Do NOT install dependencies. Your ONLY job is to identify and report which sprint is next.
 
@@ -72,7 +78,31 @@ workflow SprintExecYaml
     timeout: 30s
     command:
       set -eu
-      target=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml | head -1)
+      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
+      if [ -z "$candidates" ]; then
+        printf 'all-done'
+        exit 0
+      fi
+      target=""
+      for cid in $candidates; do
+        deps=$(yq ".sprints[] | select(.id == \"$cid\") | .depends_on[]?" .ai/ledger.yaml 2>/dev/null)
+        if [ -z "$deps" ]; then
+          target="$cid"
+          break
+        fi
+        all_met=true
+        for dep in $deps; do
+          dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
+          if [ "$dep_status" != "completed" ]; then
+            all_met=false
+            break
+          fi
+        done
+        if [ "$all_met" = "true" ]; then
+          target="$cid"
+          break
+        fi
+      done
       if [ -z "$target" ]; then
         printf 'all-done'
         exit 0
