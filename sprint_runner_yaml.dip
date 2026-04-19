@@ -50,18 +50,61 @@ workflow SprintRunnerYaml
 
   tool check_ledger
     label: "Check Ledger"
-    timeout: 10s
+    timeout: 15s
     command:
       set -eu
       if [ ! -f .ai/ledger.yaml ]; then
         printf 'no_ledger'
         exit 0
       fi
-      target=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml | head -1)
-      if [ -z "$target" ]; then
+      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
+      if [ -z "$candidates" ]; then
         rm -f .ai/runner-last-failed-sprint.txt .ai/runner-total-failures.txt
         printf 'all_done'
         exit 0
+      fi
+      target=""
+      for cid in $candidates; do
+        deps=$(yq ".sprints[] | select(.id == \"$cid\") | .depends_on[]?" .ai/ledger.yaml 2>/dev/null)
+        if [ -z "$deps" ]; then
+          target="$cid"
+          break
+        fi
+        all_met=true
+        for dep in $deps; do
+          dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
+          if [ "$dep_status" != "completed" ]; then
+            all_met=false
+            break
+          fi
+        done
+        if [ "$all_met" = "true" ]; then
+          target="$cid"
+          break
+        fi
+      done
+      if [ -z "$target" ]; then
+        # Find a failed dependency and reset it for retry
+        retry_dep=""
+        for cid in $candidates; do
+          deps=$(yq ".sprints[] | select(.id == \"$cid\") | .depends_on[]?" .ai/ledger.yaml 2>/dev/null)
+          for dep in $deps; do
+            dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
+            if [ "$dep_status" = "failed" ]; then
+              retry_dep="$dep"
+              break 2
+            fi
+          done
+        done
+        if [ -n "$retry_dep" ]; then
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          yq -i "(.sprints[] | select(.id == \"$retry_dep\")).status = \"planned\" | (.sprints[] | select(.id == \"$retry_dep\")).updated_at = \"$now\"" .ai/ledger.yaml
+          target="$retry_dep"
+        else
+          rm -f .ai/runner-last-failed-sprint.txt .ai/runner-total-failures.txt
+          printf 'deps_blocked'
+          exit 0
+        fi
       fi
       printf '%s' "$target" > .ai/current_sprint_id.txt
       printf 'next-%s' "$target"
@@ -72,6 +115,19 @@ workflow SprintRunnerYaml
       No .ai/ledger.yaml found. The sprint runner requires an existing ledger with planned sprints.
 
       To create one, run spec_to_sprints_yaml.dip with a spec file.
+
+  agent deps_blocked_exit
+    label: "Dependencies Blocked"
+    max_turns: 1
+    prompt:
+      All remaining sprints have unmet dependencies — their depends_on sprints are not completed (they are failed, skipped, or still planned).
+
+      Read .ai/ledger.yaml and report:
+      1. Which sprints completed successfully
+      2. Which sprints are blocked and what dependency they are waiting on
+      3. Concrete next steps to unblock (e.g. re-run failed sprints manually, or re-plan)
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to report the blocked state.
 
   subgraph execute_sprint
     ref: sprint_exec_yaml.dip
@@ -144,9 +200,11 @@ workflow SprintRunnerYaml
     yq_missing -> Exit
     check_ledger -> Exit               when ctx.tool_stdout = all_done       label: all_done
     check_ledger -> no_ledger_exit     when ctx.tool_stdout = no_ledger     label: no_ledger
+    check_ledger -> deps_blocked_exit  when ctx.tool_stdout = deps_blocked  label: deps_blocked
     check_ledger -> execute_sprint     when ctx.tool_stdout startswith next- label: next_sprint
     check_ledger -> Exit
     no_ledger_exit -> Exit
+    deps_blocked_exit -> Exit
     execute_sprint -> report_progress  when ctx.outcome = success           label: sprint_done
     execute_sprint -> handle_failure   when ctx.outcome = fail              label: sprint_failed
     execute_sprint -> handle_failure

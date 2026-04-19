@@ -6,6 +6,7 @@ workflow SprintExecYaml
   exit: Exit
 
   defaults
+    max_restarts: 25
     fidelity: summary:medium
 
   agent Start
