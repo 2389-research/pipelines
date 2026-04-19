@@ -78,37 +78,14 @@ workflow SprintExecYaml
     timeout: 30s
     command:
       set -eu
-      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
-      if [ -z "$candidates" ]; then
-        printf 'all-done'
-        exit 0
-      fi
-      target=""
-      for cid in $candidates; do
-        deps=$(yq ".sprints[] | select(.id == \"$cid\") | .depends_on[]?" .ai/ledger.yaml 2>/dev/null)
-        if [ -z "$deps" ]; then
-          target="$cid"
-          break
+      if [ -f .ai/current_sprint_id.txt ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        if [ -n "$target" ]; then
+          printf 'current-%s' "$target"
+          exit 0
         fi
-        all_met=true
-        for dep in $deps; do
-          dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
-          if [ "$dep_status" != "completed" ]; then
-            all_met=false
-            break
-          fi
-        done
-        if [ "$all_met" = "true" ]; then
-          target="$cid"
-          break
-        fi
-      done
-      if [ -z "$target" ]; then
-        printf 'all-done'
-        exit 0
       fi
-      printf '%s' "$target" > .ai/current_sprint_id.txt
-      printf 'current-%s' "$target"
+      printf 'all-done'
 
   agent ReadSprint
     label: "Read Sprint"
@@ -338,6 +315,46 @@ workflow SprintExecYaml
       6. Report the commit hash in your summary
 
       HARD CONSTRAINT: Do NOT read large generated files. Do NOT explore the full project tree. Stage specific files, commit, done.
+
+  tool ValidateDoD
+    label: "Validate DoD"
+    timeout: 60s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sf" ]; then
+        printf 'dod-pass'
+        exit 0
+      fi
+      missing=""
+      for artifact in $(yq '.artifacts.creates[].path' "$sf" 2>/dev/null); do
+        if [ ! -e "$artifact" ]; then
+          missing="${missing} ${artifact}"
+        fi
+      done
+      if [ -n "$missing" ]; then
+        printf 'dod-fail-missing:%s' "$missing"
+        exit 0
+      fi
+      fail_cmd=""
+      for idx in $(yq '.validation.commands | length' "$sf" 2>/dev/null | xargs seq 0 2>/dev/null | head -20); do
+        cmd=$(yq ".validation.commands[$idx].cmd" "$sf" 2>/dev/null)
+        expect=$(yq ".validation.commands[$idx].expect" "$sf" 2>/dev/null)
+        if [ "$cmd" = "null" ] || [ -z "$cmd" ]; then continue; fi
+        case "$cmd" in *curl*) continue ;; esac
+        if [ "$expect" = "exit_0" ]; then
+          if ! eval "$cmd" >/dev/null 2>&1; then
+            fail_cmd="$cmd"
+            break
+          fi
+        fi
+      done
+      if [ -n "$fail_cmd" ]; then
+        printf 'dod-fail-cmd:%s' "$fail_cmd"
+        exit 0
+      fi
+      printf 'dod-pass'
 
   tool CompleteSprint
     label: "Complete Sprint"
@@ -588,7 +605,7 @@ workflow SprintExecYaml
     ValidateBuild -> ImplementSprint   when ctx.outcome = fail     label: fix_validation  restart: true
     ValidateBuild -> MarkFailed
     CommitSprintWork -> CheckBootstrapSkip
-    CheckBootstrapSkip -> CompleteSprint   when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
+    CheckBootstrapSkip -> ValidateDoD      when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
     CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
     CheckBootstrapSkip -> ReviewParallel
     ReviewParallel -> ReviewClaude
@@ -611,9 +628,12 @@ workflow SprintExecYaml
     CritiqueGeminiOnClaude -> CritiquesJoin
     CritiqueGeminiOnCodex -> CritiquesJoin
     CritiquesJoin -> ReviewAnalysis
-    ReviewAnalysis -> CompleteSprint    when ctx.outcome = success  label: pass
+    ReviewAnalysis -> ValidateDoD       when ctx.outcome = success  label: pass
     ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
     ReviewAnalysis -> MarkFailed
+    ValidateDoD -> CompleteSprint       when ctx.tool_stdout = dod-pass           label: dod_verified
+    ValidateDoD -> ImplementSprint      when ctx.tool_stdout starts with dod-fail label: dod_rework  restart: true
+    ValidateDoD -> CompleteSprint
     CompleteSprint -> Exit              when ctx.outcome = success  label: done
     CompleteSprint -> MarkFailed         when ctx.outcome = fail     label: complete_failed
     CompleteSprint -> Exit
