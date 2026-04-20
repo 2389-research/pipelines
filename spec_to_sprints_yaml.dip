@@ -198,9 +198,10 @@ workflow SpecToSprintsYaml
       - Sprints should be roughly equal in effort where possible
       - Earlier sprints should establish foundations that later sprints build on
       - Every sprint must be independently verifiable (has its own validation)
-      - Prefer fewer, well-scoped sprints over many tiny ones
-      - Target 8-20 sprints for a typical project
+      - Prefer well-scoped sprints over kitchen-sink sprints. Each sprint should have ONE clear theme.
+      - Target 12-20 sprints for a typical project. Fewer than 12 usually means sprints are too large.
       - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - SPRINT SIZE LIMIT: No sprint should have more than 10 DoD items or touch more than 3 subsystems. If it does, split it.
       - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
       - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
       - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
@@ -243,9 +244,10 @@ workflow SpecToSprintsYaml
       - Sprints should be roughly equal in effort where possible
       - Earlier sprints should establish foundations that later sprints build on
       - Every sprint must be independently verifiable (has its own validation)
-      - Prefer fewer, well-scoped sprints over many tiny ones
-      - Target 8-20 sprints for a typical project
+      - Prefer well-scoped sprints over kitchen-sink sprints. Each sprint should have ONE clear theme.
+      - Target 12-20 sprints for a typical project. Fewer than 12 usually means sprints are too large.
       - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - SPRINT SIZE LIMIT: No sprint should have more than 10 DoD items or touch more than 3 subsystems. If it does, split it.
       - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
       - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
       - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
@@ -288,9 +290,10 @@ workflow SpecToSprintsYaml
       - Sprints should be roughly equal in effort where possible
       - Earlier sprints should establish foundations that later sprints build on
       - Every sprint must be independently verifiable (has its own validation)
-      - Prefer fewer, well-scoped sprints over many tiny ones
-      - Target 8-20 sprints for a typical project
+      - Prefer well-scoped sprints over kitchen-sink sprints. Each sprint should have ONE clear theme.
+      - Target 12-20 sprints for a typical project. Fewer than 12 usually means sprints are too large.
       - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - SPRINT SIZE LIMIT: No sprint should have more than 10 DoD items or touch more than 3 subsystems. If it does, split it.
       - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
       - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
       - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
@@ -318,7 +321,7 @@ workflow SpecToSprintsYaml
       Review the GPT decomposition for:
       1. Missed functional requirements — check every FR in spec_analysis against the decomposition
       2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
-      3. Sprints that are too large (should be split) or too small (should be merged)
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
       4. Unclear or unverifiable DoD items
       5. Missing validation criteria
       6. Coverage gaps against the spec acceptance criteria
@@ -346,7 +349,7 @@ workflow SpecToSprintsYaml
       Review the Gemini decomposition for:
       1. Missed functional requirements — check every FR in spec_analysis against the decomposition
       2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
-      3. Sprints that are too large (should be split) or too small (should be merged)
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
       4. Unclear or unverifiable DoD items
       5. Missing validation criteria
       6. Coverage gaps against the spec acceptance criteria
@@ -374,7 +377,7 @@ workflow SpecToSprintsYaml
       Review the Claude decomposition for:
       1. Missed functional requirements — check every FR in spec_analysis against the decomposition
       2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
-      3. Sprints that are too large (should be split) or too small (should be merged)
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
       4. Unclear or unverifiable DoD items
       5. Missing validation criteria
       6. Coverage gaps against the spec acceptance criteria
@@ -402,7 +405,7 @@ workflow SpecToSprintsYaml
       Review the Gemini decomposition for:
       1. Missed functional requirements — check every FR in spec_analysis against the decomposition
       2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
-      3. Sprints that are too large (should be split) or too small (should be merged)
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
       4. Unclear or unverifiable DoD items
       5. Missing validation criteria
       6. Coverage gaps against the spec acceptance criteria
@@ -430,7 +433,7 @@ workflow SpecToSprintsYaml
       Review the Claude decomposition for:
       1. Missed functional requirements — check every FR in spec_analysis against the decomposition
       2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
-      3. Sprints that are too large (should be split) or too small (should be merged)
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
       4. Unclear or unverifiable DoD items
       5. Missing validation criteria
       6. Coverage gaps against the spec acceptance criteria
@@ -458,7 +461,7 @@ workflow SpecToSprintsYaml
       Review the GPT decomposition for:
       1. Missed functional requirements — check every FR in spec_analysis against the decomposition
       2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
-      3. Sprints that are too large (should be split) or too small (should be merged)
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
       4. Unclear or unverifiable DoD items
       5. Missing validation criteria
       6. Coverage gaps against the spec acceptance criteria
@@ -498,7 +501,8 @@ workflow SpecToSprintsYaml
 
       1. Compare the three decompositions side by side
       2. Incorporate valid critique findings — fix ordering errors, fill coverage gaps, adjust sprint sizes
-      3. Produce a single merged sprint list
+      3. SPLIT ANY KITCHEN-SINK SPRINT: If a sprint has >10 DoD items, touches >3 subsystems, or mixes unrelated concerns (e.g., "Polish, Dashboard & Migration"), it MUST be split into separate sprints with clear single themes
+      4. Produce a single merged sprint list
 
       ## Bootstrap Sprint Generation
 
@@ -839,6 +843,14 @@ workflow SpecToSprintsYaml
       if [ "$bootstrap_count" -lt 2 ]; then
         errors="${errors}insufficient-bootstrap-sprints "
       fi
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        dod_count=$(yq '.dod | length' "$f" 2>/dev/null || echo 0)
+        if [ "$dod_count" -gt 15 ]; then
+          errors="${errors}oversized-sprint-${base}-${dod_count}-dod-items "
+        fi
+      done
       if [ -n "$errors" ]; then
         printf 'invalid-%s' "$errors"
         exit 0
