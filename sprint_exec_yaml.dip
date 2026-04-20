@@ -57,21 +57,50 @@ workflow SprintExecYaml
 
       After installing, re-run the pipeline.
 
-  agent FindNextSprint
+  tool FindNextSprint
     label: "Find Next Sprint"
-    model: gemini-3-flash-preview
-    provider: gemini
-    reasoning_effort: high
-    prompt:
-      Read .ai/ledger.yaml. Find the first sprint entry where:
-        1. status is NOT "completed", "skipped", or "failed"
-        2. ALL entries listed in its depends_on array have status "completed"
-
-      If a sprint has no depends_on field or an empty depends_on array, it has no dependency requirement.
-      Skip any sprint whose dependencies are not all completed.
-      Report the matching sprint ID and its title. That is the next sprint.
-
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files other than reading .ai/ledger.yaml. Do NOT implement anything. Do NOT install dependencies. Your ONLY job is to identify and report which sprint is next.
+    timeout: 15s
+    command:
+      set -eu
+      # If the runner already wrote a target, trust it
+      if [ -f .ai/current_sprint_id.txt ]; then
+        existing=$(cat .ai/current_sprint_id.txt)
+        if [ -n "$existing" ]; then
+          status=$(yq ".sprints[] | select(.id == \"$existing\") | .status" .ai/ledger.yaml 2>/dev/null)
+          if [ "$status" != "completed" ] && [ "$status" != "skipped" ]; then
+            printf 'found-%s' "$existing"
+            exit 0
+          fi
+        fi
+      fi
+      # Otherwise find the first eligible sprint with all deps met
+      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
+      if [ -z "$candidates" ]; then
+        printf 'all-done'
+        exit 0
+      fi
+      for cid in $candidates; do
+        deps=$(yq ".sprints[] | select(.id == \"$cid\") | .depends_on[]?" .ai/ledger.yaml 2>/dev/null)
+        if [ -z "$deps" ]; then
+          printf '%s' "$cid" > .ai/current_sprint_id.txt
+          printf 'found-%s' "$cid"
+          exit 0
+        fi
+        all_met=true
+        for dep in $deps; do
+          dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
+          if [ "$dep_status" != "completed" ]; then
+            all_met=false
+            break
+          fi
+        done
+        if [ "$all_met" = "true" ]; then
+          printf '%s' "$cid" > .ai/current_sprint_id.txt
+          printf 'found-%s' "$cid"
+          exit 0
+        fi
+      done
+      printf 'deps-blocked'
 
   tool SetCurrentSprint
     label: "Set Current Sprint"
@@ -125,6 +154,12 @@ workflow SprintExecYaml
     command:
       set -eu
       target=$(cat .ai/current_sprint_id.txt)
+      # Guard: never downgrade a completed sprint back to in_progress
+      current_status=$(yq ".sprints[] | select(.id == \"$target\") | .status" .ai/ledger.yaml 2>/dev/null)
+      if [ "$current_status" = "completed" ]; then
+        printf 'already-completed-%s' "$target"
+        exit 0
+      fi
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       attempts=$(yq ".sprints[] | select(.id == \"$target\") | (.attempts // 0)" .ai/ledger.yaml)
       attempts=$((attempts + 1))
@@ -578,12 +613,16 @@ workflow SprintExecYaml
     CheckYq -> YqMissing               when ctx.tool_stdout = yq-not-found  label: yq_missing
     CheckYq -> YqMissing
     YqMissing -> Exit
-    FindNextSprint -> SetCurrentSprint
+    FindNextSprint -> SetCurrentSprint  when ctx.tool_stdout startswith found-  label: sprint_found
+    FindNextSprint -> Exit             when ctx.tool_stdout = all-done         label: all_done
+    FindNextSprint -> Exit             when ctx.tool_stdout = deps-blocked     label: deps_blocked
+    FindNextSprint -> Exit
     SetCurrentSprint -> ReadSprint  when ctx.tool_stdout startswith current-  label: sprint_found
     SetCurrentSprint -> Exit        when ctx.tool_stdout = all-done           label: all_done
     SetCurrentSprint -> Exit
     ReadSprint -> CheckBootstrap
     CheckBootstrap -> MarkInProgress
+    MarkInProgress -> Exit             when ctx.tool_stdout startswith already-completed  label: skip_completed
     MarkInProgress -> SnapshotLedger
     SnapshotLedger -> ImplementSprint
     ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
@@ -632,7 +671,7 @@ workflow SprintExecYaml
     ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
     ReviewAnalysis -> MarkFailed
     ValidateDoD -> CompleteSprint       when ctx.tool_stdout = dod-pass           label: dod_verified
-    ValidateDoD -> ImplementSprint      when ctx.tool_stdout starts with dod-fail label: dod_rework  restart: true
+    ValidateDoD -> ImplementSprint      when ctx.tool_stdout startswith dod-fail label: dod_rework  restart: true
     ValidateDoD -> CompleteSprint
     CompleteSprint -> Exit              when ctx.outcome = success  label: done
     CompleteSprint -> MarkFailed         when ctx.outcome = fail     label: complete_failed
