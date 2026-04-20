@@ -342,12 +342,14 @@ workflow SprintExecYaml
 
       Read .ai/current_sprint_id.txt, then read the sprint YAML at .ai/sprints/SPRINT-<id>.yaml to find the expected files under `artifacts.creates` and `artifacts.modifies`.
 
-      1. Stage ONLY the files listed in the sprint YAML artifacts, plus any test files or config files they depend on
-      2. Do NOT run `git add -A` or `git add .` — this will stage build artifacts and waste your turn budget
-      3. Do NOT read .next/, node_modules/, dist/, build/, or any generated directory
+      1. First, stage the files listed in the sprint YAML artifacts, plus any test files or config files they depend on
+      2. Then, run `git status --short` and stage ALL remaining modified tracked files (lines starting with " M"). The review gate checks committed code — anything left uncommitted will cause a review failure.
+      3. Do NOT stage untracked files in .next/, node_modules/, dist/, build/, .tracker/, or other generated directories
       4. If there are no staged/unstaged changes, report that no commit was needed
       5. Write a concise conventional commit message
       6. Report the commit hash in your summary
+
+      IMPORTANT: The review gate will fail if ANY implementation code remains uncommitted. It is critical to commit all modified source files, not just those listed in the artifact spec. The artifact list is a minimum, not an exhaustive list.
 
       HARD CONSTRAINT: Do NOT read large generated files. Do NOT explore the full project tree. Stage specific files, commit, done.
 
