@@ -557,11 +557,21 @@ workflow SpecToSprintsYaml
 
       **Complexity:** low / medium / high
 
+      ## Capstone Sprint (MANDATORY)
+
+      The LAST sprint in the plan MUST be a capstone sprint titled "Integration Verification & Launch Readiness".
+      - Its `depends_on` MUST list every other sprint ID in the plan (bootstrap and feature)
+      - Scope: full integration test, end-to-end smoke test, build verification, no new features
+      - DoD: all build/lint/test commands pass, app starts and serves traffic, no regressions
+      - Complexity: low
+      - This ensures the runner cannot declare success while any sprint remains failed or skipped
+
       ## Rules
       - Every FR from .ai/spec_analysis.md must appear in at least one sprint
       - No dependency cycles
       - Sprint IDs are sequential zero-padded 3-digit (000, 001, ...)
-      - Bootstrap sprints come first, feature sprints follow
+      - Bootstrap sprints come first, feature sprints follow, capstone sprint is always last
+      - The capstone sprint must depend on ALL other sprints — no orphans allowed
       - Create .ai directory if it does not exist
 
   agent present_plan
@@ -851,6 +861,14 @@ workflow SpecToSprintsYaml
           errors="${errors}oversized-sprint-${base}-${dod_count}-dod-items "
         fi
       done
+      # Capstone check: last sprint must depend on all other sprints
+      all_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
+      last_id=$(yq '.sprints[-1].id' .ai/ledger.yaml)
+      other_ids=$(printf '%s' "$all_ids" | grep -v "^${last_id}$" | sort)
+      capstone_deps=$(yq ".sprints[-1].depends_on[]" .ai/ledger.yaml 2>/dev/null | sort)
+      if [ "$other_ids" != "$capstone_deps" ]; then
+        errors="${errors}capstone-missing-deps "
+      fi
       if [ -n "$errors" ]; then
         printf 'invalid-%s' "$errors"
         exit 0
