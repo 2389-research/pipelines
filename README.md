@@ -39,6 +39,8 @@ You will need API keys for the LLM providers used in each pipeline (Anthropic, O
 | `sprint_exec-cheap.dip` | Budget variant of sprint execution using smaller models (Haiku/Nano/Flash-Lite) with escalation. |
 | `sprint_runner-cheap.dip` | Budget variant of the sprint runner with the same loop-and-escalation pattern. |
 | `megaplan.dip` | Creates a sprint plan using multi-model orientation, drafting, critique, and merge stages. |
+| `sprint_exec_local_gen_qwen.dip` | Local-first sprint execution using **qwen3.6:35b-a3b-q8_0** via Ollama for both generation and fixing. Language auto-detected (Go, Node.js, Python). Escalates to gpt-5.4 cloud only if local model exhausts 4 fix attempts. Happy path costs $0.00. |
+| `sprint_exec_local_gen_gemma.dip` | Same local-first pipeline using **gemma4:26b** via Ollama. Faster generation than qwen (~2x), slightly noisier output. Same language detection and cloud escalation. |
 
 ### Pipeline Generation
 
