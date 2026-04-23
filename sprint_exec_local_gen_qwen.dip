@@ -1,5 +1,5 @@
-workflow SprintLocalGenGo
-  goal: "gemma4:26b generates and fixes Go files locally via Ollama. Escalates to gpt-5.4 only if local model exhausts attempts."
+workflow SprintLocalGen
+  goal: "qwen3.6:35b-a3b-q8_0 generates and fixes source files locally via Ollama. Escalates to gpt-5.4 only if local model exhausts attempts. Language auto-detected from project files."
   start: Setup
   exit: Done
 
@@ -9,7 +9,7 @@ workflow SprintLocalGenGo
     max_restarts: 12
 
   tool Setup
-    label: "Install deps (Go)"
+    label: "Install deps"
     timeout: 120s
     command:
       set -eu
@@ -17,13 +17,16 @@ workflow SprintLocalGenGo
       if [ -z "$sprint" ]; then echo "no sprint doc found"; exit 1; fi
       rm -f .ai/local_fix_attempts .ai/local_exhausted
       if [ -f go.mod ]; then
-        go get modernc.org/sqlite@v1.34.5 2>/dev/null || true
         go mod tidy 2>/dev/null || true
+      elif [ -f package.json ]; then
+        npm install 2>/dev/null || true
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        uv sync 2>/dev/null || true
       fi
       printf 'setup-done'
 
   tool Generate
-    label: "Generate all files (gemma4:26b, one Ollama call per file)"
+    label: "Generate all files (qwen3.6:35b-a3b-q8_0, one Ollama call per file)"
     timeout: 600s
     command:
       set -e
@@ -44,7 +47,7 @@ workflow SprintLocalGenGo
             --arg sys "${SYS}" \
             --arg msg "${user_msg}" \
             --argjson tokens "${max_tokens}" \
-            '{model:"gemma4:26b",think:false,stream:false,
+            '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
               messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
               options:{temperature:1.0,top_p:0.95,top_k:64,num_ctx:32768,num_predict:$tokens}}')" \
           | jq -r '.message.content' \
@@ -66,7 +69,7 @@ workflow SprintLocalGenGo
             --arg sys "${SYS}" \
             --arg msg "${user_msg}" \
             --argjson tokens "${max_tokens}" \
-            '{model:"gemma4:26b",think:false,stream:false,
+            '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
               messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
               options:{temperature:0.2,top_p:0.95,top_k:64,num_ctx:32768,num_predict:$tokens}}')" \
           | jq -r '.message.content' \
@@ -106,7 +109,7 @@ workflow SprintLocalGenGo
         done
       fi
 
-      go mod tidy 2>/dev/null || true
+      if [ -f go.mod ]; then go mod tidy 2>/dev/null || true; fi
       printf 'gen-done'
 
   tool RunTests
@@ -115,8 +118,19 @@ workflow SprintLocalGenGo
     command:
       set +e
       mkdir -p .ai
-      go test ./... 2>&1 | tee .ai/last_test_output.txt
-      code=${PIPESTATUS[0]}
+      if [ -f go.mod ]; then
+        go test ./... 2>&1 | tee .ai/last_test_output.txt
+        code=${PIPESTATUS[0]}
+      elif [ -f package.json ]; then
+        npm test 2>&1 | tee .ai/last_test_output.txt
+        code=${PIPESTATUS[0]}
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        uv run pytest 2>&1 | tee .ai/last_test_output.txt
+        code=${PIPESTATUS[0]}
+      else
+        echo "no test runner detected" | tee .ai/last_test_output.txt
+        code=1
+      fi
       if [ $code -eq 0 ]; then
         printf 'tests-pass'
       elif [ -f .ai/local_exhausted ]; then
@@ -126,7 +140,7 @@ workflow SprintLocalGenGo
       fi
 
   tool LocalFix
-    label: "Local fix (gemma4:26b)"
+    label: "Local fix (qwen3.6:35b-a3b-q8_0)"
     timeout: 300s
     command:
       set +e
@@ -147,7 +161,15 @@ workflow SprintLocalGenGo
         exit 0
       fi
 
-      FILE_LIST=$(find . -name "*.go" -not -path "*/vendor/*" 2>/dev/null | sort)
+      if [ -f go.mod ]; then
+        FILE_LIST=$(find . -name "*.go" -not -path "*/vendor/*" 2>/dev/null | sort)
+      elif [ -f package.json ]; then
+        FILE_LIST=$(find . \( -name "*.ts" -o -name "*.js" \) -not -path "*/node_modules/*" 2>/dev/null | sort)
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        FILE_LIST=$(find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/.venv/*" 2>/dev/null | sort)
+      else
+        FILE_LIST=$(find . -type f -not -path "*/.git/*" -not -path "*/.ai/*" 2>/dev/null | sort)
+      fi
 
       WHICH_FILE=$(curl -sf "$OLLAMA" \
         -H 'Content-Type: application/json' \
@@ -155,7 +177,7 @@ workflow SprintLocalGenGo
           --arg sprint "$SPRINT" \
           --arg test_out "$TEST_OUT" \
           --arg files "$FILE_LIST" \
-          '{model:"gemma4:26b",think:false,stream:false,
+          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
             messages:[
               {role:"system",content:"You are a code debugger. Output ONLY the relative file path of the source file that needs to be fixed. One path only. No explanation, no punctuation."},
               {role:"user",content:("TEST FAILURE:\n\n"+$test_out+"\n\nAVAILABLE SOURCE FILES:\n"+$files+"\n\nSPRINT SPEC:\n\n"+$sprint+"\n\nWhich source file needs to be fixed? Output only the relative file path.")}
@@ -179,7 +201,7 @@ workflow SprintLocalGenGo
           --arg test_out "$TEST_OUT" \
           --arg file "$FILE_CONTENT" \
           --arg path "$WHICH_FILE" \
-          '{model:"gemma4:26b",think:false,stream:false,
+          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
             messages:[
               {role:"system",content:"You are a code fixer. Output ONLY the corrected file content. No explanation, no markdown fences, no commentary."},
               {role:"user",content:("The file "+$path+" has a bug causing test failures:\n\n"+$test_out+"\n\n---\nSPRINT SPEC:\n\n"+$sprint+"\n\n---\nCURRENT FILE:\n\n"+$file+"\n\nOutput the corrected "+$path+" only.")}
@@ -225,13 +247,27 @@ workflow SprintLocalGenGo
         fi
       done < "$sprint"
 
-      sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
-        | grep -cE "^func Test" 2>/dev/null || echo 0)
-      actual_tests=$(grep -rE "^func Test" . --include="*.go" 2>/dev/null | wc -l | tr -d ' ')
+      if [ -f go.mod ]; then
+        sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
+          | grep -cE "^func Test" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^func Test" . --include="*.go" 2>/dev/null | wc -l | tr -d ' ')
+      elif [ -f package.json ]; then
+        sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
+          | grep -cE "^\s*(describe|it|test)\(" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^\s*(describe|it|test)\(" . --include="*.ts" --include="*.js" 2>/dev/null | wc -l | tr -d ' ')
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
+          | grep -cE "^def test_" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^def test_" . --include="*.py" 2>/dev/null | wc -l | tr -d ' ')
+      else
+        sprint_tests=0
+        actual_tests=0
+      fi
+
       if [ -z "$actual_tests" ]; then actual_tests=0; fi
       echo "test count: sprint=$sprint_tests actual=$actual_tests" | tee -a .ai/last_audit_output.txt
       if [ "$actual_tests" -lt "$sprint_tests" ]; then
-        echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests in .go files" \
+        echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests" \
           | tee -a .ai/last_audit_output.txt
         fail=1
       fi
@@ -250,7 +286,7 @@ workflow SprintLocalGenGo
     prompt:
       You are working in `run.working_dir`.
 
-      A local model (gemma4:26b) generated sprint files and attempted fixes but could
+      A local model (qwen3.6:35b-a3b-q8_0) generated sprint files and attempted fixes but could
       not converge. Tests are still failing or the audit found issues.
       Make exactly ONE targeted fix this session, then stop. The pipeline re-runs tests
       and calls you again if more fixes are needed.
@@ -263,7 +299,7 @@ workflow SprintLocalGenGo
       3. edit — fix every instance of that error class in one edit. Stop.
 
       Rules:
-      - Fix ONE error class per session. Do NOT run go test — the pipeline does that.
+      - Fix ONE error class per session. Do NOT run tests — the pipeline does that.
       - When the same error appears in multiple places, fix ALL instances in one edit.
       - Forbidden bash: NO sed -i, perl -pi, awk -i, python/node one-liners that write files.
       - Use the edit tool for ALL file modifications.
