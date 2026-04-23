@@ -53,6 +53,7 @@ workflow SprintLocalGen
           | jq -r '.message.content' \
           > "${filepath}"
         echo "wrote ${filepath} ($(wc -c < "${filepath}") bytes)"
+        validate_and_retry "${filepath}"
       }
 
       patch_file() {
@@ -76,6 +77,58 @@ workflow SprintLocalGen
           | sed '/^```/d' \
           > "${filepath}"
         echo "patched ${filepath} ($(wc -c < "${filepath}") bytes)"
+        validate_and_retry "${filepath}"
+      }
+
+      syntax_check() {
+        local fp="$1"
+        case "$fp" in
+          *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
+          *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
+          *.ts|*.js) node --check "$fp" 2>&1 | head -5 ;;
+        esac
+      }
+
+      validate_and_retry() {
+        local fp="$1"
+        local attempt=0
+        while [ $attempt -lt 2 ]; do
+          local err
+          err=$(syntax_check "$fp")
+          [ -z "$err" ] && return 0
+          attempt=$((attempt + 1))
+          echo "syntax error in $fp (retry $attempt/2): $err"
+          local line_num
+          line_num=$(echo "$err" | grep -oE ':[0-9]+:' | head -1 | tr -d ':')
+          local context=""
+          if [ -n "$line_num" ]; then
+            local start=$((line_num - 3))
+            [ "$start" -lt 1 ] && start=1
+            local end=$((line_num + 3))
+            context=$(awk "NR>=$start && NR<=$end {printf \"%d: %s\n\", NR, \$0}" "$fp")
+          fi
+          local current
+          current=$(cat "$fp")
+          local fixed
+          fixed=$(curl -sf "${OLLAMA}" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg file "$current" \
+              --arg err "$err" \
+              --arg ctx "$context" \
+              --arg path "$fp" \
+              '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+                messages:[
+                  {role:"system",content:"Output ONLY the corrected file content. No markdown fences. No explanation."},
+                  {role:"user",content:("File "+$path+" has a syntax error:\n\n"+$err+"\n\nContext around error:\n"+$ctx+"\n\nFull file:\n"+$file+"\n\nOutput the corrected file only.")}
+                ],
+                options:{temperature:0.1,num_ctx:32768}}')" \
+            | jq -r '.message.content' | sed '/^```/d')
+          [ -z "$fixed" ] && return 0
+          echo "$fixed" > "$fp"
+          echo "syntax-retry $attempt: rewrote $fp"
+        done
+        echo "warning: $fp may still have syntax errors after 2 retries"
       }
 
       # New files — generate only if file does not exist
@@ -149,6 +202,57 @@ workflow SprintLocalGen
       SPRINT=$(cat .ai/sprints/SPRINT-*.md)
       TEST_OUT=$(cat .ai/last_test_output.txt)
 
+      syntax_check() {
+        local fp="$1"
+        case "$fp" in
+          *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
+          *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
+          *.ts|*.js) node --check "$fp" 2>&1 | head -5 ;;
+        esac
+      }
+
+      validate_and_retry() {
+        local fp="$1"
+        local attempt=0
+        while [ $attempt -lt 2 ]; do
+          local err
+          err=$(syntax_check "$fp")
+          [ -z "$err" ] && return 0
+          attempt=$((attempt + 1))
+          echo "syntax error in $fp (retry $attempt/2): $err"
+          local line_num
+          line_num=$(echo "$err" | grep -oE ':[0-9]+:' | head -1 | tr -d ':')
+          local context=""
+          if [ -n "$line_num" ]; then
+            local start=$((line_num - 3))
+            [ "$start" -lt 1 ] && start=1
+            local end=$((line_num + 3))
+            context=$(awk "NR>=$start && NR<=$end {printf \"%d: %s\n\", NR, \$0}" "$fp")
+          fi
+          local current
+          current=$(cat "$fp")
+          local fixed
+          fixed=$(curl -sf "$OLLAMA" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg file "$current" \
+              --arg err "$err" \
+              --arg ctx "$context" \
+              --arg path "$fp" \
+              '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+                messages:[
+                  {role:"system",content:"Output ONLY the corrected file content. No markdown fences. No explanation."},
+                  {role:"user",content:("File "+$path+" has a syntax error:\n\n"+$err+"\n\nContext around error:\n"+$ctx+"\n\nFull file:\n"+$file+"\n\nOutput the corrected file only.")}
+                ],
+                options:{temperature:0.1,num_ctx:32768}}')" \
+            | jq -r '.message.content' | sed '/^```/d')
+          [ -z "$fixed" ] && return 0
+          echo "$fixed" > "$fp"
+          echo "syntax-retry $attempt: rewrote $fp"
+        done
+        echo "warning: $fp may still have syntax errors after 2 retries"
+      }
+
       attempts=$(cat .ai/local_fix_attempts 2>/dev/null || echo 0)
       attempts=$((attempts + 1))
       echo $attempts > .ai/local_fix_attempts
@@ -217,6 +321,7 @@ workflow SprintLocalGen
 
       echo "$FIXED" | sed '/^```/d' > "$WHICH_FILE"
       echo "wrote fix to $WHICH_FILE ($(wc -l < "$WHICH_FILE") lines)"
+      validate_and_retry "$WHICH_FILE"
       printf 'local-fixed'
 
   tool Audit
