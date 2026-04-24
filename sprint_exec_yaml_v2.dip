@@ -144,6 +144,56 @@ workflow SprintExecYamlV2
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT implement anything. Do NOT install dependencies. Your ONLY job is to read and summarize the sprint documents.
 
+  agent PlanManager
+    label: "Plan Manager"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Plan Manager for sprint execution. Your job is to assess whether the current sprint is ready to execute and flag risks for the implementation agent.
+
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read:
+      1. .ai/sprints/SPRINT-<id>.yaml — the structured contract
+      2. .ai/sprints/SPRINT-<id>.md — the narrative description
+      3. .ai/managers/recovery-journal.md — check if RecoveryManager flagged risks for sprints related to this one (scan dependency chain)
+      4. .ai/ledger.yaml — check the last 3-5 sprint outcomes for patterns (repeated failures, skipped deps)
+
+      ## Assessment
+
+      For each item in entry_preconditions.files_must_exist, verify the file actually exists on disk. If any are missing, this is a HOLD.
+
+      Check if any sprint in depends_on has status "failed" or "skipped" in the ledger — if so, this sprint may be building on an unstable foundation. Flag it.
+
+      Check RecoveryManager's journal for entries on dependency sprints — did any of them fail with "dependency failure" root cause? If so, the gaps may cascade into this sprint.
+
+      ## Output
+
+      Write a plan brief to .ai/sprints/SPRINT-<id>-plan-brief.md with:
+      - Go/Hold recommendation
+      - Risk flags (specific, citing sprint IDs and file paths)
+      - Dependency health assessment
+      - Hints for ImplementSprint (what to watch out for)
+
+      Then append a section to .ai/managers/plan-journal.md using this format:
+
+      ## Sprint <id> — <title>
+      **Date:** <current ISO timestamp>
+      **Recommendation:** GO | HOLD
+      **Risk flags:** <list or "None">
+      **Dependency check:** <which preconditions verified>
+      **Recovery context:** <relevant RecoveryManager findings or "None">
+      **Notes:** <free-form observations>
+
+      After your analysis, end your response with exactly one of:
+        STATUS: success
+        STATUS: fail
+
+      Return STATUS: success if the sprint should proceed (GO).
+      Return STATUS: fail if the sprint should be deferred (HOLD).
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT implement anything. Do NOT modify the sprint YAML, ledger, or any source files. Your ONLY job is to assess readiness and write the brief and journal entry.
+
   tool CheckBootstrap
     label: "Check Bootstrap"
     timeout: 5s
@@ -637,7 +687,10 @@ workflow SprintExecYamlV2
     SetCurrentSprint -> ReadSprint  when ctx.tool_stdout startswith current-  label: sprint_found
     SetCurrentSprint -> Exit        when ctx.tool_stdout = all-done           label: all_done
     SetCurrentSprint -> Exit
-    ReadSprint -> CheckBootstrap
+    ReadSprint -> PlanManager
+    PlanManager -> CheckBootstrap  when ctx.outcome = success  label: go
+    PlanManager -> MarkFailed      when ctx.outcome = fail     label: hold
+    PlanManager -> MarkFailed
     CheckBootstrap -> MarkInProgress
     MarkInProgress -> Exit             when ctx.tool_stdout startswith already-completed  label: skip_completed
     MarkInProgress -> SnapshotLedger
