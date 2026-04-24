@@ -574,6 +574,51 @@ workflow SpecToSprintsYamlV2
       - The capstone sprint must depend on ALL other sprints — no orphans allowed
       - Create .ai directory if it does not exist
 
+  agent DecompositionManager
+    label: "Decomposition Manager"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan, spec_analysis
+    auto_status: true
+    prompt:
+      You are the Decomposition Manager. Your job is to review the merged sprint plan for quality issues before it goes to human approval.
+
+      Read .ai/sprint_plan.md and .ai/spec_analysis.md.
+
+      ## Checks
+
+      Perform ALL of the following checks:
+
+      1. **Sizing audit:** Any sprint with >10 DoD items or referencing >3 subsystems? List each violation and how to split.
+      2. **Dependency cycle detection:** Trace the depends_on graph. If any cycle exists, list the cycle.
+      3. **FR coverage matrix:** For every FR in spec_analysis.md, find which sprint covers it. List any orphaned FRs.
+      4. **Scope fence quality:** Each sprint should have meaningful off_limits constraints, not just boilerplate. Flag sprints with vague or missing scope fences.
+      5. **Validation command quality:** Are all validation commands concrete and runnable? Flag any pseudocode or "verify manually" items.
+      6. **Risk sequencing:** Are high-complexity sprints placed after their required foundations? Flag any that front-load risk without dependencies.
+      7. **Capstone check:** The last sprint must depend on ALL other sprint IDs. Flag if any are missing.
+
+      ## Output
+
+      Write findings to .ai/drafts/decomposition_review.md with:
+      - Pass/fail per check
+      - Specific violations with sprint IDs
+      - Recommended fixes
+
+      If ANY check fails, rewrite .ai/sprint_plan.md with fixes applied:
+      - Split oversized sprints (assign new sequential IDs)
+      - Fix dependency ordering
+      - Add missing FR coverage
+      - Improve scope fences
+      - Fix validation commands
+      - Update capstone dependencies
+
+      After fixes, end with STATUS: success. The human gate is the final decision point.
+
+      If ALL checks pass with no issues, end with STATUS: success and note "No issues found" in the review.
+
+      HARD CONSTRAINT: Do NOT write sprint YAML or MD files — that is handled by write_sprint_docs. Only modify sprint_plan.md if fixes are needed.
+
   agent present_plan
     label: "Present Sprint Plan"
     model: claude-sonnet-4-6
@@ -932,7 +977,8 @@ workflow SpecToSprintsYamlV2
     critique_gemini_on_claude -> critique_join
     critique_gemini_on_gpt -> critique_join
     critique_join -> merge_decomposition
-    merge_decomposition -> present_plan
+    merge_decomposition -> DecompositionManager
+    DecompositionManager -> present_plan
     present_plan -> approval_gate
     approval_gate -> apply_feedback  label: "[A] Revise plan"
     approval_gate -> skip_approval   label: "[S] Approve / Skip"
