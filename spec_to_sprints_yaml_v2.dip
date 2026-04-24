@@ -996,13 +996,25 @@ workflow SpecToSprintsYamlV2
           errors="${errors}oversized-sprint-${base}-${dod_count}-dod-items "
         fi
       done
-      # Capstone check: last sprint must depend on all other sprints
+      # Capstone check: last sprint must depend on all other sprints — auto-fix if wrong
       all_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
       last_id=$(yq '.sprints[-1].id' .ai/ledger.yaml)
       other_ids=$(printf '%s' "$all_ids" | grep -v "^${last_id}$" | sort)
       capstone_deps=$(yq ".sprints[-1].depends_on[]" .ai/ledger.yaml 2>/dev/null | sort)
       if [ "$other_ids" != "$capstone_deps" ]; then
-        errors="${errors}capstone-missing-deps "
+        # Auto-fix: set capstone depends_on to all other sprint IDs
+        yq -i "(.sprints[-1]).depends_on = []" .ai/ledger.yaml
+        for dep_id in $other_ids; do
+          yq -i "(.sprints[-1]).depends_on += [\"$dep_id\"]" .ai/ledger.yaml
+        done
+        # Also fix the sprint YAML file on disk
+        capstone_yaml=".ai/sprints/SPRINT-${last_id}.yaml"
+        if [ -f "$capstone_yaml" ]; then
+          yq -i ".depends_on = []" "$capstone_yaml"
+          for dep_id in $other_ids; do
+            yq -i ".depends_on += [\"$dep_id\"]" "$capstone_yaml"
+          done
+        fi
       fi
       if [ -n "$errors" ]; then
         printf 'invalid-%s' "$errors"
