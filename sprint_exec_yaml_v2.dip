@@ -35,6 +35,20 @@ workflow SprintExecYamlV2
       fi
       printf 'ledger-ready'
 
+  tool EnsureManagerJournals
+    label: "Ensure Manager Journals"
+    timeout: 10s
+    command:
+      set -eu
+      mkdir -p .ai/managers
+      for journal in plan-journal.md review-journal.md recovery-journal.md; do
+        if [ ! -f ".ai/managers/$journal" ]; then
+          name=$(printf '%s' "$journal" | sed 's/-journal.md//' | sed 's/./\U&/')
+          printf '# %s Journal\n' "$name" > ".ai/managers/$journal"
+        fi
+      done
+      printf 'journals-ready'
+
   tool CheckYq
     label: "Check yq"
     timeout: 5s
@@ -610,7 +624,8 @@ workflow SprintExecYamlV2
 
   edges
     Start -> EnsureLedger
-    EnsureLedger -> CheckYq
+    EnsureLedger -> EnsureManagerJournals
+    EnsureManagerJournals -> CheckYq
     CheckYq -> FindNextSprint          when ctx.tool_stdout = yq-ok         label: yq_ok
     CheckYq -> YqMissing               when ctx.tool_stdout = yq-not-found  label: yq_missing
     CheckYq -> YqMissing
