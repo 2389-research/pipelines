@@ -607,6 +607,44 @@ workflow SprintExecYamlV2
 
   fan_in CritiquesJoin <- CritiqueClaudeOnCodex, CritiqueClaudeOnGemini, CritiqueCodexOnClaude, CritiqueCodexOnGemini, CritiqueGeminiOnClaude, CritiqueGeminiOnCodex
 
+  agent ReviewManager
+    label: "Review Manager"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      You are the Review Manager for sprint execution. Your job is to synthesize the 3 independent reviews and 6 cross-critiques into a structured evidence brief for the final verdict agent.
+
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read:
+      1. .ai/managers/plan-journal.md — find the entry for this sprint to see what PlanManager flagged as risks
+      2. The review and critique outputs from the current pipeline run (available in your context)
+
+      ## Synthesis
+
+      Organize the evidence into:
+      - **Agreements:** What all 3 reviewers agree on (pass or fail items)
+      - **Disagreements:** Where reviewers diverge, and which side has stronger evidence (cite specific code, test output, or DoD items)
+      - **Scope fence violations:** Did any reviewer flag work outside scope_fence.off_limits?
+      - **PlanManager risk check:** Did any risks flagged by PlanManager actually materialize? List each flagged risk and whether it was confirmed or not.
+      - **Evidence quality:** Are the reviews thorough or superficial? Did critiques add substance or just agree?
+
+      ## Output
+
+      Write a review brief to .ai/sprints/SPRINT-<id>-review-brief.md with the synthesis above.
+
+      Then append a section to .ai/managers/review-journal.md using this format:
+
+      ## Sprint <id> — <title>
+      **Date:** <current ISO timestamp>
+      **Reviewer consensus:** PASS | MIXED | FAIL
+      **Key agreements:** <bullet list>
+      **Key disagreements:** <bullet list with evidence assessment>
+      **PlanManager risk check:** <which flagged risks materialized>
+      **Scope fence violations:** <any detected, or "None">
+      **Evidence quality:** <assessment>
+
+      HARD CONSTRAINT: Do NOT render a verdict. Do NOT write STATUS: success or STATUS: fail. Do NOT write code. Do NOT modify any source files. Your ONLY job is to organize evidence for the ReviewAnalysis agent.
+
   agent ReviewAnalysis
     label: "Review Analysis"
     model: claude-opus-4-6
@@ -736,7 +774,8 @@ workflow SprintExecYamlV2
     CritiqueCodexOnGemini -> CritiquesJoin
     CritiqueGeminiOnClaude -> CritiquesJoin
     CritiqueGeminiOnCodex -> CritiquesJoin
-    CritiquesJoin -> ReviewAnalysis
+    CritiquesJoin -> ReviewManager
+    ReviewManager -> ReviewAnalysis
     ReviewAnalysis -> ValidateDoD       when ctx.outcome = success  label: pass
     ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
     ReviewAnalysis -> MarkFailed
