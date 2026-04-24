@@ -57,7 +57,7 @@ workflow SprintRunnerYamlV2
         printf 'no_ledger'
         exit 0
       fi
-      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
+      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed" and .status != "redecomposed") | .id' .ai/ledger.yaml)
       if [ -z "$candidates" ]; then
         rm -f .ai/runner-last-failed-sprint.txt .ai/runner-total-failures.txt
         printf 'all_done'
@@ -157,6 +157,11 @@ workflow SprintRunnerYamlV2
       target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "unknown")
       last_failed=$(cat .ai/runner-last-failed-sprint.txt 2>/dev/null || echo "none")
       total_failures=$(cat .ai/runner-total-failures.txt 2>/dev/null || echo "0")
+      # Check if RecoveryManager requested redecomposition
+      if [ -f .ai/redecompose-request.yaml ]; then
+        printf 'redecompose-%s' "$target"
+        exit 0
+      fi
       total_failures=$((total_failures + 1))
       printf '%s' "$total_failures" > .ai/runner-total-failures.txt
       if [ "$target" = "$last_failed" ]; then
@@ -176,6 +181,75 @@ workflow SprintRunnerYamlV2
           printf 'retry-%s-attempt-2' "$target"
         fi
       fi
+
+  tool prepare_redecompose
+    label: "Prepare Redecompose"
+    timeout: 15s
+    command:
+      set -eu
+      if [ ! -f .ai/redecompose-request.yaml ]; then
+        printf 'no-request'
+        exit 1
+      fi
+      target=$(yq '.failed_sprint_id' .ai/redecompose-request.yaml)
+      # Calculate next available ID
+      max_id=$(yq '.sprints[-1].id' .ai/ledger.yaml)
+      next_id=$(printf '%03d' $((10#$max_id + 1)))
+      yq -i ".next_available_id = \"$next_id\"" .ai/redecompose-request.yaml
+      # Calculate existing sprint count
+      count=$(yq '.sprints | length' .ai/ledger.yaml)
+      yq -i ".existing_sprint_count = $count" .ai/redecompose-request.yaml
+      printf 'ready-to-redecompose-%s-next-%s' "$target" "$next_id"
+
+  subgraph redecompose_sprint
+    ref: spec_to_sprints_yaml_v2.dip
+
+  tool splice_ledger
+    label: "Splice Redecomposed Sprints"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -f .ai/redecompose-result.yaml ]; then
+        printf 'no-result'
+        exit 1
+      fi
+      original_id=$(yq '.original_sprint_id' .ai/redecompose-result.yaml)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      # Read count before cleanup
+      new_count=$(yq '.new_sprint_ids | length' .ai/redecompose-result.yaml)
+      # Mark original sprint as redecomposed
+      yq -i "(.sprints[] | select(.id == \"$original_id\")).status = \"redecomposed\" | (.sprints[] | select(.id == \"$original_id\")).updated_at = \"$now\"" .ai/ledger.yaml
+      # Rewrite dependents
+      for dep_id in $(yq '.dependents_to_rewrite | keys | .[]' .ai/redecompose-result.yaml 2>/dev/null); do
+        old_dep=$(yq ".dependents_to_rewrite.\"$dep_id\".old_dep" .ai/redecompose-result.yaml)
+        # Remove old dep and add new deps
+        yq -i "(.sprints[] | select(.id == \"$dep_id\")).depends_on -= [\"$old_dep\"]" .ai/ledger.yaml
+        for new_dep in $(yq ".dependents_to_rewrite.\"$dep_id\".new_deps[]" .ai/redecompose-result.yaml); do
+          yq -i "(.sprints[] | select(.id == \"$dep_id\")).depends_on += [\"$new_dep\"]" .ai/ledger.yaml
+        done
+        # Also update the sprint YAML if it exists
+        dep_yaml=".ai/sprints/SPRINT-${dep_id}.yaml"
+        if [ -f "$dep_yaml" ]; then
+          yq -i ".depends_on -= [\"$old_dep\"]" "$dep_yaml"
+          for new_dep in $(yq ".dependents_to_rewrite.\"$dep_id\".new_deps[]" .ai/redecompose-result.yaml); do
+            yq -i ".depends_on += [\"$new_dep\"]" "$dep_yaml"
+          done
+        fi
+      done
+      # Clean up transient files
+      rm -f .ai/redecompose-request.yaml .ai/redecompose-result.yaml
+      printf 'spliced-%s-redecomposed-into-%s-sprints' "$original_id" "$new_count"
+
+  tool report_redecompose
+    label: "Report Redecomposition"
+    timeout: 10s
+    command:
+      set -eu
+      total=$(yq '.sprints | length' .ai/ledger.yaml)
+      done=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
+      redecomposed=$(yq '[.sprints[] | select(.status == "redecomposed")] | length' .ai/ledger.yaml)
+      remaining=$((total - done - redecomposed))
+      printf 'redecompose-complete-total-%s-done-%s-remaining-%s' "$total" "$done" "$remaining"
 
   agent failure_summary
     label: "Failure Summary"
@@ -209,8 +283,14 @@ workflow SprintRunnerYamlV2
     execute_sprint -> handle_failure   when ctx.outcome = fail              label: sprint_failed
     execute_sprint -> handle_failure
     report_progress -> check_ledger    restart: true
-    handle_failure -> check_ledger          when ctx.tool_stdout startswith retry-    label: retry_sprint    restart: true
-    handle_failure -> check_ledger          when ctx.tool_stdout startswith skipped-  label: skip_continue   restart: true
-    handle_failure -> failure_summary       when ctx.tool_stdout startswith budget-   label: budget_blown
+    handle_failure -> check_ledger          when ctx.tool_stdout startswith retry-        label: retry_sprint    restart: true
+    handle_failure -> check_ledger          when ctx.tool_stdout startswith skipped-      label: skip_continue   restart: true
+    handle_failure -> failure_summary       when ctx.tool_stdout startswith budget-       label: budget_blown
+    handle_failure -> prepare_redecompose   when ctx.tool_stdout startswith redecompose-  label: redecompose
     handle_failure -> failure_summary
+    prepare_redecompose -> redecompose_sprint
+    redecompose_sprint -> splice_ledger      when ctx.outcome = success  label: redecompose_done
+    redecompose_sprint -> failure_summary    when ctx.outcome = fail     label: redecompose_failed
+    splice_ledger -> report_redecompose
+    report_redecompose -> check_ledger       restart: true
     failure_summary -> Exit
