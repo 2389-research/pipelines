@@ -52,6 +52,11 @@ workflow SpecToSprintsYamlV2
     timeout: 10s
     command:
       set -eu
+      # Redecompose mode — invoked as sidecar from runner
+      if [ -f .ai/redecompose-request.yaml ]; then
+        printf 'redecompose-mode'
+        exit 0
+      fi
       has_ledger=false
       has_sprint_yamls=false
       has_sprint_mds=false
@@ -619,6 +624,91 @@ workflow SpecToSprintsYamlV2
 
       HARD CONSTRAINT: Do NOT write sprint YAML or MD files — that is handled by write_sprint_docs. Only modify sprint_plan.md if fixes are needed.
 
+  agent redecompose_single
+    label: "Redecompose Single Sprint"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are re-decomposing a single failed sprint into smaller sub-sprints.
+
+      Read .ai/redecompose-request.yaml for the context:
+      - failed_sprint_id: which sprint failed
+      - scope: the original scope
+      - failure_reason: why it failed (from RecoveryManager)
+      - recovery_recommendation: how to split
+      - depends_on_from_original: dependencies to inherit
+      - original_dependents: downstream sprints to note
+
+      Also read:
+      - .ai/sprints/SPRINT-<failed_id>.yaml — the original contract
+      - .ai/sprints/SPRINT-<failed_id>-recovery-analysis.md — RecoveryManager's full analysis (if it exists)
+
+      ## Task
+
+      Split the failed sprint's scope into 2-4 focused sub-sprints. Each sub-sprint should:
+      - Have ONE clear theme (not a kitchen-sink)
+      - Have 5-8 DoD items (not more than 10)
+      - Touch at most 2-3 subsystems
+      - Be independently verifiable
+
+      ## ID Assignment
+
+      Read the `next_available_id` field from .ai/redecompose-request.yaml. This is the first ID to use. Assign sequential IDs from there (e.g., if next_available_id is "030", use 030, 031, 032).
+
+      If `next_available_id` is not set, count existing SPRINT-*.yaml files in .ai/sprints/ and start from the next number.
+
+      ## Output
+
+      For each sub-sprint, write TWO files to .ai/sprints/:
+      1. SPRINT-<new_id>.yaml — full YAML contract (same schema as other sprints)
+         - depends_on: inherit from the original sprint's depends_on
+         - dependents: leave empty (runner will rewrite)
+         - scope_fence.off_limits: must include "do not modify .ai/ledger.yaml"
+         - status: planned
+         - bootstrap: false
+         - stack: copy from any existing sprint YAML
+      2. SPRINT-<new_id>.md — full narrative (same format as other sprints)
+
+      Then write .ai/redecompose-result.yaml:
+        original_sprint_id: "<failed_id>"
+        new_sprint_ids: ["<id1>", "<id2>", ...]
+        new_sprint_titles:
+          "<id1>": "<title>"
+          "<id2>": "<title>"
+        dependents_to_rewrite:
+          "<dependent_id>":
+            old_dep: "<failed_id>"
+            new_deps: ["<last_new_id>"]
+
+      For dependents_to_rewrite: the original_dependents should now depend on the LAST new sub-sprint (the one that completes the original scope).
+
+      HARD CONSTRAINT: Do NOT modify existing sprint files. Do NOT modify ledger.yaml. Only create new SPRINT files and the result manifest.
+
+  tool write_ledger_redecompose
+    label: "Append Redecomposed Sprints to Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -f .ai/redecompose-result.yaml ]; then
+        printf 'no-result-file'
+        exit 1
+      fi
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      for new_id in $(yq '.new_sprint_ids[]' .ai/redecompose-result.yaml); do
+        sf=".ai/sprints/SPRINT-${new_id}.yaml"
+        if [ ! -f "$sf" ]; then
+          printf 'missing-sprint-yaml-%s' "$new_id"
+          exit 1
+        fi
+        title=$(yq '.title | @json' "$sf")
+        complexity=$(yq '.complexity // "medium"' "$sf")
+        deps=$(yq '.depends_on // [] | @json' "$sf")
+        yq -i ".sprints += [{\"id\": \"$new_id\", \"title\": $title, \"status\": \"planned\", \"bootstrap\": false, \"depends_on\": $deps, \"complexity\": \"$complexity\", \"created_at\": \"$now\", \"updated_at\": \"$now\", \"attempts\": 0, \"total_cost\": \"0.00\"}]" .ai/ledger.yaml
+      done
+      count=$(yq '.new_sprint_ids | length' .ai/redecompose-result.yaml)
+      printf 'appended-%s-sprints' "$count"
+
   agent present_plan
     label: "Present Sprint Plan"
     model: claude-sonnet-4-6
@@ -977,6 +1067,9 @@ workflow SpecToSprintsYamlV2
     critique_gemini_on_claude -> critique_join
     critique_gemini_on_gpt -> critique_join
     critique_join -> merge_decomposition
+    check_resume -> redecompose_single      when ctx.tool_stdout = redecompose-mode  label: redecompose
+    redecompose_single -> write_ledger_redecompose
+    write_ledger_redecompose -> validate_output
     merge_decomposition -> DecompositionManager
     DecompositionManager -> present_plan
     present_plan -> approval_gate
