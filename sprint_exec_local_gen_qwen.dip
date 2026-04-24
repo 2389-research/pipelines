@@ -132,8 +132,12 @@ workflow SprintLocalGen
       }
 
       # New files — generate only if file does not exist
+      # Parser: awk slices the ## New files section, then sed extracts the FIRST
+      # backticked token of each bullet line (e.g. `go.mod` from "- `go.mod`"),
+      # which is the file path. This skips inline code references in the
+      # descriptive tail and does not require paths to contain a slash.
       NEW_FILES=$(awk '/^## New files/{f=1;next} f && /^##/{exit} f{print}' \
-        .ai/sprints/SPRINT-*.md | grep -oE '`[^`]+`' | tr -d '`' | grep '/' || true)
+        .ai/sprints/SPRINT-*.md | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
       for filepath in $NEW_FILES; do
         if [ ! -f "${filepath}" ]; then
           gen_file "${filepath}" \
@@ -145,8 +149,9 @@ workflow SprintLocalGen
       done
 
       # Modified files — read existing, apply targeted changes
+      # Same extraction strategy as NEW_FILES above.
       MOD_FILES=$(awk '/^## Modified files/{f=1;next} f && /^##/{exit} f{print}' \
-        .ai/sprints/SPRINT-*.md | grep -oE '`[^`]+`' | tr -d '`' | grep '/' || true)
+        .ai/sprints/SPRINT-*.md | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
       for filepath in $MOD_FILES; do
         patch_file "${filepath}" 4096
       done
@@ -154,7 +159,7 @@ workflow SprintLocalGen
       # Fallback: sprint uses old ## Expected Artifacts format (no New/Modified split)
       if [ -z "$NEW_FILES" ] && [ -z "$MOD_FILES" ]; then
         ARTIFACTS=$(awk '/^## Expected Artifacts/{f=1;next} f && /^##/{exit} f{print}' \
-          .ai/sprints/SPRINT-*.md | grep -oE '`[^`]+`' | tr -d '`' | grep '/' || true)
+          .ai/sprints/SPRINT-*.md | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
         for filepath in $ARTIFACTS; do
           gen_file "${filepath}" \
             'Implement exactly as specified in the sprint. Use the Interface contract, Algorithm notes, Imports per file, and Test plan sections for this file.' \
