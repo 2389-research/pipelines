@@ -1,3 +1,5 @@
 .private-journal/
 .tracker/
 output.txt
+runs/
+.ai/
