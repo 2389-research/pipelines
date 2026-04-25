@@ -12,7 +12,7 @@
 ?   	github.com/example/agent/internal/provider/gemini	[no test files]
 ?   	github.com/example/agent/internal/provider/ollama	[no test files]
 ?   	github.com/example/agent/internal/provider/openai	[no test files]
-?   	github.com/example/agent/internal/store	[no test files]
+ok  	github.com/example/agent/internal/store	0.272s
 ?   	github.com/example/agent/internal/tools	[no test files]
 ?   	github.com/example/agent/internal/tools/bash	[no test files]
 ?   	github.com/example/agent/internal/tools/glob	[no test files]

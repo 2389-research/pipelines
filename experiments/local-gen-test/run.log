@@ -92,3 +92,67 @@ hint[DIP125]: tool command binary "now=$(date" not found on PATH
 [17:10:23] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
 [17:10:23] checkpoint_saved       checkpoint saved
 [17:10:23] stage_started          node=CommitSprint         executing node "CommitSprint"
+[17:10:23] decision_outcome       node=CommitSprint         node "CommitSprint" outcome: success
+[17:10:23] stage_completed        node=CommitSprint         node "CommitSprint" completed
+[17:10:23] decision_edge          node=CommitSprint         edge selected CommitSprint->mark_complete via weight
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=mark_complete        executing node "mark_complete"
+[17:10:23] decision_outcome       node=mark_complete        node "mark_complete" outcome: success
+[17:10:23] stage_completed        node=mark_complete        node "mark_complete" completed
+[17:10:23] decision_edge          node=mark_complete        edge selected mark_complete->report_progress via weight
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=report_progress      executing node "report_progress"
+[17:10:23] decision_outcome       node=report_progress      node "report_progress" outcome: success
+[17:10:23] stage_completed        node=report_progress      node "report_progress" completed
+[17:10:23] decision_edge          node=report_progress      edge selected report_progress->sprint_gate via weight
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=sprint_gate          executing node "sprint_gate"
+[17:10:23] decision_outcome       node=sprint_gate          node "sprint_gate" outcome: success
+[17:10:23] stage_completed        node=sprint_gate          node "sprint_gate" completed
+[17:10:23] decision_edge          node=sprint_gate          edge selected sprint_gate->skip_gate via label
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=skip_gate            executing node "skip_gate"
+[17:10:23] decision_outcome       node=skip_gate            node "skip_gate" outcome: success
+[17:10:23] stage_completed        node=skip_gate            node "skip_gate" completed
+[17:10:23] decision_edge          node=skip_gate            edge selected skip_gate->check_ledger via weight
+[17:10:23] loop_restart           node=check_ledger         loop detected, restarting from "check_ledger" (restart 1/50)
+[17:10:23] decision_restart       node=check_ledger         restart 1: clearing 16 nodes from "check_ledger"
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=check_ledger         executing node "check_ledger"
+[17:10:23] decision_outcome       node=check_ledger         node "check_ledger" outcome: success
+[17:10:23] stage_completed        node=check_ledger         node "check_ledger" completed
+[17:10:23] decision_condition     node=check_ledger         condition "ctx.tool_stdout = all_done" on edge check_ledger->Exit evaluated to false
+[17:10:23] decision_condition     node=check_ledger         condition "ctx.tool_stdout = no_ledger" on edge check_ledger->no_ledger_exit evaluated to false
+[17:10:23] decision_condition     node=check_ledger         condition "ctx.tool_stdout != all_done" on edge check_ledger->mark_in_progress evaluated to true
+[17:10:23] decision_edge          node=check_ledger         edge selected check_ledger->mark_in_progress via condition
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=mark_in_progress     executing node "mark_in_progress"
+[17:10:23] decision_outcome       node=mark_in_progress     node "mark_in_progress" outcome: success
+[17:10:23] stage_completed        node=mark_in_progress     node "mark_in_progress" completed
+[17:10:23] decision_edge          node=mark_in_progress     edge selected mark_in_progress->Setup via weight
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=Setup                executing node "Setup"
+[17:10:23] decision_outcome       node=Setup                node "Setup" outcome: success
+[17:10:23] stage_completed        node=Setup                node "Setup" completed
+[17:10:23] decision_edge          node=Setup                edge selected Setup->Generate via weight
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=Generate             executing node "Generate"
+[17:11:24] decision_outcome       node=Generate             node "Generate" outcome: success
+[17:11:24] stage_completed        node=Generate             node "Generate" completed
+[17:11:24] decision_edge          node=Generate             edge selected Generate->RunTests via weight
+[17:11:24] checkpoint_saved       checkpoint saved
+[17:11:24] stage_started          node=RunTests             executing node "RunTests"
+[17:11:24] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:11:24] stage_completed        node=RunTests             node "RunTests" completed
+[17:11:24] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to false
+[17:11:24] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail-cloud" on edge RunTests->CloudFix evaluated to false
+[17:11:24] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-pass" on edge RunTests->Audit evaluated to true
+[17:11:24] decision_edge          node=RunTests             edge selected RunTests->Audit via condition
+[17:11:24] checkpoint_saved       checkpoint saved
+[17:11:24] stage_started          node=Audit                executing node "Audit"
+[17:11:25] decision_outcome       node=Audit                node "Audit" outcome: success
+[17:11:25] stage_completed        node=Audit                node "Audit" completed
+[17:11:25] decision_condition     node=Audit                condition "ctx.tool_stdout contains audit-pass" on edge Audit->CommitSprint evaluated to true
+[17:11:25] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=CommitSprint         executing node "CommitSprint"

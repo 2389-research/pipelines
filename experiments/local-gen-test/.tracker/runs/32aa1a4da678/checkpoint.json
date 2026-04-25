@@ -19,18 +19,23 @@
     "outcome": "success",
     "preferred_label": "",
     "suggested_next_nodes": "",
-    "tool_stderr": "sh: line 44: [: 0\n0: integer expression expected",
-    "tool_stdout": "test count: sprint=0\n0 actual=0\naudit-pass"
+    "tool_stderr": "",
+    "tool_stdout": "test count: sprint=2 actual=2\naudit-pass"
   },
-  "timestamp": "2026-04-25T17:10:23.249592-05:00",
-  "restart_count": 0,
+  "timestamp": "2026-04-25T17:11:25.570665-05:00",
+  "restart_count": 1,
   "edge_selections": {
     "Audit": "CommitSprint",
+    "CommitSprint": "mark_complete",
     "Generate": "RunTests",
     "RunTests": "Audit",
     "Setup": "Generate",
     "Start": "check_ledger",
     "check_ledger": "mark_in_progress",
-    "mark_in_progress": "Setup"
+    "mark_complete": "report_progress",
+    "mark_in_progress": "Setup",
+    "report_progress": "sprint_gate",
+    "skip_gate": "check_ledger",
+    "sprint_gate": "skip_gate"
   }
 }
