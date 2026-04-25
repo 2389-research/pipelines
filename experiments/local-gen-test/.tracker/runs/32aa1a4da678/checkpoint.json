@@ -3,10 +3,6 @@
   "current_node": "CommitSprint",
   "completed_nodes": [
     "Start",
-    "check_ledger",
-    "mark_in_progress",
-    "Setup",
-    "Generate",
     "RunTests",
     "Audit"
   ],
@@ -16,18 +12,23 @@
     "graph.goal": "Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge.",
     "graph.llm_provider": "openai",
     "graph.max_restarts": "50",
+    "last_response": "Fixed the first error class in `tests/integration/smoke_test.go` by correcting the `go build` package path in `TestMain` to point at the actual module-relative command directory (`../../cmd/agent`) instead of the invalid import-like path `agent/cmd/agent`.",
+    "last_turns": "4",
     "outcome": "success",
     "preferred_label": "",
+    "response.CloudFix": "Fixed the first error class in `tests/integration/smoke_test.go` by correcting the `go build` package path in `TestMain` to point at the actual module-relative command directory (`../../cmd/agent`) instead of the invalid import-like path `agent/cmd/agent`.",
     "suggested_next_nodes": "",
     "tool_stderr": "",
-    "tool_stdout": "test count: sprint=2 actual=2\naudit-pass"
+    "tool_stdout": "test count: sprint=1 actual=4\naudit-pass"
   },
-  "timestamp": "2026-04-25T17:11:25.570665-05:00",
-  "restart_count": 1,
+  "timestamp": "2026-04-25T17:15:51.817291-05:00",
+  "restart_count": 8,
   "edge_selections": {
     "Audit": "CommitSprint",
+    "CloudFix": "RunTests",
     "CommitSprint": "mark_complete",
     "Generate": "RunTests",
+    "LocalFix": "CloudFix",
     "RunTests": "Audit",
     "Setup": "Generate",
     "Start": "check_ledger",

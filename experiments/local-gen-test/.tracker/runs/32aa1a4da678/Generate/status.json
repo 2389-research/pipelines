@@ -2,6 +2,6 @@
   "outcome": "success",
   "context_updates": {
     "tool_stderr": "",
-    "tool_stdout": "generating internal/store/db.go...\nwrote internal/store/db.go (    1632 bytes)\ngenerating internal/store/health.go...\nwrote internal/store/health.go (     529 bytes)\ngenerating internal/store/db_test.go...\nwrote internal/store/db_test.go (    3200 bytes)\ngenerating docker-compose.yml...\nwrote docker-compose.yml (     338 bytes)\ngenerating .env.example...\nwrote .env.example (      84 bytes)\ngen-done"
+    "tool_stdout": "generating cmd/agent/main.go...\nwrote cmd/agent/main.go (     317 bytes)\ngenerating cmd/agent/cmd_version.go...\nwrote cmd/agent/cmd_version.go (     101 bytes)\ngenerating cmd/agent/cmd_doctor.go...\nwrote cmd/agent/cmd_doctor.go (     206 bytes)\ngenerating tests/integration/smoke_test.go...\nwrote tests/integration/smoke_test.go (    1194 bytes)\ngen-done"
   }
 }

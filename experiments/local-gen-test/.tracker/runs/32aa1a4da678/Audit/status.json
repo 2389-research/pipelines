@@ -2,6 +2,6 @@
   "outcome": "success",
   "context_updates": {
     "tool_stderr": "",
-    "tool_stdout": "test count: sprint=2 actual=2\naudit-pass"
+    "tool_stdout": "test count: sprint=1 actual=4\naudit-pass"
   }
 }

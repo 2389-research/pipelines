@@ -1,0 +1,7 @@
+{
+  "outcome": "success",
+  "context_updates": {
+    "tool_stderr": "",
+    "tool_stdout": "local fix attempt 6/4\nlocal model exhausted, handing off to cloud\nlocal-exhausted"
+  }
+}

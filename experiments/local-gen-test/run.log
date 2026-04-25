@@ -156,3 +156,362 @@ hint[DIP125]: tool command binary "now=$(date" not found on PATH
 [17:11:25] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
 [17:11:25] checkpoint_saved       checkpoint saved
 [17:11:25] stage_started          node=CommitSprint         executing node "CommitSprint"
+[17:11:25] decision_outcome       node=CommitSprint         node "CommitSprint" outcome: success
+[17:11:25] stage_completed        node=CommitSprint         node "CommitSprint" completed
+[17:11:25] decision_edge          node=CommitSprint         edge selected CommitSprint->mark_complete via weight
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=mark_complete        executing node "mark_complete"
+[17:11:25] decision_outcome       node=mark_complete        node "mark_complete" outcome: success
+[17:11:25] stage_completed        node=mark_complete        node "mark_complete" completed
+[17:11:25] decision_edge          node=mark_complete        edge selected mark_complete->report_progress via weight
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=report_progress      executing node "report_progress"
+[17:11:25] decision_outcome       node=report_progress      node "report_progress" outcome: success
+[17:11:25] stage_completed        node=report_progress      node "report_progress" completed
+[17:11:25] decision_edge          node=report_progress      edge selected report_progress->sprint_gate via weight
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=sprint_gate          executing node "sprint_gate"
+[17:11:25] decision_outcome       node=sprint_gate          node "sprint_gate" outcome: success
+[17:11:25] stage_completed        node=sprint_gate          node "sprint_gate" completed
+[17:11:25] decision_edge          node=sprint_gate          edge selected sprint_gate->skip_gate via label
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=skip_gate            executing node "skip_gate"
+[17:11:25] decision_outcome       node=skip_gate            node "skip_gate" outcome: success
+[17:11:25] stage_completed        node=skip_gate            node "skip_gate" completed
+[17:11:25] decision_edge          node=skip_gate            edge selected skip_gate->check_ledger via weight
+[17:11:25] loop_restart           node=check_ledger         loop detected, restarting from "check_ledger" (restart 2/50)
+[17:11:25] decision_restart       node=check_ledger         restart 2: clearing 16 nodes from "check_ledger"
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=check_ledger         executing node "check_ledger"
+[17:11:25] decision_outcome       node=check_ledger         node "check_ledger" outcome: success
+[17:11:25] stage_completed        node=check_ledger         node "check_ledger" completed
+[17:11:25] decision_condition     node=check_ledger         condition "ctx.tool_stdout = all_done" on edge check_ledger->Exit evaluated to false
+[17:11:25] decision_condition     node=check_ledger         condition "ctx.tool_stdout = no_ledger" on edge check_ledger->no_ledger_exit evaluated to false
+[17:11:25] decision_condition     node=check_ledger         condition "ctx.tool_stdout != all_done" on edge check_ledger->mark_in_progress evaluated to true
+[17:11:25] decision_edge          node=check_ledger         edge selected check_ledger->mark_in_progress via condition
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=mark_in_progress     executing node "mark_in_progress"
+[17:11:25] decision_outcome       node=mark_in_progress     node "mark_in_progress" outcome: success
+[17:11:25] stage_completed        node=mark_in_progress     node "mark_in_progress" completed
+[17:11:25] decision_edge          node=mark_in_progress     edge selected mark_in_progress->Setup via weight
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=Setup                executing node "Setup"
+[17:11:25] decision_outcome       node=Setup                node "Setup" outcome: success
+[17:11:25] stage_completed        node=Setup                node "Setup" completed
+[17:11:25] decision_edge          node=Setup                edge selected Setup->Generate via weight
+[17:11:25] checkpoint_saved       checkpoint saved
+[17:11:25] stage_started          node=Generate             executing node "Generate"
+[17:11:53] decision_outcome       node=Generate             node "Generate" outcome: success
+[17:11:53] stage_completed        node=Generate             node "Generate" completed
+[17:11:53] decision_edge          node=Generate             edge selected Generate->RunTests via weight
+[17:11:53] checkpoint_saved       checkpoint saved
+[17:11:53] stage_started          node=RunTests             executing node "RunTests"
+[17:11:53] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:11:53] stage_completed        node=RunTests             node "RunTests" completed
+[17:11:53] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:11:53] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:11:53] checkpoint_saved       checkpoint saved
+[17:11:53] stage_started          node=LocalFix             executing node "LocalFix"
+[17:12:50] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:12:50] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:12:50] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:12:50] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:12:50] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 3/50)
+[17:12:50] decision_restart       node=RunTests             restart 3: clearing 16 nodes from "RunTests"
+[17:12:50] checkpoint_saved       checkpoint saved
+[17:12:50] stage_started          node=RunTests             executing node "RunTests"
+[17:12:50] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:12:50] stage_completed        node=RunTests             node "RunTests" completed
+[17:12:50] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:12:50] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:12:50] checkpoint_saved       checkpoint saved
+[17:12:50] stage_started          node=LocalFix             executing node "LocalFix"
+[17:13:40] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:13:40] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:13:40] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:13:40] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:13:40] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 4/50)
+[17:13:40] decision_restart       node=RunTests             restart 4: clearing 16 nodes from "RunTests"
+[17:13:40] checkpoint_saved       checkpoint saved
+[17:13:40] stage_started          node=RunTests             executing node "RunTests"
+[17:13:41] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:13:41] stage_completed        node=RunTests             node "RunTests" completed
+[17:13:41] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:13:41] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:13:41] checkpoint_saved       checkpoint saved
+[17:13:41] stage_started          node=LocalFix             executing node "LocalFix"
+[17:14:26] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:14:26] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:14:26] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:14:26] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:14:26] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 5/50)
+[17:14:26] decision_restart       node=RunTests             restart 5: clearing 16 nodes from "RunTests"
+[17:14:26] checkpoint_saved       checkpoint saved
+[17:14:26] stage_started          node=RunTests             executing node "RunTests"
+[17:14:26] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:14:26] stage_completed        node=RunTests             node "RunTests" completed
+[17:14:26] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:14:26] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:14:26] checkpoint_saved       checkpoint saved
+[17:14:26] stage_started          node=LocalFix             executing node "LocalFix"
+[17:15:10] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:15:10] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:15:10] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:15:10] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:15:10] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 6/50)
+[17:15:10] decision_restart       node=RunTests             restart 6: clearing 16 nodes from "RunTests"
+[17:15:10] checkpoint_saved       checkpoint saved
+[17:15:10] stage_started          node=RunTests             executing node "RunTests"
+[17:15:10] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:15:10] stage_completed        node=RunTests             node "RunTests" completed
+[17:15:10] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:15:10] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:15:10] checkpoint_saved       checkpoint saved
+[17:15:10] stage_started          node=LocalFix             executing node "LocalFix"
+[17:15:10] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:15:10] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:15:10] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to false
+[17:15:10] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-exhausted" on edge LocalFix->CloudFix evaluated to true
+[17:15:10] decision_edge          node=LocalFix             edge selected LocalFix->CloudFix via condition
+[17:15:10] checkpoint_saved       checkpoint saved
+[17:15:10] stage_started          node=CloudFix             executing node "CloudFix"
+[17:15:10] llm start openai/gpt-5.4
+[17:15:13] llm tool prepare openai/gpt-5.4 name=bash
+[17:15:14] llm finish openai/gpt-5.4 reason=tool_calls tokens=905/203
+[17:15:14] [CloudFix] $ cat .ai/last_test_output.txt
+[17:15:14] [CloudFix]   # github.com/example/agent/tests/integration
+tests/integration/smoke_test.go:25:26: string literal not terminated
+FAIL	github.com/example/agent/tests/integration [setup failed]
+?   	github.com/example/agent/cmd/agent	[no test files]
+?   	github.com/example/agent/internal/app	[no test files]
+?   	github.com/example/agent/internal/config	[no test files]
+?   	github.com/example/agent/internal/core	[no test files]
+?   	github.com/example/agent/internal/core/agents	[no test files]
+?   	github.com/example/agent/internal/core/events	[no test files]
+?   	github.com/example/agent/internal/core/messages	[no test files]
+?   	github.com/example/agent/internal/core/orchestrator	[no test files]
+?   	github.com/example/agent/internal/policy	[no test files]
+?   	github.com/example/agent/internal/provider	[no test files]
+?   	github.com/example/agent/internal/provider/anthropic	[no test files]
+?   	github.com/example/agent/internal/provider/gemini	[no test files]
+?   	github.com/example/agent/internal/provider/ollama	[no test files]
+?   	github.com/example/agent/internal/provider/openai	[no test files]
+ok  	github.com/example/agent/internal/store	(cached)
+?   	github.com/example/agent/internal/tools	[no test files]
+?   	github.com/example/agent/internal/tools/bash	[no test files]
+?   	github.com/example/agent/internal/tools/glob	[no test files]
+?   	github.com/example/agent/internal/tools/read	[no test files]
+?   	github.com/example/agent/internal/tools/search	[no test files]
+?   	github.com/example/agent/internal/tools/webfetch	[no test files]
+?   	github.com/example/agent/internal/tools/write	[no test files]
+?   	github.com/example/agent/internal/tui	[no test files]
+?   	github.com/example/agent/internal/web	[no test files]
+?   	github.com/example/agent/internal/workspace	[no test files]
+FAIL
+[17:15:14] llm start openai/gpt-5.4
+[17:15:18] llm tool prepare openai/gpt-5.4 name=bash
+[17:15:18] llm finish openai/gpt-5.4 reason=tool_calls tokens=1418/323
+[17:15:18] [CloudFix] $ cat tests/integration/smoke_test.go
+[17:15:18] [CloudFix]   package integration
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var agentBin string
+
+func TestMain(m *testing.M) {
+	tmp, err := os.MkdirTemp("", "agent-smoke-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mkdirtemp:", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(tmp)
+
+	agentBin = filepath.Join(tmp, "agent")
+	cmd := exec.Command("go", "build", "-o", agentBin, "agent/cmd/agent")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build failed: %v
+%s
+", err, out)
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
+
+func TestSmoke(t *testing.T) {
+	t.Run("version exits 0 and prints non-empty output", func(t *testing.T) {
+		out, err := exec.Command(agentBin, "version").Output()
+		if err != nil {
+			t.Fatalf("agent version: %v", err)
+		}
+		if strings.TrimSpace(string(out)) == "" {
+			t.Fatal("expected non-empty version output")
+		}
+	})
+
+	t.Run("doctor exits 0 and output contains go version", func(t *testing.T) {
+		out, err := exec.Command(agentBin, "doctor").Output()
+		if err != nil {
+			t.Fatalf("agent doctor: %v", err)
+		}
+		if !strings.Contains(string(out), "go:") {
+			t.Fatalf("expected 'go:' in doctor output, got: %s", out)
+		}
+	})
+}
+[17:15:19] llm start openai/gpt-5.4
+[17:15:23] llm tool prepare openai/gpt-5.4 name=apply_patch
+[17:15:25] llm finish openai/gpt-5.4 reason=tool_calls tokens=1818/415
+[17:15:25] [CloudFix] ━ apply_patch: *** Begin Patch *** Update File: tests/integration/smoke_test.go @@  	agentBin = filepath.Join(tmp, "agent")  	cmd := e…
+[17:15:25] [CloudFix]   applied patch (1 file(s) changed)
+[17:15:25] llm start openai/gpt-5.4
+[17:15:26] llm text openai/gpt-5.4 preview="Fixed  the  unter min ated  string  literal  in  ` tests /in tegration /s m oke…"
+[17:15:26] llm finish openai/gpt-5.4 reason=stop tokens=2005/40
+[17:15:26] decision_outcome       node=CloudFix             node "CloudFix" outcome: success
+[17:15:26] stage_completed        node=CloudFix             node "CloudFix" completed
+[17:15:26] decision_condition     node=CloudFix             condition "ctx.outcome = success" on edge CloudFix->RunTests evaluated to true
+[17:15:26] decision_edge          node=CloudFix             edge selected CloudFix->RunTests via condition
+[17:15:26] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 7/50)
+[17:15:26] decision_restart       node=RunTests             restart 7: clearing 16 nodes from "RunTests"
+[17:15:26] checkpoint_saved       checkpoint saved
+[17:15:26] stage_started          node=RunTests             executing node "RunTests"
+[17:15:27] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:15:27] stage_completed        node=RunTests             node "RunTests" completed
+[17:15:27] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:15:27] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:15:27] checkpoint_saved       checkpoint saved
+[17:15:27] stage_started          node=LocalFix             executing node "LocalFix"
+[17:15:27] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:15:27] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:15:27] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to false
+[17:15:27] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-exhausted" on edge LocalFix->CloudFix evaluated to true
+[17:15:27] decision_edge          node=LocalFix             edge selected LocalFix->CloudFix via condition
+[17:15:27] checkpoint_saved       checkpoint saved
+[17:15:27] stage_started          node=CloudFix             executing node "CloudFix"
+[17:15:27] llm start openai/gpt-5.4
+[17:15:31] llm tool prepare openai/gpt-5.4 name=bash
+[17:15:32] llm finish openai/gpt-5.4 reason=tool_calls tokens=945/321
+[17:15:32] [CloudFix] $ cat .ai/last_test_output.txt
+[17:15:32] [CloudFix]   ?   	github.com/example/agent/cmd/agent	[no test files]
+?   	github.com/example/agent/internal/app	[no test files]
+?   	github.com/example/agent/internal/config	[no test files]
+?   	github.com/example/agent/internal/core	[no test files]
+?   	github.com/example/agent/internal/core/agents	[no test files]
+?   	github.com/example/agent/internal/core/events	[no test files]
+?   	github.com/example/agent/internal/core/messages	[no test files]
+?   	github.com/example/agent/internal/core/orchestrator	[no test files]
+?   	github.com/example/agent/internal/policy	[no test files]
+?   	github.com/example/agent/internal/provider	[no test files]
+?   	github.com/example/agent/internal/provider/anthropic	[no test files]
+?   	github.com/example/agent/internal/provider/gemini	[no test files]
+?   	github.com/example/agent/internal/provider/ollama	[no test files]
+?   	github.com/example/agent/internal/provider/openai	[no test files]
+ok  	github.com/example/agent/internal/store	(cached)
+?   	github.com/example/agent/internal/tools	[no test files]
+?   	github.com/example/agent/internal/tools/bash	[no test files]
+?   	github.com/example/agent/internal/tools/glob	[no test files]
+?   	github.com/example/agent/internal/tools/read	[no test files]
+?   	github.com/example/agent/internal/tools/search	[no test files]
+?   	github.com/example/agent/internal/tools/webfetch	[no test files]
+?   	github.com/example/agent/internal/tools/write	[no test files]
+?   	github.com/example/agent/internal/tui	[no test files]
+?   	github.com/example/agent/internal/web	[no test files]
+?   	github.com/example/agent/internal/workspace	[no test files]
+go build failed: exit status 1
+package agent/cmd/agent is not in std (/opt/homebrew/Cellar/go/1.25.3/libexec/src/agent/cmd/agent)
+
+FAIL	github.com/example/agent/tests/integration	0.279s
+FAIL
+[17:15:32] llm start openai/gpt-5.4
+[17:15:35] llm tool prepare openai/gpt-5.4 name=bash
+[17:15:36] llm finish openai/gpt-5.4 reason=tool_calls tokens=1475/261
+[17:15:36] [CloudFix] $ cat tests/integration/smoke_test.go
+[17:15:36] [CloudFix]   package integration
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var agentBin string
+
+func TestMain(m *testing.M) {
+	tmp, err := os.MkdirTemp("", "agent-smoke-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mkdirtemp:", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(tmp)
+
+	agentBin = filepath.Join(tmp, "agent")
+	cmd := exec.Command("go", "build", "-o", agentBin, "agent/cmd/agent")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s\n", err, out)
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
+
+func TestSmoke(t *testing.T) {
+	t.Run("version exits 0 and prints non-empty output", func(t *testing.T) {
+		out, err := exec.Command(agentBin, "version").Output()
+		if err != nil {
+			t.Fatalf("agent version: %v", err)
+		}
+		if strings.TrimSpace(string(out)) == "" {
+			t.Fatal("expected non-empty version output")
+		}
+	})
+
+	t.Run("doctor exits 0 and output contains go version", func(t *testing.T) {
+		out, err := exec.Command(agentBin, "doctor").Output()
+		if err != nil {
+			t.Fatalf("agent doctor: %v", err)
+		}
+		if !strings.Contains(string(out), "go:") {
+			t.Fatalf("expected 'go:' in doctor output, got: %s", out)
+		}
+	})
+}
+[17:15:36] llm start openai/gpt-5.4
+[17:15:47] llm tool prepare openai/gpt-5.4 name=apply_patch
+[17:15:49] llm finish openai/gpt-5.4 reason=tool_calls tokens=1875/890
+[17:15:49] [CloudFix] ━ apply_patch: *** Begin Patch *** Update File: tests/integration/smoke_test.go @@ -	agentBin = filepath.Join(tmp, "agent") -	cmd := e…
+[17:15:49] [CloudFix]   applied patch (1 file(s) changed)
+[17:15:49] llm start openai/gpt-5.4
+[17:15:50] llm text openai/gpt-5.4 preview="Fixed  the  first  error  class  in  ` tests /in tegration /s m oke _test .go `…"
+[17:15:50] llm finish openai/gpt-5.4 reason=stop tokens=2028/63
+[17:15:50] decision_outcome       node=CloudFix             node "CloudFix" outcome: success
+[17:15:50] stage_completed        node=CloudFix             node "CloudFix" completed
+[17:15:50] decision_condition     node=CloudFix             condition "ctx.outcome = success" on edge CloudFix->RunTests evaluated to true
+[17:15:50] decision_edge          node=CloudFix             edge selected CloudFix->RunTests via condition
+[17:15:50] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 8/50)
+[17:15:50] decision_restart       node=RunTests             restart 8: clearing 16 nodes from "RunTests"
+[17:15:50] checkpoint_saved       checkpoint saved
+[17:15:50] stage_started          node=RunTests             executing node "RunTests"
+[17:15:51] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:15:51] stage_completed        node=RunTests             node "RunTests" completed
+[17:15:51] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to false
+[17:15:51] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail-cloud" on edge RunTests->CloudFix evaluated to false
+[17:15:51] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-pass" on edge RunTests->Audit evaluated to true
+[17:15:51] decision_edge          node=RunTests             edge selected RunTests->Audit via condition
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=Audit                executing node "Audit"
+[17:15:51] decision_outcome       node=Audit                node "Audit" outcome: success
+[17:15:51] stage_completed        node=Audit                node "Audit" completed
+[17:15:51] decision_condition     node=Audit                condition "ctx.tool_stdout contains audit-pass" on edge Audit->CommitSprint evaluated to true
+[17:15:51] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=CommitSprint         executing node "CommitSprint"
