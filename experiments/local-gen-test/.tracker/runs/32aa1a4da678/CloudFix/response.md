@@ -4,19 +4,19 @@ INPUT:
 {"command":"cat .ai/last_test_output.txt","timeout":10}
 TOOL RESULT: bash
 OUTPUT:
-?   	github.com/example/agent/cmd/agent	[no test files]
+# github.com/example/agent/cmd/agent
+cmd/agent/main.go:26:46: newline in string
+cmd/agent/main.go:26:46: syntax error: unexpected newline in argument list; possibly missing comma or )
+cmd/agent/main.go:27:15: newline in string
+FAIL	github.com/example/agent/cmd/agent [build failed]
 ?   	github.com/example/agent/internal/app	[no test files]
-?   	github.com/example/agent/internal/config	[no test files]
+ok  	github.com/example/agent/internal/config	(cached)
 ?   	github.com/example/agent/internal/core	[no test files]
 ?   	github.com/example/agent/internal/core/agents	[no test files]
 ?   	github.com/example/agent/internal/core/events	[no test files]
 ?   	github.com/example/agent/internal/core/messages	[no test files]
 ?   	github.com/example/agent/internal/core/orchestrator	[no test files]
---- FAIL: TestAgentStateTransitions (0.00s)
-    --- FAIL: TestAgentStateTransitions/terminal_state_rejects_all_transitions (0.00s)
-        domain_test.go:35: expected nil error moving to completed, got invalid transition idle → completed
-FAIL
-FAIL	github.com/example/agent/internal/domain	0.258s
+ok  	github.com/example/agent/internal/domain	(cached)
 ok  	github.com/example/agent/internal/domain/events	(cached)
 ?   	github.com/example/agent/internal/policy	[no test files]
 ?   	github.com/example/agent/internal/provider	[no test files]
@@ -41,184 +41,63 @@ FAIL
 TURN 2
 TOOL CALL: bash
 INPUT:
-{"command":"cat internal/domain/domain_test.go","timeout":10}
+{"command":"cat cmd/agent/main.go","timeout":10}
 TOOL RESULT: bash
 OUTPUT:
-package domain
+package main
 
 import (
-	"testing"
-	"time"
+	"fmt"
+	"io"
+	"os"
 )
 
-func TestAgentStateTransitions(t *testing.T) {
-	t.Helper()
-
-	t.Run("idle to queued is valid", func(t *testing.T) {
-		t.Helper()
-		a := NewAgent("a1", "s1", "")
-		err := a.Transition(AgentStateQueued)
-		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
-		}
-		if a.State != AgentStateQueued {
-			t.Fatalf("expected state queued, got %s", a.State)
-		}
-	})
-
-	t.Run("idle to running is invalid", func(t *testing.T) {
-		t.Helper()
-		a := NewAgent("a2", "s1", "")
-		err := a.Transition(AgentStateRunning)
-		if err == nil {
-			t.Fatal("expected non-nil error, got nil")
-		}
-		if a.State != AgentStateIdle {
-			t.Fatalf("expected state to remain idle, got %s", a.State)
-		}
-	})
-
-	t.Run("terminal state rejects all transitions", func(t *testing.T) {
-		t.Helper()
-		a := NewAgent("a3", "s1", "")
-		err := a.Transition(AgentStateCompleted)
-		if err != nil {
-			t.Fatalf("expected nil error moving to completed, got %v", err)
-		}
-		if a.State != AgentStateCompleted {
-			t.Fatalf("expected state completed, got %s", a.State)
-		}
-
-		for _, next := range []AgentState{
-			AgentStateIdle,
-			AgentStateQueued,
-			AgentStateRunning,
-			AgentStateCompleted,
-			AgentStateCancelled,
-		} {
-			err = a.Transition(next)
-			if err == nil {
-				t.Fatalf("expected non-nil error for completed to %s, got nil", next)
-			}
-			if a.State != AgentStateCompleted {
-				t.Fatalf("expected state to remain completed, got %s", a.State)
-			}
-		}
-	})
-
-	t.Run("full happy path", func(t *testing.T) {
-		t.Helper()
-		a := NewAgent("a4", "s1", "")
-		err := a.Transition(AgentStateQueued)
-		if err != nil {
-			t.Fatalf("idle to queued: %v", err)
-		}
-		err = a.Transition(AgentStateRunning)
-		if err != nil {
-			t.Fatalf("queued to running: %v", err)
-		}
-		err = a.Transition(AgentStateCompleted)
-		if err != nil {
-			t.Fatalf("running to completed: %v", err)
-		}
-		if a.State != AgentStateCompleted {
-			t.Fatalf("expected state completed, got %s", a.State)
-		}
-	})
+func main() {
+	if len(os.Args) < 2 {
+		printUsage(os.Stderr)
+		os.Exit(1)
+	}
+	switch os.Args[1] {
+	case "version":
+		runVersion()
+	case "doctor":
+		runDoctor()
+	case "tui":
+		runTUI(os.Stdout)
+	case "serve":
+		runServe(os.Stdout)
+	case "run":
+		runRun(os.Stdout)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s
+", os.Args[1])
+		os.Exit(1)
+	}
 }
 
-func TestSessionCreation(t *testing.T) {
-	t.Helper()
-
-	t.Run("creates root agent in idle state", func(t *testing.T) {
-		t.Helper()
-		s := NewSession("s1", "/tmp")
-		if s.RootAgentID == "" {
-			t.Fatal("expected RootAgentID to be set")
-		}
-		_, exists := s.Agents[s.RootAgentID]
-		if !exists {
-			t.Fatal("expected root agent to be in Agents map")
-		}
-		if s.Agents[s.RootAgentID].State != AgentStateIdle {
-			t.Fatalf("expected root agent state idle, got %s", s.Agents[s.RootAgentID].State)
-		}
-	})
-
-	t.Run("root agent has no parent", func(t *testing.T) {
-		t.Helper()
-		s := NewSession("s2", "/tmp")
-		rootAgent := s.Agents[s.RootAgentID]
-		if rootAgent.ParentID != "" {
-			t.Fatalf("expected root agent ParentID to be empty, got %s", rootAgent.ParentID)
-		}
-	})
-}
-
-func TestBudget(t *testing.T) {
-	t.Helper()
-
-	t.Run("tokens not exceeded when under limit", func(t *testing.T) {
-		t.Helper()
-		b := Budget{MaxTokens: 100, UsedTokens: 50}
-		if b.TokensExceeded() {
-			t.Fatal("expected TokensExceeded to be false")
-		}
-	})
-
-	t.Run("tokens exceeded when over limit", func(t *testing.T) {
-		t.Helper()
-		b := Budget{MaxTokens: 100, UsedTokens: 101}
-		if !b.TokensExceeded() {
-			t.Fatal("expected TokensExceeded to be true")
-		}
-	})
-
-	t.Run("zero max means no limit", func(t *testing.T) {
-		t.Helper()
-		b := Budget{MaxTokens: 0, UsedTokens: 9999}
-		if b.TokensExceeded() {
-			t.Fatal("expected TokensExceeded to be false")
-		}
-	})
-
-	t.Run("wall clock exceeded", func(t *testing.T) {
-		t.Helper()
-		b := Budget{MaxWallClock: time.Millisecond, StartedAt: time.Now().Add(-time.Second)}
-		if !b.WallClockExceeded() {
-			t.Fatal("expected WallClockExceeded to be true")
-		}
-	})
-
-	t.Run("tool calls exceeded", func(t *testing.T) {
-		t.Helper()
-		b := Budget{MaxToolCalls: 5, UsedToolCalls: 6}
-		if !b.ToolCallsExceeded() {
-			t.Fatal("expected ToolCallsExceeded to be true")
-		}
-	})
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "agent <command>")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Available commands:")
+	fmt.Fprintln(w, "  tui      launch terminal UI")
+	fmt.Fprintln(w, "  serve    start HTTP/SSE server")
+	fmt.Fprintln(w, "  run      headless session execution")
+	fmt.Fprintln(w, "  doctor   environment diagnostics")
+	fmt.Fprintln(w, "  version  print version")
 }
 
 TURN 3
 TOOL CALL: apply_patch
 INPUT:
-{"patch": "*** Begin Patch\n*** Update File: internal/domain/domain_test.go\n@@\n \tt.Run(\"terminal state rejects all transitions\", func(t *testing.T) {\n \t\tt.Helper()\n \t\ta := NewAgent(\"a3\", \"s1\", \"\")\n-\t\terr := a.Transition(AgentStateCompleted)\n+\t\terr := a.Transition(AgentStateQueued)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"expected nil error moving to queued, got %v\", err)\n+\t\t}\n+\t\terr = a.Transition(AgentStateRunning)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"expected nil error moving to running, got %v\", err)\n+\t\t}\n+\t\terr = a.Transition(AgentStateCompleted)\n \t\tif err != nil {\n \t\t\tt.Fatalf(\"expected nil error moving to completed, got %v\", err)\n \t\t}\n*** End Patch"}
+{"patch": "*** Begin Patch\n*** Update File: cmd/agent/main.go\n@@\n \tcase \"run\":\n \t\trunRun(os.Stdout)\n \tdefault:\n-\t\tfmt.Fprintf(os.Stderr, \"unknown command: %s\n-\", os.Args[1])\n+\t\tfmt.Fprintf(os.Stderr, \"unknown command: %s\\n\", os.Args[1])\n \t\tos.Exit(1)\n \t}\n }\n*** End Patch"}
 TOOL RESULT: apply_patch
 OUTPUT:
 applied patch (1 file(s) changed)
 TURN 4
 TEXT:
-Made one targeted fix in `internal/domain/domain_test.go` for the first error class: the test incorrectly assumed `idle -> completed` was valid.
+Fixed the first error class in `cmd/agent/main.go`: corrected the broken multiline string in the default-case `fmt.Fprintf` call by replacing it with a proper escaped newline string literal.
 
-Updated the terminal-state test to reach `completed` through the valid path:
-
-- `idle -> queued`
-- `queued -> running`
-- `running -> completed`
-
-Then it still verifies `completed` rejects all further transitions.
-
-Session 3dc4bee3 completed in 23s
+Session c283f847 completed in 18s
 Turns: 4 | Tool calls: 3 (apply_patch: 1, bash: 2)
-Tokens: 9628 (in: 8306, out: 1322)
-Longest turn: 11s
+Tokens: 7370 (in: 6342, out: 1028)
+Longest turn: 6s

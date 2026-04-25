@@ -1283,3 +1283,234 @@ func TestBudget(t *testing.T) {
 [17:21:37] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
 [17:21:37] checkpoint_saved       checkpoint saved
 [17:21:37] stage_started          node=CommitSprint         executing node "CommitSprint"
+[17:21:37] decision_outcome       node=CommitSprint         node "CommitSprint" outcome: success
+[17:21:37] stage_completed        node=CommitSprint         node "CommitSprint" completed
+[17:21:37] decision_edge          node=CommitSprint         edge selected CommitSprint->mark_complete via weight
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=mark_complete        executing node "mark_complete"
+[17:21:37] decision_outcome       node=mark_complete        node "mark_complete" outcome: success
+[17:21:37] stage_completed        node=mark_complete        node "mark_complete" completed
+[17:21:37] decision_edge          node=mark_complete        edge selected mark_complete->report_progress via weight
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=report_progress      executing node "report_progress"
+[17:21:37] decision_outcome       node=report_progress      node "report_progress" outcome: success
+[17:21:37] stage_completed        node=report_progress      node "report_progress" completed
+[17:21:37] decision_edge          node=report_progress      edge selected report_progress->sprint_gate via weight
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=sprint_gate          executing node "sprint_gate"
+[17:21:37] decision_outcome       node=sprint_gate          node "sprint_gate" outcome: success
+[17:21:37] stage_completed        node=sprint_gate          node "sprint_gate" completed
+[17:21:37] decision_edge          node=sprint_gate          edge selected sprint_gate->skip_gate via label
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=skip_gate            executing node "skip_gate"
+[17:21:37] decision_outcome       node=skip_gate            node "skip_gate" outcome: success
+[17:21:37] stage_completed        node=skip_gate            node "skip_gate" completed
+[17:21:37] decision_edge          node=skip_gate            edge selected skip_gate->check_ledger via weight
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=check_ledger         executing node "check_ledger"
+[17:21:37] decision_outcome       node=check_ledger         node "check_ledger" outcome: success
+[17:21:37] stage_completed        node=check_ledger         node "check_ledger" completed
+[17:21:37] decision_condition     node=check_ledger         condition "ctx.tool_stdout = all_done" on edge check_ledger->Exit evaluated to false
+[17:21:37] decision_condition     node=check_ledger         condition "ctx.tool_stdout = no_ledger" on edge check_ledger->no_ledger_exit evaluated to false
+[17:21:37] decision_condition     node=check_ledger         condition "ctx.tool_stdout != all_done" on edge check_ledger->mark_in_progress evaluated to true
+[17:21:37] decision_edge          node=check_ledger         edge selected check_ledger->mark_in_progress via condition
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=mark_in_progress     executing node "mark_in_progress"
+[17:21:37] decision_outcome       node=mark_in_progress     node "mark_in_progress" outcome: success
+[17:21:37] stage_completed        node=mark_in_progress     node "mark_in_progress" completed
+[17:21:37] decision_edge          node=mark_in_progress     edge selected mark_in_progress->Setup via weight
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=Setup                executing node "Setup"
+[17:21:37] decision_outcome       node=Setup                node "Setup" outcome: success
+[17:21:37] stage_completed        node=Setup                node "Setup" completed
+[17:21:37] decision_edge          node=Setup                edge selected Setup->Generate via weight
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=Generate             executing node "Generate"
+[17:22:45] decision_outcome       node=Generate             node "Generate" outcome: success
+[17:22:45] stage_completed        node=Generate             node "Generate" completed
+[17:22:45] decision_edge          node=Generate             edge selected Generate->RunTests via weight
+[17:22:45] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 17/50)
+[17:22:45] decision_restart       node=RunTests             restart 17: clearing 16 nodes from "RunTests"
+[17:22:45] checkpoint_saved       checkpoint saved
+[17:22:45] stage_started          node=RunTests             executing node "RunTests"
+[17:22:45] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:22:45] stage_completed        node=RunTests             node "RunTests" completed
+[17:22:45] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:22:45] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:22:45] checkpoint_saved       checkpoint saved
+[17:22:45] stage_started          node=LocalFix             executing node "LocalFix"
+[17:23:15] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:23:15] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:23:15] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:23:15] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:23:15] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 18/50)
+[17:23:15] decision_restart       node=RunTests             restart 18: clearing 16 nodes from "RunTests"
+[17:23:15] checkpoint_saved       checkpoint saved
+[17:23:15] stage_started          node=RunTests             executing node "RunTests"
+[17:23:15] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:23:15] stage_completed        node=RunTests             node "RunTests" completed
+[17:23:15] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:23:15] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:23:15] checkpoint_saved       checkpoint saved
+[17:23:15] stage_started          node=LocalFix             executing node "LocalFix"
+[17:23:46] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:23:46] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:23:46] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:23:46] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:23:46] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 19/50)
+[17:23:46] decision_restart       node=RunTests             restart 19: clearing 16 nodes from "RunTests"
+[17:23:46] checkpoint_saved       checkpoint saved
+[17:23:46] stage_started          node=RunTests             executing node "RunTests"
+[17:23:47] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:23:47] stage_completed        node=RunTests             node "RunTests" completed
+[17:23:47] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:23:47] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:23:47] checkpoint_saved       checkpoint saved
+[17:23:47] stage_started          node=LocalFix             executing node "LocalFix"
+[17:24:21] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:24:21] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:24:21] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:24:21] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:24:21] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 20/50)
+[17:24:21] decision_restart       node=RunTests             restart 20: clearing 16 nodes from "RunTests"
+[17:24:21] checkpoint_saved       checkpoint saved
+[17:24:21] stage_started          node=RunTests             executing node "RunTests"
+[17:24:21] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:24:21] stage_completed        node=RunTests             node "RunTests" completed
+[17:24:21] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:24:21] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:24:21] checkpoint_saved       checkpoint saved
+[17:24:21] stage_started          node=LocalFix             executing node "LocalFix"
+[17:25:03] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:25:03] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:25:03] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:25:03] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:25:03] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 21/50)
+[17:25:03] decision_restart       node=RunTests             restart 21: clearing 16 nodes from "RunTests"
+[17:25:03] checkpoint_saved       checkpoint saved
+[17:25:03] stage_started          node=RunTests             executing node "RunTests"
+[17:25:03] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:25:03] stage_completed        node=RunTests             node "RunTests" completed
+[17:25:03] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:25:03] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:25:03] checkpoint_saved       checkpoint saved
+[17:25:03] stage_started          node=LocalFix             executing node "LocalFix"
+[17:25:03] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:25:03] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:25:03] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to false
+[17:25:03] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-exhausted" on edge LocalFix->CloudFix evaluated to true
+[17:25:03] decision_edge          node=LocalFix             edge selected LocalFix->CloudFix via condition
+[17:25:03] checkpoint_saved       checkpoint saved
+[17:25:03] stage_started          node=CloudFix             executing node "CloudFix"
+[17:25:03] llm start openai/gpt-5.4
+[17:25:09] llm tool prepare openai/gpt-5.4 name=bash
+[17:25:09] llm finish openai/gpt-5.4 reason=tool_calls tokens=984/386
+[17:25:09] [CloudFix] $ cat .ai/last_test_output.txt
+[17:25:09] [CloudFix]   # github.com/example/agent/cmd/agent
+cmd/agent/main.go:26:46: newline in string
+cmd/agent/main.go:26:46: syntax error: unexpected newline in argument list; possibly missing comma or )
+cmd/agent/main.go:27:15: newline in string
+FAIL	github.com/example/agent/cmd/agent [build failed]
+?   	github.com/example/agent/internal/app	[no test files]
+ok  	github.com/example/agent/internal/config	(cached)
+?   	github.com/example/agent/internal/core	[no test files]
+?   	github.com/example/agent/internal/core/agents	[no test files]
+?   	github.com/example/agent/internal/core/events	[no test files]
+?   	github.com/example/agent/internal/core/messages	[no test files]
+?   	github.com/example/agent/internal/core/orchestrator	[no test files]
+ok  	github.com/example/agent/internal/domain	(cached)
+ok  	github.com/example/agent/internal/domain/events	(cached)
+?   	github.com/example/agent/internal/policy	[no test files]
+?   	github.com/example/agent/internal/provider	[no test files]
+?   	github.com/example/agent/internal/provider/anthropic	[no test files]
+?   	github.com/example/agent/internal/provider/gemini	[no test files]
+?   	github.com/example/agent/internal/provider/ollama	[no test files]
+?   	github.com/example/agent/internal/provider/openai	[no test files]
+ok  	github.com/example/agent/internal/store	(cached)
+?   	github.com/example/agent/internal/tools	[no test files]
+?   	github.com/example/agent/internal/tools/bash	[no test files]
+?   	github.com/example/agent/internal/tools/glob	[no test files]
+?   	github.com/example/agent/internal/tools/read	[no test files]
+?   	github.com/example/agent/internal/tools/search	[no test files]
+?   	github.com/example/agent/internal/tools/webfetch	[no test files]
+?   	github.com/example/agent/internal/tools/write	[no test files]
+?   	github.com/example/agent/internal/tui	[no test files]
+?   	github.com/example/agent/internal/web	[no test files]
+?   	github.com/example/agent/internal/workspace	[no test files]
+ok  	github.com/example/agent/tests/integration	(cached)
+FAIL
+[17:25:09] llm start openai/gpt-5.4
+[17:25:13] llm tool prepare openai/gpt-5.4 name=bash
+[17:25:13] llm finish openai/gpt-5.4 reason=tool_calls tokens=1557/218
+[17:25:13] [CloudFix] $ cat cmd/agent/main.go
+[17:25:13] [CloudFix]   package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		printUsage(os.Stderr)
+		os.Exit(1)
+	}
+	switch os.Args[1] {
+	case "version":
+		runVersion()
+	case "doctor":
+		runDoctor()
+	case "tui":
+		runTUI(os.Stdout)
+	case "serve":
+		runServe(os.Stdout)
+	case "run":
+		runRun(os.Stdout)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s
+", os.Args[1])
+		os.Exit(1)
+	}
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "agent <command>")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Available commands:")
+	fmt.Fprintln(w, "  tui      launch terminal UI")
+	fmt.Fprintln(w, "  serve    start HTTP/SSE server")
+	fmt.Fprintln(w, "  run      headless session execution")
+	fmt.Fprintln(w, "  doctor   environment diagnostics")
+	fmt.Fprintln(w, "  version  print version")
+}
+[17:25:14] llm start openai/gpt-5.4
+[17:25:18] llm tool prepare openai/gpt-5.4 name=apply_patch
+[17:25:19] llm finish openai/gpt-5.4 reason=tool_calls tokens=1827/382
+[17:25:19] [CloudFix] ━ apply_patch: *** Begin Patch *** Update File: cmd/agent/main.go @@  	case "run":  		runRun(os.Stdout)  	default: -		fmt.Fprintf(os.S…
+[17:25:19] [CloudFix]   applied patch (1 file(s) changed)
+[17:25:20] llm start openai/gpt-5.4
+[17:25:21] llm text openai/gpt-5.4 preview="Fixed  the  first  error  class  in  ` cmd / agent /main .go `:  corrected  the…"
+[17:25:21] llm finish openai/gpt-5.4 reason=stop tokens=1974/42
+[17:25:21] decision_outcome       node=CloudFix             node "CloudFix" outcome: success
+[17:25:21] stage_completed        node=CloudFix             node "CloudFix" completed
+[17:25:21] decision_condition     node=CloudFix             condition "ctx.outcome = success" on edge CloudFix->RunTests evaluated to true
+[17:25:21] decision_edge          node=CloudFix             edge selected CloudFix->RunTests via condition
+[17:25:21] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 22/50)
+[17:25:21] decision_restart       node=RunTests             restart 22: clearing 16 nodes from "RunTests"
+[17:25:21] checkpoint_saved       checkpoint saved
+[17:25:21] stage_started          node=RunTests             executing node "RunTests"
+[17:25:21] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:25:21] stage_completed        node=RunTests             node "RunTests" completed
+[17:25:21] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to false
+[17:25:21] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail-cloud" on edge RunTests->CloudFix evaluated to false
+[17:25:21] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-pass" on edge RunTests->Audit evaluated to true
+[17:25:21] decision_edge          node=RunTests             edge selected RunTests->Audit via condition
+[17:25:21] checkpoint_saved       checkpoint saved
+[17:25:21] stage_started          node=Audit                executing node "Audit"
+[17:25:22] decision_outcome       node=Audit                node "Audit" outcome: success
+[17:25:22] stage_completed        node=Audit                node "Audit" completed
+[17:25:22] decision_condition     node=Audit                condition "ctx.tool_stdout contains audit-pass" on edge Audit->CommitSprint evaluated to true
+[17:25:22] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=CommitSprint         executing node "CommitSprint"

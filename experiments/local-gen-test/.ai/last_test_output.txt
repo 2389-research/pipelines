@@ -1,12 +1,12 @@
 ?   	github.com/example/agent/cmd/agent	[no test files]
 ?   	github.com/example/agent/internal/app	[no test files]
-?   	github.com/example/agent/internal/config	[no test files]
+ok  	github.com/example/agent/internal/config	(cached)
 ?   	github.com/example/agent/internal/core	[no test files]
 ?   	github.com/example/agent/internal/core/agents	[no test files]
 ?   	github.com/example/agent/internal/core/events	[no test files]
 ?   	github.com/example/agent/internal/core/messages	[no test files]
 ?   	github.com/example/agent/internal/core/orchestrator	[no test files]
-ok  	github.com/example/agent/internal/domain	0.190s
+ok  	github.com/example/agent/internal/domain	(cached)
 ok  	github.com/example/agent/internal/domain/events	(cached)
 ?   	github.com/example/agent/internal/policy	[no test files]
 ?   	github.com/example/agent/internal/provider	[no test files]

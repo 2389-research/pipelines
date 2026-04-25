@@ -1,21 +1,23 @@
 # Context Summary (fidelity: summary:medium)
 
-## last_response
-Fixed the first error class in `internal/domain/domain_test.go` by correcting the terminal-state test:
-
-- `idle -> completed` is now treated as valid
-- the test now asserts that once in `completed`, all further transitions are rejected
-- it also verifies the agent remains in `completed` after each rejected transition
-
-Stopped after this one targeted fix.
-
-## tool_stdout
-local fix attempt 7/4
-local model exhausted, handing off to cloud
-local-exhausted
-
 ## graph.goal
 Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge.
+
+## last_response
+Made one targeted fix in `internal/domain/domain_test.go` for the first error class: the test incorrectly assumed `idle -> completed` was valid.
+
+Updated the terminal-state test to reach `completed` through the valid path:
+
+- `idle -> queued`
+- `queued -> running`
+- `running -> completed`
+
+Then it still verifies `completed` rejects all further transitions.
+
+## tool_stdout
+local fix attempt 5/4
+local model exhausted, handing off to cloud
+local-exhausted
 
 ---
 

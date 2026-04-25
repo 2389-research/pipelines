@@ -1,0 +1,35 @@
+# Agent configuration example
+# Copy to agent.yaml and edit before running
+
+workspace_roots:
+  - /path/to/your/repo
+
+server:
+  bind: "127.0.0.1:8080"
+
+providers:
+  - name: openai
+    api_key: ${OPENAI_API_KEY}
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+  - name: ollama
+    api_key: ""
+    models:
+      - qwen3:8b
+      - gemma3:4b
+
+routing:
+  default_provider: openai
+  default_model: gpt-4o
+
+tool_policy:
+  auto_approve: false
+  denied_tools: []
+
+budget:
+  max_tokens: 100000
+  max_wall_clock: "30m"
+  max_tool_calls: 50
+  max_fork_depth: 3
+  max_child_concurrency: 2

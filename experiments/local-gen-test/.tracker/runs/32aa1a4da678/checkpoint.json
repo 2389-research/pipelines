@@ -12,17 +12,17 @@
     "graph.goal": "Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge.",
     "graph.llm_provider": "openai",
     "graph.max_restarts": "50",
-    "last_response": "Made one targeted fix in `internal/domain/domain_test.go` for the first error class: the test incorrectly assumed `idle -\u003e completed` was valid.\n\nUpdated the terminal-state test to reach `completed` through the valid path:\n\n- `idle -\u003e queued`\n- `queued -\u003e running`\n- `running -\u003e completed`\n\nThen it still verifies `completed` rejects all further transitions.",
+    "last_response": "Fixed the first error class in `cmd/agent/main.go`: corrected the broken multiline string in the default-case `fmt.Fprintf` call by replacing it with a proper escaped newline string literal.",
     "last_turns": "4",
     "outcome": "success",
     "preferred_label": "",
-    "response.CloudFix": "Made one targeted fix in `internal/domain/domain_test.go` for the first error class: the test incorrectly assumed `idle -\u003e completed` was valid.\n\nUpdated the terminal-state test to reach `completed` through the valid path:\n\n- `idle -\u003e queued`\n- `queued -\u003e running`\n- `running -\u003e completed`\n\nThen it still verifies `completed` rejects all further transitions.",
+    "response.CloudFix": "Fixed the first error class in `cmd/agent/main.go`: corrected the broken multiline string in the default-case `fmt.Fprintf` call by replacing it with a proper escaped newline string literal.",
     "suggested_next_nodes": "",
     "tool_stderr": "sh: line 44: [: 0\n0: integer expression expected",
-    "tool_stdout": "test count: sprint=0\n0 actual=8\naudit-pass"
+    "tool_stdout": "test count: sprint=0\n0 actual=12\naudit-pass"
   },
-  "timestamp": "2026-04-25T17:21:37.806345-05:00",
-  "restart_count": 16,
+  "timestamp": "2026-04-25T17:25:22.088944-05:00",
+  "restart_count": 22,
   "edge_selections": {
     "Audit": "CommitSprint",
     "CloudFix": "RunTests",

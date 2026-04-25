@@ -2,6 +2,6 @@
   "outcome": "success",
   "context_updates": {
     "tool_stderr": "sh: line 44: [: 0\n0: integer expression expected",
-    "tool_stdout": "test count: sprint=0\n0 actual=8\naudit-pass"
+    "tool_stdout": "test count: sprint=0\n0 actual=12\naudit-pass"
   }
 }
