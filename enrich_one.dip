@@ -1,0 +1,221 @@
+workflow EnrichOne
+  goal: "Enrich one thin sprint into a precise, machine-executable spec a local LLM can transcribe with zero judgment calls. Seed inlines NIFB BEFORE/AFTER pair from experiment 4."
+  start: Enrich
+  exit: Done
+
+  defaults
+    provider: anthropic
+
+  agent Enrich
+    label: "Enrich one sprint (Sonnet via Bedrock)"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_turns: 8
+    prompt:
+      You are working in `run.working_dir`.
+
+      Your job: take ONE thin sprint doc and enrich it into a precise,
+      machine-executable specification that a small local LLM (qwen3.6:35b
+      via Ollama, no internet, no tool calls, single generation pass per file)
+      can transcribe into working code with zero judgment calls. The executing
+      model copies — it does not invent.
+
+      ## Worked example: thin → enriched
+
+      The example below shows the transformation in concrete form. Note what
+      sections are added, what level of verbatim detail, what pinned versions,
+      what exact signatures, what test names. Match this density and style
+      when you enrich the target sprint, adapted to the target's language
+      and project conventions.
+
+      ### BEFORE — thin sprint (the shape you receive)
+
+      ```markdown
+      # Sprint 001 — Platform foundation & pilot seed
+      ## Scope
+      Stand up the application skeleton, shared test harness, core schema, and deterministic pilot-location fixtures so all later sprints build on the same baseline.
+      ## Non-goals
+      No volunteer-facing or staff-facing workflow is considered complete in this sprint.
+      ## Requirements
+      FR1, FR11
+      ## Dependencies
+      None
+      ## Expected Artifacts
+      - db/migrations/001_init.sql
+      - src/domain/schema.ts
+      - src/routes/health.ts
+      - src/bootstrap/test_app.ts
+      - tests/contracts/health_and_schema.test.ts
+      - tests/fixtures/pilot_location.json
+      ## DoD
+      - [x] Write failing test for app boot, health route, and base schema.
+      - [x] Create base tables for volunteers, volunteer_profiles, locations, stations, shifts, opportunities, registrations, group_registrations, waivers, orientation_completions, checkins, assignments, message_events, crm_links, crm_match_exceptions, pathway_submissions, audit_events, consent_events, and privacy_requests.
+      - [x] Add a health endpoint that returns app and dependency status.
+      - [x] Add deterministic pilot seed data for one location, one published shift, and two stations.
+      - [x] Add shared test bootstrap utilities so downstream sprints reuse the same seeded baseline.
+      - [x] Pass health and schema contract tests.
+      ## Validation
+      - `npm run db:migrate`
+      - `npm run seed:pilot`
+      - `npm test -- tests/contracts/health_and_schema.test.ts`
+      ```
+
+      ### AFTER — enriched sprint (the shape you must produce)
+
+      ```markdown
+      # Sprint NNN — [Title] (enriched spec)
+
+      ## Scope
+      [One paragraph. Expands the thin scope with language, runtime, and package names filled in.]
+
+      ## Runtime and conventions
+      - **[Language/runtime + version]** — test runner, module system, build tool
+      - **[Primary library or framework]** — version pinned (e.g. `somelibrary v1.2.3`)
+      - **[Key conventions]** — error-wrapping style, file layout, naming rules
+
+      ## Interface contract
+
+      ```[language]
+      // path/to/file.[ext]
+      [ExactSignature(param Type) ReturnType]
+
+      // path/to/types.[ext]
+      [Full struct/type/interface definitions go HERE — verbatim — not in Algorithm notes]
+
+      // path/to/other.[ext]
+      [AnotherSignature(param Type) ReturnType]
+      ```
+
+      ## Imports per file
+
+      **`path/to/file.[ext]`**
+      ```[language]
+      [exact import block — copy verbatim when writing this file]
+      ```
+
+      **`path/to/other.[ext]`**
+      ```[language]
+      [exact import block — copy verbatim when writing this file]
+      ```
+
+      ## Algorithm notes
+
+      Two-tier policy — pick tier per function to keep enriched length ≤ 500 lines:
+
+      **Tier A — verbatim body (use for AT MOST 3 functions per sprint).**
+      Reserve for functions where exact text matters: parsing, formatting,
+      tricky control flow, or where a numbered description would lose fidelity.
+
+      **FunctionName(params) ReturnType:** Copy this body exactly:
+      ```[language]
+      [verbatim implementation — no paraphrasing]
+      ```
+
+      **Tier B — signature + numbered steps (use for everything else,
+      including all CRUD, glue, wiring, and trivial accessors).**
+
+      **AnotherFunction(params) ReturnType:**
+      1. Step one — literal operation (name the exact call, arg, or field)
+      2. Step two — literal operation
+      3. ... 3 to 8 steps total; each step unambiguous
+
+      Type, struct, interface, and constant definitions belong in
+      `## Interface contract`, not here. Do NOT repeat them in Algorithm notes.
+
+      ## Test plan
+
+      ```
+      TestFunctionA/subtest name one
+      TestFunctionA/subtest name two
+      TestFunctionB/subtest name three
+      ```
+
+      ## New files
+      - `path/to/new_file.[ext]`
+      - `path/to/another.[ext]`
+
+      ## Modified files
+      - `path/to/existing.[ext]` — describe the change in a few words
+      - `path/to/prior_sprint_test.[ext]` — RECONCILE: replace `old assertion`
+        with `new assertion` (this sprint changed [thing] from [old] to [new],
+        and this prior-sprint test asserts on it)
+      ```
+
+      ## Steps
+
+      1. bash: `cat inputs/spec.md 2>/dev/null || cat .ai/spec_analysis.md 2>/dev/null || echo "(no spec available — anchor strictly to the thin sprint and prior enriched sprints; do NOT invent scope)"`
+         — read the full product spec for ground truth on exact types, function
+         behaviour, and conventions. Falls back to .ai/spec_analysis.md if
+         present, then to a no-spec mode where you must rely only on the thin
+         sprint and prior enriched sprints (Step 2).
+      2. bash: `for f in .ai/sprints/SPRINT-*.md; do grep -q '^## Interface contract' "$f" 2>/dev/null && { echo "=== $f ==="; cat "$f"; }; done`
+         — read previously-enriched sprints (those with an Interface contract
+         section) in this project for context on what packages, conventions,
+         and file layouts prior sprints established.
+      3. bash: `cat .ai/sprints/TARGET-SPRINT.md` — the ONE thin sprint to enrich.
+         The first heading line names the sprint id (e.g. "# Sprint 003 — ...").
+      4. Call the `write` tool to save the enriched sprint to
+         `.ai/sprints/SPRINT-<id>.md` (zero-pad the id to 3 digits, overwriting
+         the thin original), following the same structure and depth as the
+         AFTER example above, adapted for THIS sprint and the target project's
+         language.
+
+      ## Rules
+
+      - The enriched sprint must be self-contained. The executing local model
+        needs nothing else to produce correct, passing code.
+      - Match the AFTER example's structural depth: pinned module versions,
+        exact import blocks per file, exact test function names.
+      - **AFTER is illustrative, not canonical.** It shows ONE language's
+        section list. Add target-appropriate sections this sprint actually
+        needs (e.g. a dependency-declaration section for projects with
+        manifest-based dep management; a schema section for migration-bearing
+        sprints; a build-steps section for sprints with codegen). Drop
+        sections that don't apply. Don't over-enumerate — only what this
+        sprint needs.
+      - **Declarative state vs hand-patched artifacts.** Some files are
+        produced by language tooling (lockfiles like `go.sum`, `package-lock.json`,
+        `Cargo.lock`, `poetry.lock`; resolver-managed parts of dep manifests;
+        build outputs; vendored caches; generated code). For those, declare
+        the desired state and provide the exact CLI command the executor
+        should run (e.g. `go get pkg@version`, `npm install pkg@version`,
+        `cargo add pkg`, `pip install pkg==version`, `make migrate`,
+        `protoc <args>`). NEVER list lockfiles or other tool-output artifacts
+        under `## Modified files` for hand-patching — qwen guesses bytes
+        that won't match what the resolver downloads, breaking verification.
+        For dep-manifest files where humans hand-edit a section (e.g. the
+        scripts block of `package.json`), prefer the install command over
+        a hand-patch when one exists.
+      - **Length cap: ≤ 500 lines total.** Output-token ceiling is 8192;
+        going over truncates the doc mid-write and breaks transcription.
+        If you feel the urge to inline a 4th verbatim body, switch it to
+        Tier B (signature + numbered steps) instead.
+      - Type/struct/interface/constant definitions live in
+        `## Interface contract` only — never duplicated in Algorithm notes.
+      - Do not invent scope: every artifact, DoD item, and type must trace
+        back to the thin sprint, the spec, or a prior enriched sprint.
+      - File-listing format: use `## New files` and `## Modified files`
+        headers (not `## Expected Artifacts`). Each entry is a file path
+        (with filename), never a bare directory.
+      - **Cross-sprint reconciliation:** when this sprint changes a string,
+        signature, command-line flag, output format, or any other behavior
+        that a TEST in a prior sprint asserts on, you MUST list those prior-
+        sprint test files under `## Modified files` with the exact replacement
+        text inline (`RECONCILE: replace 'old' with 'new'`). The exec pipeline
+        treats anything under `## Modified files` as a patchable file, so this
+        is the channel for cross-sprint test fixture updates. Read the prior
+        enriched sprints (Step 2 above) to find tests that may need updating.
+        Common triggers: changing a CLI usage string, renaming an exported
+        function, changing a JSON field name, adding new sub-commands.
+
+      You have ONLY these tools: bash (read-only), write.
+      Do NOT use: edit, read, glob, grep_search, apply_patch.
+
+  tool Done
+    label: "Done"
+    timeout: 5s
+    command:
+      printf 'enrich-complete'
+
+  edges
+    Enrich -> Done

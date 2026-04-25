@@ -1,0 +1,94 @@
+Running in auto-approve mode — all human gates auto-approved
+
+╔═════════════════════════════╗
+║ ▀█▀ █▀█ █▀█ █▀▀ █▄▀ █▀▀ █▀█ ║
+║  █  █▀▄ █▀█ █▄▄ █ █ ██▄ █▀▄ ║
+╚═════════════════════════════╝
+              by 2389.ai
+  Because your agents deserve better plumbing.
+
+warning[DIP101]: node "no_ledger_exit" is only reachable through conditional edges and may be skipped at runtime
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:40:22
+  = help: add an unconditional edge to this node, or verify all conditions are exhaustive
+warning[DIP101]: node "mark_in_progress" is only reachable through conditional edges and may be skipped at runtime
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:47:24
+  = help: add an unconditional edge to this node, or verify all conditions are exhaustive
+warning[DIP101]: node "CloudFix" is only reachable through conditional edges and may be skipped at runtime
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:438:17
+  = help: add an unconditional edge to this node, or verify all conditions are exhaustive
+warning[DIP101]: node "CommitSprint" is only reachable through conditional edges and may be skipped at runtime
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:471:20
+  = help: add an unconditional edge to this node, or verify all conditions are exhaustive
+warning[DIP102]: node "check_ledger" has conditional outgoing edges but no unconditional default edge
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:23:20
+  = help: add an unconditional edge as a fallback, or ensure conditions are exhaustive
+warning[DIP102]: node "LocalFix" has conditional outgoing edges but no unconditional default edge
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:248:16
+  = help: add an unconditional edge as a fallback, or ensure conditions are exhaustive
+warning[DIP102]: node "Audit" has conditional outgoing edges but no unconditional default edge
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:382:13
+  = help: add an unconditional edge as a fallback, or ensure conditions are exhaustive
+hint[DIP125]: tool command binary "target=$(cat" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:47:24
+hint[DIP125]: tool command binary "SPRINT_ID=$(cat" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:61:13
+hint[DIP125]: tool command binary "SPRINT_ID=$(cat" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:79:16
+hint[DIP125]: tool command binary "set" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:221:16
+hint[DIP125]: tool command binary "set" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:248:16
+hint[DIP125]: tool command binary "set" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:382:13
+hint[DIP125]: tool command binary "SPRINT_ID=$(cat" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:471:20
+hint[DIP125]: tool command binary "target=$(cat" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:506:21
+hint[DIP125]: tool command binary "total=$(awk" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:520:23
+hint[DIP125]: tool command binary "now=$(date" not found on PATH
+  --> /Users/michaelsugimura/Documents/GitHub/pipelines/sprint_runner_local_gen_qwen.dip:537:17
+[17:08:57] pipeline_started       pipeline started
+[17:08:57] stage_started          node=Start                executing node "Start"
+[17:08:57] decision_outcome       node=Start                node "Start" outcome: success
+[17:08:57] stage_completed        node=Start                node "Start" completed
+[17:08:57] decision_edge          node=Start                edge selected Start->check_ledger via weight
+[17:08:57] checkpoint_saved       checkpoint saved
+[17:08:57] stage_started          node=check_ledger         executing node "check_ledger"
+[17:08:57] decision_outcome       node=check_ledger         node "check_ledger" outcome: success
+[17:08:57] stage_completed        node=check_ledger         node "check_ledger" completed
+[17:08:57] decision_condition     node=check_ledger         condition "ctx.tool_stdout = all_done" on edge check_ledger->Exit evaluated to false
+[17:08:57] decision_condition     node=check_ledger         condition "ctx.tool_stdout = no_ledger" on edge check_ledger->no_ledger_exit evaluated to false
+[17:08:57] decision_condition     node=check_ledger         condition "ctx.tool_stdout != all_done" on edge check_ledger->mark_in_progress evaluated to true
+[17:08:57] decision_edge          node=check_ledger         edge selected check_ledger->mark_in_progress via condition
+[17:08:57] checkpoint_saved       checkpoint saved
+[17:08:57] stage_started          node=mark_in_progress     executing node "mark_in_progress"
+[17:08:57] decision_outcome       node=mark_in_progress     node "mark_in_progress" outcome: success
+[17:08:57] stage_completed        node=mark_in_progress     node "mark_in_progress" completed
+[17:08:57] decision_edge          node=mark_in_progress     edge selected mark_in_progress->Setup via weight
+[17:08:57] checkpoint_saved       checkpoint saved
+[17:08:57] stage_started          node=Setup                executing node "Setup"
+[17:08:57] decision_outcome       node=Setup                node "Setup" outcome: success
+[17:08:57] stage_completed        node=Setup                node "Setup" completed
+[17:08:57] decision_edge          node=Setup                edge selected Setup->Generate via weight
+[17:08:57] checkpoint_saved       checkpoint saved
+[17:08:57] stage_started          node=Generate             executing node "Generate"
+[17:10:22] decision_outcome       node=Generate             node "Generate" outcome: success
+[17:10:22] stage_completed        node=Generate             node "Generate" completed
+[17:10:22] decision_edge          node=Generate             edge selected Generate->RunTests via weight
+[17:10:22] checkpoint_saved       checkpoint saved
+[17:10:22] stage_started          node=RunTests             executing node "RunTests"
+[17:10:22] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:10:22] stage_completed        node=RunTests             node "RunTests" completed
+[17:10:22] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to false
+[17:10:22] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail-cloud" on edge RunTests->CloudFix evaluated to false
+[17:10:22] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-pass" on edge RunTests->Audit evaluated to true
+[17:10:22] decision_edge          node=RunTests             edge selected RunTests->Audit via condition
+[17:10:22] checkpoint_saved       checkpoint saved
+[17:10:22] stage_started          node=Audit                executing node "Audit"
+[17:10:23] decision_outcome       node=Audit                node "Audit" outcome: success
+[17:10:23] stage_completed        node=Audit                node "Audit" completed
+[17:10:23] decision_condition     node=Audit                condition "ctx.tool_stdout contains audit-pass" on edge Audit->CommitSprint evaluated to true
+[17:10:23] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
+[17:10:23] checkpoint_saved       checkpoint saved
+[17:10:23] stage_started          node=CommitSprint         executing node "CommitSprint"

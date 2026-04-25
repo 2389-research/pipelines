@@ -1,0 +1,7 @@
+{
+  "outcome": "success",
+  "context_updates": {
+    "tool_stderr": "",
+    "tool_stdout": "setup-done"
+  }
+}

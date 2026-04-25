@@ -1,0 +1,521 @@
+workflow SpecToSprintsHybrid
+  goal: "Decompose a specification into .ai/ledger.tsv and SPRINT-*.md files — gpt-5.4 architect + nano executor hybrid for cost comparison."
+  start: Start
+  exit: Exit
+
+  defaults
+    model: gpt-5.4
+    provider: openai
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Begin spec-to-sprints decomposition pipeline (hybrid).
+
+  agent Exit
+    label: Exit
+    prompt:
+      Spec-to-sprints pipeline complete.
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found. Place a spec file in the working directory and re-run.
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    writes: spec_analysis
+    goal_gate: true
+    retry_target: analyze_spec
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read the spec file found by the previous step and produce a structured analysis.
+
+      Write .ai/spec_analysis.md with ALL sections:
+      - Project Summary
+      - Tech Stack
+      - Functional Requirements (numbered FR1-FRn, with spec section reference and acceptance criteria)
+      - Architectural Layers / Components (numbered, with dependencies)
+      - Dependency Graph
+      - Complexity Assessment
+      - Rollout Phases
+      - Open Questions
+
+      Only extract requirements explicitly stated in the spec. Note ambiguities in Open Questions.
+
+  parallel decompose_parallel -> decompose_a, decompose_b, decompose_c
+
+  agent decompose_a
+    label: "Decomposition A — Architect (Thoroughness)"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_a
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/spec_analysis.md. Your job is to make all structural decisions for the sprint decomposition,
+      then delegate the writing to a cheap executor via generate_code.
+
+      ## Step 1: Decide the sprint structure
+      Think through: dependency ordering, risk sequencing, FR coverage, sprint sizing.
+      Your emphasis: thoroughness — every FR covered, no orphaned requirements.
+
+      ## Step 2: Write a compact sprint contract
+      For each sprint, one block:
+        SPRINT NNN | Title | Complexity: low/medium/high
+        FRs: FR1, FR2, FR3
+        Deps: 001, 002 (or "none")
+        Scope: [2 sentences what this delivers]
+        Non-goals: [what is excluded]
+        Artifacts: app/models/x.py, tests/test_x.py (realistic paths from tech stack)
+        DoD: [5-8 items, pipe-separated, each machine-verifiable, first must be "Write failing test for X"]
+
+      Keep the contract compact — this is decisions only, not prose.
+      Target 8-20 sprints. Hard cap: 20.
+
+      ## Step 3: Call generate_code
+      Call generate_code with:
+      - contract: your compact sprint contract above, plus this output format spec:
+
+        OUTPUT FORMAT FOR EXECUTOR:
+        Write file: .ai/drafts/decomposition_a.md
+        Use separator: # === FILE: .ai/drafts/decomposition_a.md ===
+
+        For each sprint in the contract, expand to full markdown:
+        ### Sprint NNN — Title
+        **Scope:** [full sentences from contract]
+        **Non-goals:** [from contract]
+        **Requirements:** [FR IDs]
+        **Dependencies:** [sprint numbers or "None"]
+        **Expected Artifacts:**
+        - [file paths]
+        **DoD:**
+        - [ ] [each item from contract on its own line]
+        **Validation:**
+        - [test command or verification step per DoD item]
+        **Complexity:** low/medium/high
+
+      Do not write the decomposition file yourself. Only call generate_code.
+
+  agent decompose_b
+    label: "Decomposition B — Architect (Pragmatism)"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_b
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/spec_analysis.md. Your job is to make all structural decisions for the sprint decomposition,
+      then delegate the writing to a cheap executor via generate_code.
+
+      ## Step 1: Decide the sprint structure
+      Think through: execution order, parallelization opportunities, build feasibility.
+      Your emphasis: implementation pragmatism — what does a developer need working first?
+
+      ## Step 2: Write a compact sprint contract
+      For each sprint, one block:
+        SPRINT NNN | Title | Complexity: low/medium/high
+        FRs: FR1, FR2, FR3
+        Deps: 001, 002 (or "none")
+        Scope: [2 sentences what this delivers]
+        Non-goals: [what is excluded]
+        Artifacts: app/models/x.py, tests/test_x.py (realistic paths from tech stack)
+        DoD: [5-8 items, pipe-separated, each machine-verifiable, first must be "Write failing test for X"]
+
+      Keep the contract compact — this is decisions only, not prose.
+      Target 8-20 sprints. Hard cap: 20.
+
+      ## Step 3: Call generate_code
+      Call generate_code with:
+      - contract: your compact sprint contract above, plus this output format spec:
+
+        OUTPUT FORMAT FOR EXECUTOR:
+        Write file: .ai/drafts/decomposition_b.md
+        Use separator: # === FILE: .ai/drafts/decomposition_b.md ===
+
+        For each sprint in the contract, expand to full markdown:
+        ### Sprint NNN — Title
+        **Scope:** [full sentences from contract]
+        **Non-goals:** [from contract]
+        **Requirements:** [FR IDs]
+        **Dependencies:** [sprint numbers or "None"]
+        **Expected Artifacts:**
+        - [file paths]
+        **DoD:**
+        - [ ] [each item from contract on its own line]
+        **Validation:**
+        - [test command or verification step per DoD item]
+        **Complexity:** low/medium/high
+
+      Do not write the decomposition file yourself. Only call generate_code.
+
+  agent decompose_c
+    label: "Decomposition C — Architect (Robustness)"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_c
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/spec_analysis.md. Your job is to make all structural decisions for the sprint decomposition,
+      then delegate the writing to a cheap executor via generate_code.
+
+      ## Step 1: Decide the sprint structure
+      Think through: scope discipline, sprint size consistency, validation checkpoints, risk mitigation.
+      Your emphasis: delivery robustness — flag anything too large or with unclear validation.
+
+      ## Step 2: Write a compact sprint contract
+      For each sprint, one block:
+        SPRINT NNN | Title | Complexity: low/medium/high
+        FRs: FR1, FR2, FR3
+        Deps: 001, 002 (or "none")
+        Scope: [2 sentences what this delivers]
+        Non-goals: [what is excluded]
+        Artifacts: app/models/x.py, tests/test_x.py (realistic paths from tech stack)
+        DoD: [5-8 items, pipe-separated, each machine-verifiable, first must be "Write failing test for X"]
+
+      Keep the contract compact — this is decisions only, not prose.
+      Target 8-20 sprints. Hard cap: 20.
+
+      ## Step 3: Call generate_code
+      Call generate_code with:
+      - contract: your compact sprint contract above, plus this output format spec:
+
+        OUTPUT FORMAT FOR EXECUTOR:
+        Write file: .ai/drafts/decomposition_c.md
+        Use separator: # === FILE: .ai/drafts/decomposition_c.md ===
+
+        For each sprint in the contract, expand to full markdown:
+        ### Sprint NNN — Title
+        **Scope:** [full sentences from contract]
+        **Non-goals:** [from contract]
+        **Requirements:** [FR IDs]
+        **Dependencies:** [sprint numbers or "None"]
+        **Expected Artifacts:**
+        - [file paths]
+        **DoD:**
+        - [ ] [each item from contract on its own line]
+        **Validation:**
+        - [test command or verification step per DoD item]
+        **Complexity:** low/medium/high
+
+      Do not write the decomposition file yourself. Only call generate_code.
+
+  fan_in decompose_join <- decompose_a, decompose_b, decompose_c
+
+  parallel critique_parallel -> critique_a_on_b, critique_a_on_c, critique_b_on_a, critique_b_on_c, critique_c_on_a, critique_c_on_b
+
+  agent critique_a_on_b
+    label: "A critiques B"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_b, spec_analysis
+    prompt:
+      Read .ai/drafts/decomposition_b.md and .ai/spec_analysis.md.
+      Review for: missed FRs, dependency ordering errors, sizing issues, unclear DoD, missing validation.
+      For each issue: sprint number, issue type (missed-req/ordering/sizing/dod/validation), severity (critical/important/minor), specific description.
+
+  agent critique_a_on_c
+    label: "A critiques C"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_c, spec_analysis
+    prompt:
+      Read .ai/drafts/decomposition_c.md and .ai/spec_analysis.md.
+      Review for: missed FRs, dependency ordering errors, sizing issues, unclear DoD, missing validation.
+      For each issue: sprint number, issue type, severity, specific description.
+
+  agent critique_b_on_a
+    label: "B critiques A"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_a, spec_analysis
+    prompt:
+      Read .ai/drafts/decomposition_a.md and .ai/spec_analysis.md.
+      Review for: missed FRs, dependency ordering errors, sizing issues, unclear DoD, missing validation.
+      For each issue: sprint number, issue type, severity, specific description.
+
+  agent critique_b_on_c
+    label: "B critiques C"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_c, spec_analysis
+    prompt:
+      Read .ai/drafts/decomposition_c.md and .ai/spec_analysis.md.
+      Review for: missed FRs, dependency ordering errors, sizing issues, unclear DoD, missing validation.
+      For each issue: sprint number, issue type, severity, specific description.
+
+  agent critique_c_on_a
+    label: "C critiques A"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_a, spec_analysis
+    prompt:
+      Read .ai/drafts/decomposition_a.md and .ai/spec_analysis.md.
+      Review for: missed FRs, dependency ordering errors, sizing issues, unclear DoD, missing validation.
+      For each issue: sprint number, issue type, severity, specific description.
+
+  agent critique_c_on_b
+    label: "C critiques B"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_b, spec_analysis
+    prompt:
+      Read .ai/drafts/decomposition_b.md and .ai/spec_analysis.md.
+      Review for: missed FRs, dependency ordering errors, sizing issues, unclear DoD, missing validation.
+      For each issue: sprint number, issue type, severity, specific description.
+
+  fan_in critique_join <- critique_a_on_b, critique_a_on_c, critique_b_on_a, critique_b_on_c, critique_c_on_a, critique_c_on_b
+
+  agent merge_decomposition
+    label: "Merge Decomposition"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_a, decomposition_b, decomposition_c, spec_analysis
+    writes: sprint_plan
+    goal_gate: true
+    retry_target: merge_decomposition
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read the three decompositions (.ai/drafts/decomposition_a.md, _b.md, _c.md) and .ai/spec_analysis.md.
+      Synthesize into one final sprint plan incorporating the best from each and fixing critique issues.
+
+      Write .ai/sprint_plan.md. For each sprint:
+      ### Sprint NNN — Title
+      **Scope:** ...
+      **Non-goals:** ...
+      **Requirements:** FR IDs
+      **Dependencies:** sprint numbers
+      **Expected Artifacts:** file paths
+      **DoD:** - [ ] items
+      **Validation:** commands
+      **Complexity:** low/medium/high
+
+      Every FR must appear. No dependency cycles. Sequential IDs starting 001.
+
+  agent present_plan
+    label: "Present Sprint Plan"
+    model: gpt-5.4
+    provider: openai
+    reads: sprint_plan
+    reasoning_effort: medium
+    prompt:
+      Read .ai/sprint_plan.md and present a concise review summary:
+      1. Total sprint count
+      2. Sprint titles in order with dependencies
+      3. Requirement coverage gaps
+      4. Risk flags (too large, vague, unclear validation)
+
+  human approval_gate
+    label: "Approve Sprint Plan"
+
+  agent apply_feedback
+    label: "Apply Feedback"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: sprint_plan
+    writes: sprint_plan
+    prompt:
+      Read .ai/sprint_plan.md, incorporate the human's feedback, rewrite the file.
+      Preserve format. Update sprint numbers if sprints added/removed/reordered.
+
+  tool skip_approval
+    label: "Skip Approval"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      count="unknown"
+      if [ -f .ai/sprint_plan.md ]; then
+        count=$(grep -c '^### Sprint' .ai/sprint_plan.md || true)
+      fi
+      printf 'approved\t%s\t%s\tauto-skipped\n' "$count" "$now"
+
+  tool setup_workspace
+    label: "Setup .ai Workspace"
+    timeout: 10s
+    command:
+      set -eu
+      mkdir -p .ai/sprints .ai/drafts
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      fi
+      printf 'ready'
+
+  agent write_sprint_docs
+    label: "Write Sprint Docs — Architect"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: sprint_plan, spec_analysis
+    fallback_target: Exit
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/sprint_plan.md and .ai/spec_analysis.md.
+
+      Your job: delegate all file writing to nano via generate_code (single-call mode).
+
+      ## Step 1: Read the sprint plan
+      Read .ai/sprint_plan.md in full.
+
+      ## Step 2: Build the contract
+      Write a contract string that contains:
+      1. The full content of sprint_plan.md
+      2. This exact output instruction appended at the end:
+
+      OUTPUT INSTRUCTIONS:
+      Write every sprint as a separate file using this separator format:
+      # === FILE: .ai/sprints/SPRINT-NNN.md ===
+      (raw markdown content — NOT Python, NOT code, NOT string assignments)
+
+      Each file must be raw markdown with exactly these sections:
+      # Sprint NNN — Title
+      ## Scope
+      ## Non-goals
+      ## Requirements
+      ## Dependencies
+      ## Expected Artifacts
+      ## DoD
+      - [ ] item
+      ## Validation
+
+      IDs zero-padded 3-digit. Output ALL sprint files. No Python wrappers.
+
+      ## Step 3: Call generate_code
+      Pass:
+      - contract: your contract from Step 2
+      - output_dir: "."
+      Do NOT pass a files array. Use single-call mode only.
+
+      Do not write any files yourself. Only call generate_code.
+
+  tool write_ledger
+    label: "Write Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        id=$(basename "$f" .md | sed 's/SPRINT-//')
+        title=$(head -1 "$f" | sed 's/^# Sprint [0-9]* *[-—–]* *//' | sed 's/^# //' | tr -d '\t')
+        printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$title" "planned" "$now" "$now" >> .ai/ledger.tsv
+      done
+      count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      printf 'wrote-%s-sprints' "$count"
+
+  tool validate_output
+    label: "Validate Output"
+    timeout: 15s
+    command:
+      set -eu
+      errors=""
+      stray=$(ls SPRINT-*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$stray" -gt 0 ]; then errors="${errors}sprint-files-in-root "; fi
+      ledger_ids=$(awk -F '\t' 'NR>1{print $1}' .ai/ledger.tsv | sort)
+      file_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
+      if [ "$ledger_ids" != "$file_ids" ]; then errors="${errors}ledger-file-mismatch "; fi
+      if [ -z "$(awk 'NR>1' .ai/ledger.tsv)" ]; then errors="${errors}empty-ledger "; fi
+      if [ -n "$errors" ]; then
+        printf 'invalid-%s' "$errors"
+        exit 0
+      fi
+      printf 'valid'
+
+  tool commit_output
+    label: "Commit Output"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -d .git ]; then printf 'no-git-skipped'; exit 0; fi
+      for f in .ai/ledger.tsv .ai/sprints .ai/spec_analysis.md .ai/sprint_plan.md; do
+        [ -e "$f" ] && git add "$f"
+      done
+      if git diff --cached --quiet; then printf 'no-changes-skipped'; exit 0; fi
+      count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      git commit -m "feat(sprints): decompose spec into ${count} sprints [hybrid]"
+      printf 'committed-%s-sprints' "$count"
+
+  edges
+    Start -> find_spec
+    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found
+    no_spec_exit -> Exit
+    analyze_spec -> decompose_parallel
+    decompose_parallel -> decompose_a
+    decompose_parallel -> decompose_b
+    decompose_parallel -> decompose_c
+    decompose_a -> decompose_join
+    decompose_b -> decompose_join
+    decompose_c -> decompose_join
+    decompose_join -> critique_parallel
+    critique_parallel -> critique_a_on_b
+    critique_parallel -> critique_a_on_c
+    critique_parallel -> critique_b_on_a
+    critique_parallel -> critique_b_on_c
+    critique_parallel -> critique_c_on_a
+    critique_parallel -> critique_c_on_b
+    critique_a_on_b -> critique_join
+    critique_a_on_c -> critique_join
+    critique_b_on_a -> critique_join
+    critique_b_on_c -> critique_join
+    critique_c_on_a -> critique_join
+    critique_c_on_b -> critique_join
+    critique_join -> merge_decomposition
+    merge_decomposition -> present_plan
+    present_plan -> approval_gate
+    approval_gate -> apply_feedback  label: "[A] Revise plan"
+    approval_gate -> skip_approval  label: "[S] Approve / Skip"
+    apply_feedback -> approval_gate  restart: true
+    skip_approval -> setup_workspace
+    setup_workspace -> write_sprint_docs
+    write_sprint_docs -> write_ledger
+    write_ledger -> validate_output
+    validate_output -> commit_output  when ctx.tool_stdout = valid
+    validate_output -> write_sprint_docs  when ctx.tool_stdout != valid  restart: true
+    commit_output -> Exit

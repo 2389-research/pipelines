@@ -1,0 +1,36 @@
+{
+  "run_id": "32aa1a4da678",
+  "current_node": "CommitSprint",
+  "completed_nodes": [
+    "Start",
+    "check_ledger",
+    "mark_in_progress",
+    "Setup",
+    "Generate",
+    "RunTests",
+    "Audit"
+  ],
+  "retry_counts": {},
+  "context": {
+    "graph.default_fidelity": "summary:medium",
+    "graph.goal": "Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge.",
+    "graph.llm_provider": "openai",
+    "graph.max_restarts": "50",
+    "outcome": "success",
+    "preferred_label": "",
+    "suggested_next_nodes": "",
+    "tool_stderr": "sh: line 44: [: 0\n0: integer expression expected",
+    "tool_stdout": "test count: sprint=0\n0 actual=0\naudit-pass"
+  },
+  "timestamp": "2026-04-25T17:10:23.249592-05:00",
+  "restart_count": 0,
+  "edge_selections": {
+    "Audit": "CommitSprint",
+    "Generate": "RunTests",
+    "RunTests": "Audit",
+    "Setup": "Generate",
+    "Start": "check_ledger",
+    "check_ledger": "mark_in_progress",
+    "mark_in_progress": "Setup"
+  }
+}

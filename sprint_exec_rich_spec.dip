@@ -1,0 +1,153 @@
+workflow SprintExecRichSpec
+  goal: "Rich-spec path: skip the architect entirely. Nano reads the sprint and writes files directly via write tool. Strong model fixes after tests run."
+  start: Setup
+  exit: Done
+
+  defaults
+    provider: openai
+    fidelity: summary:low
+
+  tool Setup
+    label: "Setup Environment"
+    timeout: 120s
+    command:
+      set -eu
+      sprint=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | head -1)
+      if [ -z "$sprint" ]; then echo "no sprint doc found"; exit 1; fi
+      if grep -qi "typescript\|tsx\|npm\|node" "$sprint" 2>/dev/null; then
+        npm install 2>/dev/null || true
+      fi
+      if grep -qi "python\|fastapi\|pytest\|pip" "$sprint" 2>/dev/null; then
+        python3 -m venv .venv && .venv/bin/pip install -q fastapi httpx pytest pytest-asyncio pydantic uvicorn 2>/dev/null || true
+      fi
+      printf 'setup-done'
+
+  agent Generate
+    label: "Write files directly (nano)"
+    model: gpt-5.4-nano
+    provider: openai
+    max_turns: 12
+    prompt:
+      You are working in `run.working_dir`.
+
+      The sprint doc at .ai/sprints/SPRINT-*.md is a complete, precise specification.
+      It contains exact TypeScript/Python types, SQL DDL, function signatures, test
+      names, and rules. Your job: transcribe the spec into the files it describes.
+
+      Steps:
+      1. bash: cat .ai/sprints/SPRINT-*.md
+      2. For each path listed under Expected Artifacts, use write to create the file
+         with content that matches the spec exactly. Follow the types, imports, test
+         names, and rules verbatim — do not improve, restructure, or add features.
+      3. Stop when every Expected Artifact is written.
+
+      You have ONLY these tools: bash (for cat), write.
+      Do NOT run tests. Do NOT use: read, glob, grep_search, edit, apply_patch.
+      Do not stop to check your work — just write every file the spec describes.
+
+  tool RunTests
+    label: "Run Tests"
+    timeout: 120s
+    command:
+      set +e
+      if [ -f package.json ]; then
+        npm test 2>&1
+        if [ $? -eq 0 ]; then printf 'tests-pass'; else printf 'tests-fail'; fi
+      elif [ -d .venv ]; then
+        .venv/bin/python -m pytest tests/ -v 2>&1
+        if [ $? -eq 0 ]; then printf 'tests-pass'; else printf 'tests-fail'; fi
+      else
+        printf 'no-test-runner'
+      fi
+
+  tool Audit
+    label: "Audit Spec Coverage"
+    timeout: 30s
+    command:
+      set +e
+      sprint=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | head -1)
+      if [ -z "$sprint" ]; then printf 'audit-pass'; exit 0; fi
+
+      # Check each Expected Artifact file exists
+      awk '/^## Expected Artifacts/{flag=1; next} /^## /{flag=0} flag && /^- /{gsub(/^- `?/,""); gsub(/`?$/,""); print}' "$sprint" | while read -r path; do
+        [ -z "$path" ] && continue
+        if [ ! -f "$path" ]; then echo "missing-artifact: $path"; fi
+      done > /tmp/audit_artifacts.txt
+
+      # Count tests: spec's Test Plan vs actual test(... / it(... calls in tests/
+      spec_count=$(awk '/^## Test Plan/{flag=1; next} /^## /{flag=0} flag' "$sprint" | grep -cE "^test\(|^it\(")
+      actual_count=0
+      if [ -d tests ]; then
+        actual_count=$(grep -rhE "^\s*(test|it)\(" tests/ 2>/dev/null | wc -l | tr -d ' ')
+      fi
+
+      failures=$(cat /tmp/audit_artifacts.txt 2>/dev/null)
+      if [ "$spec_count" -gt 0 ] && [ "$actual_count" -lt "$spec_count" ]; then
+        failures="${failures} missing-tests:spec=${spec_count}-actual=${actual_count}"
+      fi
+
+      if [ -n "$failures" ]; then
+        echo "$failures"
+        printf 'audit-fail'
+      else
+        echo "artifacts ok; tests ${actual_count}/${spec_count}"
+        printf 'audit-pass'
+      fi
+
+  agent Fix
+    label: "Fix Failures (5.4, strategic edits)"
+    model: gpt-5.4
+    provider: openai
+    max_turns: 12
+    reasoning_effort: high
+    prompt:
+      You are working in `run.working_dir`.
+
+      Nano transcribed a sprint into code. Tests are failing. Your role is to make
+      STRATEGIC EDITS — the speedrun pattern: a strong model using the edit tool
+      surgically, one traceback at a time.
+
+      Allowed uses of bash (read-only ONLY):
+      - Run the test suite (npm test or .venv/bin/python -m pytest tests/ -v)
+      - cat <specific file>  to see its current content
+
+      Forbidden uses of bash (these break the strategic-edit pattern):
+      - NO sed -i, perl -pi, awk -i inplace — any in-place shell rewrite
+      - NO python/node one-liners that call writeFileSync/Path.write_text
+      - NO heredocs that redirect into files (`>`, `>>`, `tee`, `cat <<EOF >`)
+      - NO shell pipelines that modify files
+      If you find yourself escaping quotes inside a bash script to rewrite a file,
+      STOP — that's the wrong approach. Use the edit tool.
+
+      Loop:
+      1. bash: run tests.
+      2. For the first failure, bash: cat <file from traceback> if you don't already
+         know the current content.
+      3. edit(path, old_string, new_string) — change only the specific lines the
+         traceback identifies. One targeted edit per failure.
+      4. bash: re-run tests. Move on to the next failure.
+      Repeat until green. Never rewrite entire files.
+
+      You have ONLY these tools: bash (read-only), edit.
+      Do NOT use: read, glob, grep_search, write, apply_patch, generate_code.
+
+  agent Done
+    label: "Done"
+    model: gpt-5.4-nano
+    provider: openai
+    prompt:
+      Sprint execution complete (rich-spec path).
+
+  edges
+    Setup -> Generate
+    Generate -> RunTests
+    Generate -> RunTests      when ctx.outcome = fail
+    RunTests -> Fix           when ctx.tool_stdout contains tests-fail
+    RunTests -> Audit         when ctx.tool_stdout contains tests-pass
+    RunTests -> Audit
+    Fix -> Audit              when ctx.outcome = success
+    Fix -> Done               when ctx.outcome = fail
+    Fix -> Audit
+    Audit -> Done             when ctx.tool_stdout contains audit-pass
+    Audit -> Fix              when ctx.tool_stdout contains audit-fail  restart: true
+    Audit -> Done
