@@ -1,6 +1,6 @@
 sprint_id	title	status	created_at	updated_at
 000	Project Scaffold & Toolchain (enriched spec)	completed	2026-04-25T22:02:22Z	2026-04-25T22:10:23Z
 001	External Services & Dev Environment (enriched spec)	completed	2026-04-25T22:02:22Z	2026-04-25T22:11:25Z
-002	Hello World End-to-End Proof (enriched spec)	in_progress	2026-04-25T22:02:22Z	2026-04-25T22:11:25Z
-003	Core Domain Model & Event System (enriched spec)	planned	2026-04-25T22:02:22Z	2026-04-25T22:02:22Z
+002	Hello World End-to-End Proof (enriched spec)	completed	2026-04-25T22:02:22Z	2026-04-25T22:15:51Z
+003	Core Domain Model & Event System (enriched spec)	in_progress	2026-04-25T22:02:22Z	2026-04-25T22:15:51Z
 004	Configuration & CLI Entrypoints (enriched spec)	planned	2026-04-25T22:02:22Z	2026-04-25T22:02:22Z

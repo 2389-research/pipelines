@@ -1,49 +1,3 @@
-TURN 1
-TOOL CALL: bash
-INPUT:
-{"command":"cat .ai/last_test_output.txt","timeout":10}
-TOOL RESULT: bash
-OUTPUT:
-?   	github.com/example/agent/cmd/agent	[no test files]
-?   	github.com/example/agent/internal/app	[no test files]
-?   	github.com/example/agent/internal/config	[no test files]
-?   	github.com/example/agent/internal/core	[no test files]
-?   	github.com/example/agent/internal/core/agents	[no test files]
-?   	github.com/example/agent/internal/core/events	[no test files]
-?   	github.com/example/agent/internal/core/messages	[no test files]
-?   	github.com/example/agent/internal/core/orchestrator	[no test files]
---- FAIL: TestAgentStateTransitions (0.00s)
-    --- FAIL: TestAgentStateTransitions/terminal_state_rejects_all_transitions (0.00s)
-        domain_test.go:35: expected nil error moving to completed, got invalid transition idle → completed
-FAIL
-FAIL	github.com/example/agent/internal/domain	0.258s
-ok  	github.com/example/agent/internal/domain/events	(cached)
-?   	github.com/example/agent/internal/policy	[no test files]
-?   	github.com/example/agent/internal/provider	[no test files]
-?   	github.com/example/agent/internal/provider/anthropic	[no test files]
-?   	github.com/example/agent/internal/provider/gemini	[no test files]
-?   	github.com/example/agent/internal/provider/ollama	[no test files]
-?   	github.com/example/agent/internal/provider/openai	[no test files]
-ok  	github.com/example/agent/internal/store	(cached)
-?   	github.com/example/agent/internal/tools	[no test files]
-?   	github.com/example/agent/internal/tools/bash	[no test files]
-?   	github.com/example/agent/internal/tools/glob	[no test files]
-?   	github.com/example/agent/internal/tools/read	[no test files]
-?   	github.com/example/agent/internal/tools/search	[no test files]
-?   	github.com/example/agent/internal/tools/webfetch	[no test files]
-?   	github.com/example/agent/internal/tools/write	[no test files]
-?   	github.com/example/agent/internal/tui	[no test files]
-?   	github.com/example/agent/internal/web	[no test files]
-?   	github.com/example/agent/internal/workspace	[no test files]
-ok  	github.com/example/agent/tests/integration	(cached)
-FAIL
-
-TURN 2
-TOOL CALL: bash
-INPUT:
-{"command":"cat internal/domain/domain_test.go","timeout":10}
-TOOL RESULT: bash
-OUTPUT:
 package domain
 
 import (
@@ -81,7 +35,15 @@ func TestAgentStateTransitions(t *testing.T) {
 	t.Run("terminal state rejects all transitions", func(t *testing.T) {
 		t.Helper()
 		a := NewAgent("a3", "s1", "")
-		err := a.Transition(AgentStateCompleted)
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("expected nil error moving to queued, got %v", err)
+		}
+		err = a.Transition(AgentStateRunning)
+		if err != nil {
+			t.Fatalf("expected nil error moving to running, got %v", err)
+		}
+		err = a.Transition(AgentStateCompleted)
 		if err != nil {
 			t.Fatalf("expected nil error moving to completed, got %v", err)
 		}
@@ -198,27 +160,3 @@ func TestBudget(t *testing.T) {
 		}
 	})
 }
-
-TURN 3
-TOOL CALL: apply_patch
-INPUT:
-{"patch": "*** Begin Patch\n*** Update File: internal/domain/domain_test.go\n@@\n \tt.Run(\"terminal state rejects all transitions\", func(t *testing.T) {\n \t\tt.Helper()\n \t\ta := NewAgent(\"a3\", \"s1\", \"\")\n-\t\terr := a.Transition(AgentStateCompleted)\n+\t\terr := a.Transition(AgentStateQueued)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"expected nil error moving to queued, got %v\", err)\n+\t\t}\n+\t\terr = a.Transition(AgentStateRunning)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"expected nil error moving to running, got %v\", err)\n+\t\t}\n+\t\terr = a.Transition(AgentStateCompleted)\n \t\tif err != nil {\n \t\t\tt.Fatalf(\"expected nil error moving to completed, got %v\", err)\n \t\t}\n*** End Patch"}
-TOOL RESULT: apply_patch
-OUTPUT:
-applied patch (1 file(s) changed)
-TURN 4
-TEXT:
-Made one targeted fix in `internal/domain/domain_test.go` for the first error class: the test incorrectly assumed `idle -> completed` was valid.
-
-Updated the terminal-state test to reach `completed` through the valid path:
-
-- `idle -> queued`
-- `queued -> running`
-- `running -> completed`
-
-Then it still verifies `completed` rejects all further transitions.
-
-Session 3dc4bee3 completed in 23s
-Turns: 4 | Tool calls: 3 (apply_patch: 1, bash: 2)
-Tokens: 9628 (in: 8306, out: 1322)
-Longest turn: 11s

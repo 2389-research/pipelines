@@ -1,10 +1,16 @@
 # Context Summary (fidelity: summary:medium)
 
 ## last_response
-Fixed the unterminated string literal in `tests/integration/smoke_test.go` by converting the multiline `fmt.Fprintf` format string to a properly escaped Go string literal.
+Fixed the first error class in `internal/domain/domain_test.go` by correcting the terminal-state test:
+
+- `idle -> completed` is now treated as valid
+- the test now asserts that once in `completed`, all further transitions are rejected
+- it also verifies the agent remains in `completed` after each rejected transition
+
+Stopped after this one targeted fix.
 
 ## tool_stdout
-local fix attempt 6/4
+local fix attempt 7/4
 local model exhausted, handing off to cloud
 local-exhausted
 

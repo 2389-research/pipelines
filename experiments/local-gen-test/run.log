@@ -515,3 +515,771 @@ func TestSmoke(t *testing.T) {
 [17:15:51] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
 [17:15:51] checkpoint_saved       checkpoint saved
 [17:15:51] stage_started          node=CommitSprint         executing node "CommitSprint"
+[17:15:51] decision_outcome       node=CommitSprint         node "CommitSprint" outcome: success
+[17:15:51] stage_completed        node=CommitSprint         node "CommitSprint" completed
+[17:15:51] decision_edge          node=CommitSprint         edge selected CommitSprint->mark_complete via weight
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=mark_complete        executing node "mark_complete"
+[17:15:51] decision_outcome       node=mark_complete        node "mark_complete" outcome: success
+[17:15:51] stage_completed        node=mark_complete        node "mark_complete" completed
+[17:15:51] decision_edge          node=mark_complete        edge selected mark_complete->report_progress via weight
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=report_progress      executing node "report_progress"
+[17:15:51] decision_outcome       node=report_progress      node "report_progress" outcome: success
+[17:15:51] stage_completed        node=report_progress      node "report_progress" completed
+[17:15:51] decision_edge          node=report_progress      edge selected report_progress->sprint_gate via weight
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=sprint_gate          executing node "sprint_gate"
+[17:15:51] decision_outcome       node=sprint_gate          node "sprint_gate" outcome: success
+[17:15:51] stage_completed        node=sprint_gate          node "sprint_gate" completed
+[17:15:51] decision_edge          node=sprint_gate          edge selected sprint_gate->skip_gate via label
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=skip_gate            executing node "skip_gate"
+[17:15:51] decision_outcome       node=skip_gate            node "skip_gate" outcome: success
+[17:15:51] stage_completed        node=skip_gate            node "skip_gate" completed
+[17:15:51] decision_edge          node=skip_gate            edge selected skip_gate->check_ledger via weight
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=check_ledger         executing node "check_ledger"
+[17:15:51] decision_outcome       node=check_ledger         node "check_ledger" outcome: success
+[17:15:51] stage_completed        node=check_ledger         node "check_ledger" completed
+[17:15:51] decision_condition     node=check_ledger         condition "ctx.tool_stdout = all_done" on edge check_ledger->Exit evaluated to false
+[17:15:51] decision_condition     node=check_ledger         condition "ctx.tool_stdout = no_ledger" on edge check_ledger->no_ledger_exit evaluated to false
+[17:15:51] decision_condition     node=check_ledger         condition "ctx.tool_stdout != all_done" on edge check_ledger->mark_in_progress evaluated to true
+[17:15:51] decision_edge          node=check_ledger         edge selected check_ledger->mark_in_progress via condition
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=mark_in_progress     executing node "mark_in_progress"
+[17:15:51] decision_outcome       node=mark_in_progress     node "mark_in_progress" outcome: success
+[17:15:51] stage_completed        node=mark_in_progress     node "mark_in_progress" completed
+[17:15:51] decision_edge          node=mark_in_progress     edge selected mark_in_progress->Setup via weight
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=Setup                executing node "Setup"
+[17:15:51] decision_outcome       node=Setup                node "Setup" outcome: success
+[17:15:51] stage_completed        node=Setup                node "Setup" completed
+[17:15:51] decision_edge          node=Setup                edge selected Setup->Generate via weight
+[17:15:51] checkpoint_saved       checkpoint saved
+[17:15:51] stage_started          node=Generate             executing node "Generate"
+[17:18:07] decision_outcome       node=Generate             node "Generate" outcome: success
+[17:18:07] stage_completed        node=Generate             node "Generate" completed
+[17:18:07] decision_edge          node=Generate             edge selected Generate->RunTests via weight
+[17:18:07] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 9/50)
+[17:18:07] decision_restart       node=RunTests             restart 9: clearing 16 nodes from "RunTests"
+[17:18:07] checkpoint_saved       checkpoint saved
+[17:18:07] stage_started          node=RunTests             executing node "RunTests"
+[17:18:08] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:18:08] stage_completed        node=RunTests             node "RunTests" completed
+[17:18:08] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:18:08] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:18:08] checkpoint_saved       checkpoint saved
+[17:18:08] stage_started          node=LocalFix             executing node "LocalFix"
+[17:18:38] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:18:38] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:18:38] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:18:38] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:18:38] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 10/50)
+[17:18:38] decision_restart       node=RunTests             restart 10: clearing 16 nodes from "RunTests"
+[17:18:38] checkpoint_saved       checkpoint saved
+[17:18:38] stage_started          node=RunTests             executing node "RunTests"
+[17:18:38] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:18:38] stage_completed        node=RunTests             node "RunTests" completed
+[17:18:38] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:18:38] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:18:38] checkpoint_saved       checkpoint saved
+[17:18:38] stage_started          node=LocalFix             executing node "LocalFix"
+[17:19:10] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:19:10] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:19:10] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:19:10] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:19:10] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 11/50)
+[17:19:10] decision_restart       node=RunTests             restart 11: clearing 16 nodes from "RunTests"
+[17:19:10] checkpoint_saved       checkpoint saved
+[17:19:10] stage_started          node=RunTests             executing node "RunTests"
+[17:19:11] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:19:11] stage_completed        node=RunTests             node "RunTests" completed
+[17:19:11] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:19:11] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:19:11] checkpoint_saved       checkpoint saved
+[17:19:11] stage_started          node=LocalFix             executing node "LocalFix"
+[17:19:31] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:19:31] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:19:31] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:19:31] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:19:31] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 12/50)
+[17:19:31] decision_restart       node=RunTests             restart 12: clearing 16 nodes from "RunTests"
+[17:19:31] checkpoint_saved       checkpoint saved
+[17:19:31] stage_started          node=RunTests             executing node "RunTests"
+[17:19:32] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:19:32] stage_completed        node=RunTests             node "RunTests" completed
+[17:19:32] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:19:32] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:19:32] checkpoint_saved       checkpoint saved
+[17:19:32] stage_started          node=LocalFix             executing node "LocalFix"
+[17:20:04] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:20:04] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:20:04] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to true
+[17:20:04] decision_edge          node=LocalFix             edge selected LocalFix->RunTests via condition
+[17:20:04] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 13/50)
+[17:20:04] decision_restart       node=RunTests             restart 13: clearing 16 nodes from "RunTests"
+[17:20:04] checkpoint_saved       checkpoint saved
+[17:20:04] stage_started          node=RunTests             executing node "RunTests"
+[17:20:04] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:20:04] stage_completed        node=RunTests             node "RunTests" completed
+[17:20:04] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:20:04] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:20:04] checkpoint_saved       checkpoint saved
+[17:20:04] stage_started          node=LocalFix             executing node "LocalFix"
+[17:20:04] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:20:04] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:20:04] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to false
+[17:20:04] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-exhausted" on edge LocalFix->CloudFix evaluated to true
+[17:20:04] decision_edge          node=LocalFix             edge selected LocalFix->CloudFix via condition
+[17:20:04] checkpoint_saved       checkpoint saved
+[17:20:04] stage_started          node=CloudFix             executing node "CloudFix"
+[17:20:05] llm start openai/gpt-5.4
+[17:20:08] llm tool prepare openai/gpt-5.4 name=bash
+[17:20:08] llm finish openai/gpt-5.4 reason=tool_calls tokens=968/242
+[17:20:08] [CloudFix] $ cat .ai/last_test_output.txt
+[17:20:08] [CloudFix]   ?   	github.com/example/agent/cmd/agent	[no test files]
+?   	github.com/example/agent/internal/app	[no test files]
+?   	github.com/example/agent/internal/config	[no test files]
+?   	github.com/example/agent/internal/core	[no test files]
+?   	github.com/example/agent/internal/core/agents	[no test files]
+?   	github.com/example/agent/internal/core/events	[no test files]
+?   	github.com/example/agent/internal/core/messages	[no test files]
+?   	github.com/example/agent/internal/core/orchestrator	[no test files]
+--- FAIL: TestAgentStateTransitions (0.00s)
+    --- FAIL: TestAgentStateTransitions/terminal_state_rejects_all_transitions (0.00s)
+        domain_test.go:35: expected nil error for idle to completed, got invalid transition idle → completed
+FAIL
+FAIL	github.com/example/agent/internal/domain	0.236s
+ok  	github.com/example/agent/internal/domain/events	(cached)
+?   	github.com/example/agent/internal/policy	[no test files]
+?   	github.com/example/agent/internal/provider	[no test files]
+?   	github.com/example/agent/internal/provider/anthropic	[no test files]
+?   	github.com/example/agent/internal/provider/gemini	[no test files]
+?   	github.com/example/agent/internal/provider/ollama	[no test files]
+?   	github.com/example/agent/internal/provider/openai	[no test files]
+ok  	github.com/example/agent/internal/store	(cached)
+?   	github.com/example/agent/internal/tools	[no test files]
+?   	github.com/example/agent/internal/tools/bash	[no test files]
+?   	github.com/example/agent/internal/tools/glob	[no test files]
+?   	github.com/example/agent/internal/tools/read	[no test files]
+?   	github.com/example/agent/internal/tools/search	[no test files]
+?   	github.com/example/agent/internal/tools/webfetch	[no test files]
+?   	github.com/example/agent/internal/tools/write	[no test files]
+?   	github.com/example/agent/internal/tui	[no test files]
+?   	github.com/example/agent/internal/web	[no test files]
+?   	github.com/example/agent/internal/workspace	[no test files]
+ok  	github.com/example/agent/tests/integration	(cached)
+FAIL
+[17:20:09] llm start openai/gpt-5.4
+[17:20:18] llm tool prepare openai/gpt-5.4 name=bash
+[17:20:19] llm finish openai/gpt-5.4 reason=tool_calls tokens=1544/545
+[17:20:19] [CloudFix] $ cat internal/domain/domain_test.go
+[17:20:19] [CloudFix]   package domain
+
+import (
+	"testing"
+	"time"
+)
+
+func TestAgentStateTransitions(t *testing.T) {
+	t.Helper()
+
+	t.Run("idle to queued is valid", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a1", "s1", "")
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if a.State != AgentStateQueued {
+			t.Fatalf("expected state queued, got %s", a.State)
+		}
+	})
+
+	t.Run("idle to running is invalid", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a2", "s1", "")
+		err := a.Transition(AgentStateRunning)
+		if err == nil {
+			t.Fatal("expected non-nil error, got nil")
+		}
+		if a.State != AgentStateIdle {
+			t.Fatalf("expected state to remain idle, got %s", a.State)
+		}
+	})
+
+	t.Run("terminal state rejects all transitions", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a3", "s1", "")
+		err := a.Transition(AgentStateCompleted)
+		if err != nil {
+			t.Fatalf("expected nil error for idle to completed, got %v", err)
+		}
+		if a.State != AgentStateCompleted {
+			t.Fatalf("expected state completed, got %s", a.State)
+		}
+		err = a.Transition(AgentStateCancelled)
+		if err == nil {
+			t.Fatal("expected non-nil error, got nil")
+		}
+	})
+
+	t.Run("full happy path", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a4", "s1", "")
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("idle to queued: %v", err)
+		}
+		err = a.Transition(AgentStateRunning)
+		if err != nil {
+			t.Fatalf("queued to running: %v", err)
+		}
+		err = a.Transition(AgentStateCompleted)
+		if err != nil {
+			t.Fatalf("running to completed: %v", err)
+		}
+		if a.State != AgentStateCompleted {
+			t.Fatalf("expected state completed, got %s", a.State)
+		}
+	})
+}
+
+func TestSessionCreation(t *testing.T) {
+	t.Helper()
+
+	t.Run("creates root agent in idle state", func(t *testing.T) {
+		t.Helper()
+		s := NewSession("s1", "/tmp")
+		if s.RootAgentID == "" {
+			t.Fatal("expected RootAgentID to be set")
+		}
+		_, exists := s.Agents[s.RootAgentID]
+		if !exists {
+			t.Fatal("expected root agent to be in Agents map")
+		}
+		if s.Agents[s.RootAgentID].State != AgentStateIdle {
+			t.Fatalf("expected root agent state idle, got %s", s.Agents[s.RootAgentID].State)
+		}
+	})
+
+	t.Run("root agent has no parent", func(t *testing.T) {
+		t.Helper()
+		s := NewSession("s2", "/tmp")
+		rootAgent := s.Agents[s.RootAgentID]
+		if rootAgent.ParentID != "" {
+			t.Fatalf("expected root agent ParentID to be empty, got %s", rootAgent.ParentID)
+		}
+	})
+}
+
+func TestBudget(t *testing.T) {
+	t.Helper()
+
+	t.Run("tokens not exceeded when under limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 100, UsedTokens: 50}
+		if b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be false")
+		}
+	})
+
+	t.Run("tokens exceeded when over limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 100, UsedTokens: 101}
+		if !b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be true")
+		}
+	})
+
+	t.Run("zero max means no limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 0, UsedTokens: 9999}
+		if b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be false")
+		}
+	})
+
+	t.Run("wall clock exceeded", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxWallClock: time.Millisecond, StartedAt: time.Now().Add(-time.Second)}
+		if !b.WallClockExceeded() {
+			t.Fatal("expected WallClockExceeded to be true")
+		}
+	})
+
+	t.Run("tool calls exceeded", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxToolCalls: 5, UsedToolCalls: 6}
+		if !b.ToolCallsExceeded() {
+			t.Fatal("expected ToolCallsExceeded to be true")
+		}
+	})
+}
+[17:20:19] llm start openai/gpt-5.4
+[17:20:27] llm tool prepare openai/gpt-5.4 name=apply_patch
+[17:20:29] llm finish openai/gpt-5.4 reason=tool_calls tokens=2662/790
+[17:20:29] [CloudFix] ━ apply_patch: *** Begin Patch *** Update File: internal/domain/domain_test.go @@  	t.Run("terminal state rejects all transitions", fu…
+[17:20:29] [CloudFix]   applied patch (1 file(s) changed)
+[17:20:29] llm start openai/gpt-5.4
+[17:20:31] llm text openai/gpt-5.4 preview="Fixed  the  first  error  class  in  ` internal /domain /domain _test .go `  by…"
+[17:20:31] llm finish openai/gpt-5.4 reason=stop tokens=2955/50
+[17:20:31] decision_outcome       node=CloudFix             node "CloudFix" outcome: success
+[17:20:31] stage_completed        node=CloudFix             node "CloudFix" completed
+[17:20:31] decision_condition     node=CloudFix             condition "ctx.outcome = success" on edge CloudFix->RunTests evaluated to true
+[17:20:31] decision_edge          node=CloudFix             edge selected CloudFix->RunTests via condition
+[17:20:31] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 14/50)
+[17:20:31] decision_restart       node=RunTests             restart 14: clearing 16 nodes from "RunTests"
+[17:20:31] checkpoint_saved       checkpoint saved
+[17:20:31] stage_started          node=RunTests             executing node "RunTests"
+[17:20:31] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:20:31] stage_completed        node=RunTests             node "RunTests" completed
+[17:20:31] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:20:31] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:20:31] checkpoint_saved       checkpoint saved
+[17:20:31] stage_started          node=LocalFix             executing node "LocalFix"
+[17:20:31] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:20:31] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:20:31] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to false
+[17:20:31] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-exhausted" on edge LocalFix->CloudFix evaluated to true
+[17:20:31] decision_edge          node=LocalFix             edge selected LocalFix->CloudFix via condition
+[17:20:31] checkpoint_saved       checkpoint saved
+[17:20:31] stage_started          node=CloudFix             executing node "CloudFix"
+[17:20:32] llm start openai/gpt-5.4
+[17:20:35] llm tool prepare openai/gpt-5.4 name=bash
+[17:20:35] llm finish openai/gpt-5.4 reason=tool_calls tokens=955/209
+[17:20:35] [CloudFix] $ cat .ai/last_test_output.txt
+[17:20:35] [CloudFix]   ?   	github.com/example/agent/cmd/agent	[no test files]
+?   	github.com/example/agent/internal/app	[no test files]
+?   	github.com/example/agent/internal/config	[no test files]
+?   	github.com/example/agent/internal/core	[no test files]
+?   	github.com/example/agent/internal/core/agents	[no test files]
+?   	github.com/example/agent/internal/core/events	[no test files]
+?   	github.com/example/agent/internal/core/messages	[no test files]
+?   	github.com/example/agent/internal/core/orchestrator	[no test files]
+--- FAIL: TestAgentStateTransitions (0.00s)
+    --- FAIL: TestAgentStateTransitions/terminal_state_rejects_all_transitions (0.00s)
+        domain_test.go:35: expected non-nil error, got nil
+FAIL
+FAIL	github.com/example/agent/internal/domain	0.190s
+ok  	github.com/example/agent/internal/domain/events	(cached)
+?   	github.com/example/agent/internal/policy	[no test files]
+?   	github.com/example/agent/internal/provider	[no test files]
+?   	github.com/example/agent/internal/provider/anthropic	[no test files]
+?   	github.com/example/agent/internal/provider/gemini	[no test files]
+?   	github.com/example/agent/internal/provider/ollama	[no test files]
+?   	github.com/example/agent/internal/provider/openai	[no test files]
+ok  	github.com/example/agent/internal/store	(cached)
+?   	github.com/example/agent/internal/tools	[no test files]
+?   	github.com/example/agent/internal/tools/bash	[no test files]
+?   	github.com/example/agent/internal/tools/glob	[no test files]
+?   	github.com/example/agent/internal/tools/read	[no test files]
+?   	github.com/example/agent/internal/tools/search	[no test files]
+?   	github.com/example/agent/internal/tools/webfetch	[no test files]
+?   	github.com/example/agent/internal/tools/write	[no test files]
+?   	github.com/example/agent/internal/tui	[no test files]
+?   	github.com/example/agent/internal/web	[no test files]
+?   	github.com/example/agent/internal/workspace	[no test files]
+ok  	github.com/example/agent/tests/integration	(cached)
+FAIL
+[17:20:36] llm start openai/gpt-5.4
+[17:20:38] llm tool prepare openai/gpt-5.4 name=bash
+[17:20:38] llm finish openai/gpt-5.4 reason=tool_calls tokens=1525/147
+[17:20:38] [CloudFix] $ cat internal/domain/domain_test.go
+[17:20:38] [CloudFix]   package domain
+
+import (
+	"testing"
+	"time"
+)
+
+func TestAgentStateTransitions(t *testing.T) {
+	t.Helper()
+
+	t.Run("idle to queued is valid", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a1", "s1", "")
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if a.State != AgentStateQueued {
+			t.Fatalf("expected state queued, got %s", a.State)
+		}
+	})
+
+	t.Run("idle to running is invalid", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a2", "s1", "")
+		err := a.Transition(AgentStateRunning)
+		if err == nil {
+			t.Fatal("expected non-nil error, got nil")
+		}
+		if a.State != AgentStateIdle {
+			t.Fatalf("expected state to remain idle, got %s", a.State)
+		}
+	})
+
+	t.Run("terminal state rejects all transitions", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a3", "s1", "")
+		err := a.Transition(AgentStateCompleted)
+		if err == nil {
+			t.Fatal("expected non-nil error for idle to completed, got nil")
+		}
+		if a.State != AgentStateIdle {
+			t.Fatalf("expected state to remain idle, got %s", a.State)
+		}
+		err = a.Transition(AgentStateCancelled)
+		if err == nil {
+			t.Fatal("expected non-nil error, got nil")
+		}
+	})
+
+	t.Run("full happy path", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a4", "s1", "")
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("idle to queued: %v", err)
+		}
+		err = a.Transition(AgentStateRunning)
+		if err != nil {
+			t.Fatalf("queued to running: %v", err)
+		}
+		err = a.Transition(AgentStateCompleted)
+		if err != nil {
+			t.Fatalf("running to completed: %v", err)
+		}
+		if a.State != AgentStateCompleted {
+			t.Fatalf("expected state completed, got %s", a.State)
+		}
+	})
+}
+
+func TestSessionCreation(t *testing.T) {
+	t.Helper()
+
+	t.Run("creates root agent in idle state", func(t *testing.T) {
+		t.Helper()
+		s := NewSession("s1", "/tmp")
+		if s.RootAgentID == "" {
+			t.Fatal("expected RootAgentID to be set")
+		}
+		_, exists := s.Agents[s.RootAgentID]
+		if !exists {
+			t.Fatal("expected root agent to be in Agents map")
+		}
+		if s.Agents[s.RootAgentID].State != AgentStateIdle {
+			t.Fatalf("expected root agent state idle, got %s", s.Agents[s.RootAgentID].State)
+		}
+	})
+
+	t.Run("root agent has no parent", func(t *testing.T) {
+		t.Helper()
+		s := NewSession("s2", "/tmp")
+		rootAgent := s.Agents[s.RootAgentID]
+		if rootAgent.ParentID != "" {
+			t.Fatalf("expected root agent ParentID to be empty, got %s", rootAgent.ParentID)
+		}
+	})
+}
+
+func TestBudget(t *testing.T) {
+	t.Helper()
+
+	t.Run("tokens not exceeded when under limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 100, UsedTokens: 50}
+		if b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be false")
+		}
+	})
+
+	t.Run("tokens exceeded when over limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 100, UsedTokens: 101}
+		if !b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be true")
+		}
+	})
+
+	t.Run("zero max means no limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 0, UsedTokens: 9999}
+		if b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be false")
+		}
+	})
+
+	t.Run("wall clock exceeded", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxWallClock: time.Millisecond, StartedAt: time.Now().Add(-time.Second)}
+		if !b.WallClockExceeded() {
+			t.Fatal("expected WallClockExceeded to be true")
+		}
+	})
+
+	t.Run("tool calls exceeded", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxToolCalls: 5, UsedToolCalls: 6}
+		if !b.ToolCallsExceeded() {
+			t.Fatal("expected ToolCallsExceeded to be true")
+		}
+	})
+}
+[17:20:38] llm start openai/gpt-5.4
+[17:21:06] llm tool prepare openai/gpt-5.4 name=apply_patch
+[17:21:10] llm finish openai/gpt-5.4 reason=tool_calls tokens=2644/2231
+[17:21:10] [CloudFix] ━ apply_patch: *** Begin Patch *** Update File: internal/domain/domain_test.go @@  	t.Run("terminal state rejects all transitions", fu…
+[17:21:10] [CloudFix]   applied patch (1 file(s) changed)
+[17:21:11] llm start openai/gpt-5.4
+[17:21:12] llm text openai/gpt-5.4 preview="Fixed  the  first  error  class  in  ` internal /domain /domain _test .go `  by…"
+[17:21:12] llm finish openai/gpt-5.4 reason=stop tokens=3135/76
+[17:21:12] decision_outcome       node=CloudFix             node "CloudFix" outcome: success
+[17:21:12] stage_completed        node=CloudFix             node "CloudFix" completed
+[17:21:12] decision_condition     node=CloudFix             condition "ctx.outcome = success" on edge CloudFix->RunTests evaluated to true
+[17:21:12] decision_edge          node=CloudFix             edge selected CloudFix->RunTests via condition
+[17:21:12] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 15/50)
+[17:21:12] decision_restart       node=RunTests             restart 15: clearing 16 nodes from "RunTests"
+[17:21:12] checkpoint_saved       checkpoint saved
+[17:21:12] stage_started          node=RunTests             executing node "RunTests"
+[17:21:13] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:21:13] stage_completed        node=RunTests             node "RunTests" completed
+[17:21:13] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to true
+[17:21:13] decision_edge          node=RunTests             edge selected RunTests->LocalFix via condition
+[17:21:13] checkpoint_saved       checkpoint saved
+[17:21:13] stage_started          node=LocalFix             executing node "LocalFix"
+[17:21:13] decision_outcome       node=LocalFix             node "LocalFix" outcome: success
+[17:21:13] stage_completed        node=LocalFix             node "LocalFix" completed
+[17:21:13] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-fixed" on edge LocalFix->RunTests evaluated to false
+[17:21:13] decision_condition     node=LocalFix             condition "ctx.tool_stdout contains local-exhausted" on edge LocalFix->CloudFix evaluated to true
+[17:21:13] decision_edge          node=LocalFix             edge selected LocalFix->CloudFix via condition
+[17:21:13] checkpoint_saved       checkpoint saved
+[17:21:13] stage_started          node=CloudFix             executing node "CloudFix"
+[17:21:13] llm start openai/gpt-5.4
+[17:21:17] llm tool prepare openai/gpt-5.4 name=bash
+[17:21:18] llm finish openai/gpt-5.4 reason=tool_calls tokens=981/239
+[17:21:18] [CloudFix] $ cat .ai/last_test_output.txt
+[17:21:18] [CloudFix]   ?   	github.com/example/agent/cmd/agent	[no test files]
+?   	github.com/example/agent/internal/app	[no test files]
+?   	github.com/example/agent/internal/config	[no test files]
+?   	github.com/example/agent/internal/core	[no test files]
+?   	github.com/example/agent/internal/core/agents	[no test files]
+?   	github.com/example/agent/internal/core/events	[no test files]
+?   	github.com/example/agent/internal/core/messages	[no test files]
+?   	github.com/example/agent/internal/core/orchestrator	[no test files]
+--- FAIL: TestAgentStateTransitions (0.00s)
+    --- FAIL: TestAgentStateTransitions/terminal_state_rejects_all_transitions (0.00s)
+        domain_test.go:35: expected nil error moving to completed, got invalid transition idle → completed
+FAIL
+FAIL	github.com/example/agent/internal/domain	0.258s
+ok  	github.com/example/agent/internal/domain/events	(cached)
+?   	github.com/example/agent/internal/policy	[no test files]
+?   	github.com/example/agent/internal/provider	[no test files]
+?   	github.com/example/agent/internal/provider/anthropic	[no test files]
+?   	github.com/example/agent/internal/provider/gemini	[no test files]
+?   	github.com/example/agent/internal/provider/ollama	[no test files]
+?   	github.com/example/agent/internal/provider/openai	[no test files]
+ok  	github.com/example/agent/internal/store	(cached)
+?   	github.com/example/agent/internal/tools	[no test files]
+?   	github.com/example/agent/internal/tools/bash	[no test files]
+?   	github.com/example/agent/internal/tools/glob	[no test files]
+?   	github.com/example/agent/internal/tools/read	[no test files]
+?   	github.com/example/agent/internal/tools/search	[no test files]
+?   	github.com/example/agent/internal/tools/webfetch	[no test files]
+?   	github.com/example/agent/internal/tools/write	[no test files]
+?   	github.com/example/agent/internal/tui	[no test files]
+?   	github.com/example/agent/internal/web	[no test files]
+?   	github.com/example/agent/internal/workspace	[no test files]
+ok  	github.com/example/agent/tests/integration	(cached)
+FAIL
+[17:21:18] llm start openai/gpt-5.4
+[17:21:22] llm tool prepare openai/gpt-5.4 name=bash
+[17:21:23] llm finish openai/gpt-5.4 reason=tool_calls tokens=1556/275
+[17:21:23] [CloudFix] $ cat internal/domain/domain_test.go
+[17:21:23] [CloudFix]   package domain
+
+import (
+	"testing"
+	"time"
+)
+
+func TestAgentStateTransitions(t *testing.T) {
+	t.Helper()
+
+	t.Run("idle to queued is valid", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a1", "s1", "")
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if a.State != AgentStateQueued {
+			t.Fatalf("expected state queued, got %s", a.State)
+		}
+	})
+
+	t.Run("idle to running is invalid", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a2", "s1", "")
+		err := a.Transition(AgentStateRunning)
+		if err == nil {
+			t.Fatal("expected non-nil error, got nil")
+		}
+		if a.State != AgentStateIdle {
+			t.Fatalf("expected state to remain idle, got %s", a.State)
+		}
+	})
+
+	t.Run("terminal state rejects all transitions", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a3", "s1", "")
+		err := a.Transition(AgentStateCompleted)
+		if err != nil {
+			t.Fatalf("expected nil error moving to completed, got %v", err)
+		}
+		if a.State != AgentStateCompleted {
+			t.Fatalf("expected state completed, got %s", a.State)
+		}
+
+		for _, next := range []AgentState{
+			AgentStateIdle,
+			AgentStateQueued,
+			AgentStateRunning,
+			AgentStateCompleted,
+			AgentStateCancelled,
+		} {
+			err = a.Transition(next)
+			if err == nil {
+				t.Fatalf("expected non-nil error for completed to %s, got nil", next)
+			}
+			if a.State != AgentStateCompleted {
+				t.Fatalf("expected state to remain completed, got %s", a.State)
+			}
+		}
+	})
+
+	t.Run("full happy path", func(t *testing.T) {
+		t.Helper()
+		a := NewAgent("a4", "s1", "")
+		err := a.Transition(AgentStateQueued)
+		if err != nil {
+			t.Fatalf("idle to queued: %v", err)
+		}
+		err = a.Transition(AgentStateRunning)
+		if err != nil {
+			t.Fatalf("queued to running: %v", err)
+		}
+		err = a.Transition(AgentStateCompleted)
+		if err != nil {
+			t.Fatalf("running to completed: %v", err)
+		}
+		if a.State != AgentStateCompleted {
+			t.Fatalf("expected state completed, got %s", a.State)
+		}
+	})
+}
+
+func TestSessionCreation(t *testing.T) {
+	t.Helper()
+
+	t.Run("creates root agent in idle state", func(t *testing.T) {
+		t.Helper()
+		s := NewSession("s1", "/tmp")
+		if s.RootAgentID == "" {
+			t.Fatal("expected RootAgentID to be set")
+		}
+		_, exists := s.Agents[s.RootAgentID]
+		if !exists {
+			t.Fatal("expected root agent to be in Agents map")
+		}
+		if s.Agents[s.RootAgentID].State != AgentStateIdle {
+			t.Fatalf("expected root agent state idle, got %s", s.Agents[s.RootAgentID].State)
+		}
+	})
+
+	t.Run("root agent has no parent", func(t *testing.T) {
+		t.Helper()
+		s := NewSession("s2", "/tmp")
+		rootAgent := s.Agents[s.RootAgentID]
+		if rootAgent.ParentID != "" {
+			t.Fatalf("expected root agent ParentID to be empty, got %s", rootAgent.ParentID)
+		}
+	})
+}
+
+func TestBudget(t *testing.T) {
+	t.Helper()
+
+	t.Run("tokens not exceeded when under limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 100, UsedTokens: 50}
+		if b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be false")
+		}
+	})
+
+	t.Run("tokens exceeded when over limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 100, UsedTokens: 101}
+		if !b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be true")
+		}
+	})
+
+	t.Run("zero max means no limit", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxTokens: 0, UsedTokens: 9999}
+		if b.TokensExceeded() {
+			t.Fatal("expected TokensExceeded to be false")
+		}
+	})
+
+	t.Run("wall clock exceeded", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxWallClock: time.Millisecond, StartedAt: time.Now().Add(-time.Second)}
+		if !b.WallClockExceeded() {
+			t.Fatal("expected WallClockExceeded to be true")
+		}
+	})
+
+	t.Run("tool calls exceeded", func(t *testing.T) {
+		t.Helper()
+		b := Budget{MaxToolCalls: 5, UsedToolCalls: 6}
+		if !b.ToolCallsExceeded() {
+			t.Fatal("expected ToolCallsExceeded to be true")
+		}
+	})
+}
+[17:21:23] llm start openai/gpt-5.4
+[17:21:31] llm tool prepare openai/gpt-5.4 name=apply_patch
+[17:21:34] llm finish openai/gpt-5.4 reason=tool_calls tokens=2753/729
+[17:21:34] [CloudFix] ━ apply_patch: *** Begin Patch *** Update File: internal/domain/domain_test.go @@  	t.Run("terminal state rejects all transitions", fu…
+[17:21:34] [CloudFix]   applied patch (1 file(s) changed)
+[17:21:34] llm start openai/gpt-5.4
+[17:21:36] llm text openai/gpt-5.4 preview="Made  one  targeted  fix  in  ` internal /domain /domain _test .go `  for  the …"
+[17:21:36] llm finish openai/gpt-5.4 reason=stop tokens=3016/79
+[17:21:36] decision_outcome       node=CloudFix             node "CloudFix" outcome: success
+[17:21:36] stage_completed        node=CloudFix             node "CloudFix" completed
+[17:21:36] decision_condition     node=CloudFix             condition "ctx.outcome = success" on edge CloudFix->RunTests evaluated to true
+[17:21:36] decision_edge          node=CloudFix             edge selected CloudFix->RunTests via condition
+[17:21:36] loop_restart           node=RunTests             loop detected, restarting from "RunTests" (restart 16/50)
+[17:21:36] decision_restart       node=RunTests             restart 16: clearing 16 nodes from "RunTests"
+[17:21:36] checkpoint_saved       checkpoint saved
+[17:21:36] stage_started          node=RunTests             executing node "RunTests"
+[17:21:36] decision_outcome       node=RunTests             node "RunTests" outcome: success
+[17:21:36] stage_completed        node=RunTests             node "RunTests" completed
+[17:21:36] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail" on edge RunTests->LocalFix evaluated to false
+[17:21:36] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-fail-cloud" on edge RunTests->CloudFix evaluated to false
+[17:21:36] decision_condition     node=RunTests             condition "ctx.tool_stdout contains tests-pass" on edge RunTests->Audit evaluated to true
+[17:21:36] decision_edge          node=RunTests             edge selected RunTests->Audit via condition
+[17:21:36] checkpoint_saved       checkpoint saved
+[17:21:36] stage_started          node=Audit                executing node "Audit"
+[17:21:37] decision_outcome       node=Audit                node "Audit" outcome: success
+[17:21:37] stage_completed        node=Audit                node "Audit" completed
+[17:21:37] decision_condition     node=Audit                condition "ctx.tool_stdout contains audit-pass" on edge Audit->CommitSprint evaluated to true
+[17:21:37] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
+[17:21:37] checkpoint_saved       checkpoint saved
+[17:21:37] stage_started          node=CommitSprint         executing node "CommitSprint"

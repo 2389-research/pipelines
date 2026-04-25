@@ -1,7 +1,7 @@
 {
   "outcome": "success",
   "context_updates": {
-    "tool_stderr": "",
-    "tool_stdout": "test count: sprint=1 actual=4\naudit-pass"
+    "tool_stderr": "sh: line 44: [: 0\n0: integer expression expected",
+    "tool_stdout": "test count: sprint=0\n0 actual=8\naudit-pass"
   }
 }
