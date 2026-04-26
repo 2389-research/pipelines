@@ -134,6 +134,225 @@ workflow GreenfieldSynthesis
 
       This module map is the PRIMARY input for L3 deep spec agents. It must be comprehensive.
 
+  parallel DeepSpecsParallel -> DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
+
+  agent DeepDiveAnalyzer
+    label: "Deep Dive Analyzer"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Deep Dive Analyzer for Greenfield reverse engineering.
+
+      ## Input boundary
+      Read L2 summary files ONLY — do NOT read raw L1 chunks:
+      - workspace/raw/synthesis/module-map.md
+      - workspace/raw/synthesis/features/
+      - workspace/raw/synthesis/architecture/
+      - workspace/raw/synthesis/api/
+      - workspace/raw/synthesis/behavioral-summaries/
+
+      ## Your job
+      Write per-module behavioral specs. For each module in the module map:
+      1. Describe what the module does (behavior, not implementation)
+      2. Document all states, transitions, decision points
+      3. Document error handling behavior
+      4. Write to workspace/raw/specs/modules/<module-name>.md
+
+      If workspace/raw/specs/gate1-findings.md exists, read it and address the findings.
+
+      Every claim needs provenance: <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=deep-dive-analyzer -->
+
+  agent BehaviorDocumenter
+    label: "Behavior Documenter"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Behavior Documenter for Greenfield reverse engineering.
+
+      ## Input boundary
+      Read L2 summary files ONLY (workspace/raw/synthesis/).
+
+      Write behavioral documentation with provenance for each behavioral domain.
+      Focus on observable behaviors, state machines, and decision logic.
+      Write to workspace/raw/specs/modules/ (complement DeepDiveAnalyzer's output).
+
+  agent UserJourneyAnalyzer
+    label: "User Journey Analyzer"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the User Journey Analyzer for Greenfield reverse engineering.
+
+      ## Input boundary
+      Read L2 summary files ONLY (workspace/raw/synthesis/).
+
+      Map end-to-end user journeys:
+      1. Identify all entry points (CLI commands, API calls, UI interactions)
+      2. Trace each journey from input to output
+      3. Document happy paths and error paths
+      4. Write to workspace/raw/specs/journeys/
+
+      Every claim needs provenance.
+
+  agent ContractExtractor
+    label: "Contract Extractor"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Contract Extractor for Greenfield reverse engineering.
+
+      ## Input boundary
+      Read L2 summary files ONLY (workspace/raw/synthesis/).
+
+      Extract dependency contracts and protocol specs:
+      1. External API contracts (what the software calls)
+      2. Internal protocol specs (wire formats, serialization)
+      3. Dependency API contracts (what breaks if deps change)
+      4. Write to workspace/raw/specs/contracts/
+
+      Every claim needs provenance.
+
+  fan_in DeepSpecsJoin <- DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
+
+  tool Gate1ToolCheck
+    label: "Gate 1 Tool Check"
+    timeout: 30s
+    command:
+      set -eu
+      errors=""
+      retries=0
+      if [ -f "workspace/.gate1-retries" ]; then
+        retries=$(cat "workspace/.gate1-retries")
+      fi
+      retries=$((retries + 1))
+      printf '%s' "$retries" > "workspace/.gate1-retries"
+      if [ "$retries" -gt 3 ]; then
+        printf 'budget-exhausted'
+        exit 0
+      fi
+      spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$spec_count" -eq 0 ]; then errors="${errors}no-specs "; fi
+      no_cite=$(find "workspace/raw/specs/modules/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rL "<!-- cite:" 2>/dev/null | wc -l)
+      if [ "$no_cite" -gt 0 ]; then errors="${errors}missing-provenance-${no_cite}-files "; fi
+      if [ ! -f "workspace/raw/synthesis/module-map.md" ]; then errors="${errors}no-module-map "; fi
+      journey_count=$(find "workspace/raw/specs/journeys/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$journey_count" -eq 0 ]; then errors="${errors}no-journeys "; fi
+      if [ -n "$errors" ]; then
+        printf 'invalid-%s' "$errors"
+        exit 0
+      fi
+      rm -f "workspace/.gate1-retries"
+      printf 'gate1-pass'
+
+  agent Gate1AgentReview
+    label: "Gate 1 Agent Review"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    max_retries: 3
+    retry_target: DeepDiveAnalyzer
+    fallback_target: Gate1Failed
+    prompt:
+      You are the Gate 1 quality reviewer. Evaluate the behavioral specs in workspace/raw/specs/.
+
+      Check for:
+      1. Contradictions between specs
+      2. Ratio of assumed vs confirmed claims (most should be confirmed or inferred)
+      3. Constants and crypto values verified against evidence
+      4. Overall spec quality and depth
+
+      Write findings to workspace/raw/specs/gate1-findings.md.
+
+      STATUS: success if specs are sound. STATUS: fail if material issues found.
+
+  tool Gate1bCompleteness
+    label: "Gate 1b Completeness Check"
+    timeout: 30s
+    command:
+      set -eu
+      retries=0
+      if [ -f "workspace/.gate1b-retries" ]; then
+        retries=$(cat "workspace/.gate1b-retries")
+      fi
+      retries=$((retries + 1))
+      printf '%s' "$retries" > "workspace/.gate1b-retries"
+      if [ "$retries" -gt 2 ]; then
+        printf 'budget-exhausted'
+        exit 0
+      fi
+      gaps=""
+      if [ -d "workspace/raw/source/analysis" ]; then
+        for chunk in workspace/raw/source/analysis/chunk-*.md; do
+          [ -f "$chunk" ] || continue
+          base=$(basename "$chunk")
+          if ! grep -rq "$base" "workspace/raw/specs/" 2>/dev/null; then
+            gaps="${gaps}${base} "
+          fi
+        done
+      fi
+      if [ -n "$gaps" ]; then
+        printf 'gaps-%s' "$gaps"
+        exit 0
+      fi
+      rm -f "workspace/.gate1b-retries"
+      printf 'gate1b-pass'
+
+  agent Gate1bAgent
+    label: "Gate 1b Completeness Review"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    max_retries: 2
+    retry_target: JourneyContractRemediation
+    fallback_target: Gate1Failed
+    prompt:
+      You are the Gate 1b completeness reviewer. Verify every user-facing surface is captured in specs.
+
+      Read the gap list from the Gate 1b tool check. Assess whether the gaps represent missing behavioral coverage or are benign (e.g., utility code with no user-facing behavior).
+
+      Write findings to workspace/raw/specs/gate1b-findings.md.
+
+      STATUS: success if coverage is adequate. STATUS: fail if material gaps exist.
+
+  agent JourneyContractRemediation
+    label: "Journey/Contract Remediation"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Journey/Contract Remediation agent. Gate 1b found completeness gaps.
+
+      Read workspace/raw/specs/gate1b-findings.md.
+      Read L2 synthesis files for context (workspace/raw/synthesis/).
+
+      Write the missing journey/contract specs to fill the gaps. Do NOT re-run all L3 analysis — only fill the specific gaps identified.
+
+      Write new specs to workspace/raw/specs/journeys/ or workspace/raw/specs/contracts/ as appropriate.
+
+  tool WriteL2L3Summary
+    label: "Write L2/L3 Summary"
+    timeout: 10s
+    command:
+      set -eu
+      spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      journey_count=$(find "workspace/raw/specs/journeys/" -name "*.md" 2>/dev/null | wc -l)
+      contract_count=$(find "workspace/raw/specs/contracts/" -name "*.md" 2>/dev/null | wc -l)
+      printf 'summary-specs-%s-journeys-%s-contracts-%s' "$spec_count" "$journey_count" "$contract_count"
+
+  agent Gate1Failed
+    label: "Gate 1 Failed"
+    max_turns: 1
+    prompt:
+      Gate 1 or Gate 1b has exhausted its retry budget. Read workspace/raw/specs/gate1-findings.md and/or gate1b-findings.md.
+      Report what passed and what failed. Write workspace/.synthesis-failed with the failure reason.
+      HARD CONSTRAINT: Do NOT fix anything. Report only.
+
   edges
     Start -> ReadL1Summary
     ReadL1Summary -> SynthesisParallel  when ctx.tool_stdout startswith l1-ready  label: l1_ok
@@ -148,4 +367,30 @@ workflow GreenfieldSynthesis
     ApiExtractor -> SynthesisJoin
     ModuleMapper -> SynthesisJoin
     SynthesisJoin -> Synthesizer
-    Synthesizer -> Exit
+    Synthesizer -> DeepSpecsParallel
+    DeepSpecsParallel -> DeepDiveAnalyzer
+    DeepSpecsParallel -> BehaviorDocumenter
+    DeepSpecsParallel -> UserJourneyAnalyzer
+    DeepSpecsParallel -> ContractExtractor
+    DeepDiveAnalyzer -> DeepSpecsJoin
+    BehaviorDocumenter -> DeepSpecsJoin
+    UserJourneyAnalyzer -> DeepSpecsJoin
+    ContractExtractor -> DeepSpecsJoin
+    DeepSpecsJoin -> Gate1ToolCheck
+    Gate1ToolCheck -> Gate1AgentReview     when ctx.tool_stdout = gate1-pass        label: gate1_tool_pass
+    Gate1ToolCheck -> Gate1AgentReview     when ctx.tool_stdout startswith invalid  label: gate1_tool_issues
+    Gate1ToolCheck -> Gate1Failed          when ctx.tool_stdout = budget-exhausted  label: gate1_budget
+    Gate1ToolCheck -> Gate1Failed
+    Gate1AgentReview -> Gate1bCompleteness  when ctx.outcome = success  label: gate1_pass
+    Gate1AgentReview -> Gate1Failed         when ctx.outcome = fail     label: gate1_fail
+    Gate1AgentReview -> Gate1Failed
+    Gate1bCompleteness -> Gate1bAgent       when ctx.tool_stdout startswith gaps    label: gaps_found
+    Gate1bCompleteness -> WriteL2L3Summary  when ctx.tool_stdout = gate1b-pass      label: gate1b_pass
+    Gate1bCompleteness -> Gate1Failed       when ctx.tool_stdout = budget-exhausted label: gate1b_budget
+    Gate1bCompleteness -> WriteL2L3Summary
+    Gate1bAgent -> WriteL2L3Summary            when ctx.outcome = success  label: gate1b_pass
+    Gate1bAgent -> JourneyContractRemediation  when ctx.outcome = fail     label: gate1b_retry
+    Gate1bAgent -> Gate1Failed
+    JourneyContractRemediation -> Gate1bCompleteness  restart: true
+    WriteL2L3Summary -> Exit
+    Gate1Failed -> Exit
