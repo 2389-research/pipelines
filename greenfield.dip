@@ -94,11 +94,155 @@ workflow Greenfield
 
       If you find additional sources, update workspace/discovery-manifest.yaml accordingly.
 
+  subgraph L1_Discovery
+    ref: greenfield_discovery.dip
+
+  tool CheckL1Output
+    label: "Check L1 Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.l1-failed" ]; then
+        printf 'l1-failed-%s' "$(cat workspace/.l1-failed)"
+        exit 0
+      fi
+      completed=0
+      dirs="workspace/raw/source workspace/public/docs workspace/public/ecosystem workspace/public/community workspace/raw/runtime workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence"
+      for d in $dirs; do
+        if [ -f "$d/.completed" ]; then
+          completed=$((completed + 1))
+        fi
+      done
+      if [ "$completed" -eq 0 ]; then
+        printf 'l1-empty'
+        exit 0
+      fi
+      printf 'l1-ok-%s-sources' "$completed"
+
+  subgraph L2L3_Synthesis
+    ref: greenfield_synthesis.dip
+
+  tool CheckSynthesisOutput
+    label: "Check Synthesis Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.synthesis-failed" ]; then
+        printf 'synthesis-failed-%s' "$(cat workspace/.synthesis-failed)"
+        exit 0
+      fi
+      specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      if [ "$specs" -eq 0 ]; then
+        printf 'synthesis-empty'
+        exit 0
+      fi
+      printf 'synthesis-ok-%s-specs' "$specs"
+
+  subgraph L4L5_Validation
+    ref: greenfield_validation.dip
+
+  tool CheckValidationOutput
+    label: "Check Validation Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.validation-failed" ]; then
+        printf 'validation-failed-%s' "$(cat workspace/.validation-failed)"
+        exit 0
+      fi
+      output_specs=$(find "workspace/output/specs/" -name "*.md" 2>/dev/null | wc -l)
+      tv=$(find "workspace/output/test-vectors/" -name "*.md" 2>/dev/null | wc -l)
+      ac=$(find "workspace/output/validation/" -name "*.md" 2>/dev/null | wc -l)
+      if [ "$output_specs" -eq 0 ] || [ "$tv" -eq 0 ] || [ "$ac" -eq 0 ]; then
+        printf 'validation-incomplete-specs-%s-tv-%s-ac-%s' "$output_specs" "$tv" "$ac"
+        exit 0
+      fi
+      printf 'validation-ok'
+
+  subgraph L6L7_Review
+    ref: greenfield_review.dip
+
+  agent FinalReport
+    label: "Final Report"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    max_turns: 3
+    prompt:
+      You are the Final Report agent. The Greenfield pipeline has completed all 7 layers.
+
+      Read workspace/workspace.json, workspace/raw/l1-summary.yaml, and the output directory.
+
+      Summarize:
+      1. Target analyzed and sources discovered
+      2. Number of behavioral specs produced
+      3. Number of test vectors and acceptance criteria
+      4. Gate results (all passed)
+      5. Overall confidence assessment
+      6. Output location: workspace/output/
+
+  agent DiscoveryFailed
+    label: "Discovery Failed"
+    max_turns: 1
+    prompt:
+      L1 discovery subgraph failed. Write workspace/.l1-failed with reason. Report.
+
+  agent L1Failed
+    label: "L1 Output Check Failed"
+    max_turns: 1
+    prompt:
+      L1 output check failed — no intelligence sources produced results. Report.
+
+  agent SynthesisFailed
+    label: "Synthesis Failed"
+    max_turns: 1
+    prompt:
+      L2/L3 synthesis failed. Check workspace/.synthesis-failed for details. Report.
+
+  agent ValidationFailed
+    label: "Validation Failed"
+    max_turns: 1
+    prompt:
+      L4/L5 validation failed. Check workspace/.validation-failed for details. Report.
+
+  agent ReviewFailed
+    label: "Review Failed"
+    max_turns: 1
+    prompt:
+      L6/L7 review failed. Check workspace/.review-failed for details. Report.
+
   edges
     Start -> SetupWorkspace
     SetupWorkspace -> DiscoverTarget
     DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-0  label: very_low_coverage
     DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-1  label: low_coverage
-    DiscoverTarget -> Exit                  when ctx.tool_stdout startswith discovered     label: sufficient
-    DiscoverTarget -> Exit
-    DiscoverTargetReview -> Exit
+    DiscoverTarget -> L1_Discovery          when ctx.tool_stdout startswith discovered     label: sufficient
+    DiscoverTarget -> L1_Discovery
+    DiscoverTargetReview -> L1_Discovery
+    L1_Discovery -> CheckL1Output           when ctx.outcome = success  label: l1_done
+    L1_Discovery -> DiscoveryFailed         when ctx.outcome = fail     label: l1_subgraph_failed
+    L1_Discovery -> DiscoveryFailed
+    CheckL1Output -> L2L3_Synthesis         when ctx.tool_stdout startswith l1-ok  label: l1_ok
+    CheckL1Output -> L1Failed               when ctx.tool_stdout startswith l1-    label: l1_problem
+    CheckL1Output -> L1Failed
+    L2L3_Synthesis -> CheckSynthesisOutput   when ctx.outcome = success  label: synthesis_done
+    L2L3_Synthesis -> SynthesisFailed        when ctx.outcome = fail     label: synthesis_subgraph_failed
+    L2L3_Synthesis -> SynthesisFailed
+    CheckSynthesisOutput -> L4L5_Validation  when ctx.tool_stdout startswith synthesis-ok  label: synthesis_ok
+    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout startswith synthesis-    label: synthesis_problem
+    CheckSynthesisOutput -> SynthesisFailed
+    L4L5_Validation -> CheckValidationOutput  when ctx.outcome = success  label: validation_done
+    L4L5_Validation -> ValidationFailed       when ctx.outcome = fail     label: validation_subgraph_failed
+    L4L5_Validation -> ValidationFailed
+    CheckValidationOutput -> L6L7_Review      when ctx.tool_stdout = validation-ok  label: validation_ok
+    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-  label: validation_problem
+    CheckValidationOutput -> ValidationFailed
+    L6L7_Review -> FinalReport                when ctx.outcome = success  label: review_done
+    L6L7_Review -> ReviewFailed               when ctx.outcome = fail     label: review_subgraph_failed
+    L6L7_Review -> ReviewFailed
+    FinalReport -> Exit
+    DiscoveryFailed -> Exit
+    L1Failed -> Exit
+    SynthesisFailed -> Exit
+    ValidationFailed -> Exit
+    ReviewFailed -> Exit
