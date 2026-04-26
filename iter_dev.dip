@@ -1,0 +1,269 @@
+# ABOUTME: Top-level orchestrator for the iterative development lifecycle.
+# ABOUTME: Composes extract, scope, run, and audit subgraphs into bootstrap → main loop → final audit.
+workflow IterDev
+  goal: "Autonomous iterative development lifecycle: bootstrap (extract requirements + scope roadmap), then loop (run iteration + audit) until behavior evidence is clean for every externally observable requirement"
+  start: Start
+  exit: Exit
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 100
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge that the iterative development pipeline is starting.
+
+      This pipeline drives the full autonomous development lifecycle:
+      1. Bootstrap: extract requirements from spec, scope a walking skeleton and roadmap
+      2. Main loop: run iterations and audit each one until the roadmap is done
+      3. Final audit: verify behavior evidence covers every externally observable requirement
+
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      Iterative development pipeline complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+
+  tool check_resume
+    label: "Check Resume State"
+    timeout: 15s
+    command:
+      #!/bin/sh
+      set -eu
+      iter_dir="docs/superpowers/iterations"
+      if [ ! -d "$iter_dir" ]; then
+        printf 'fresh'
+        exit 0
+      fi
+      if [ ! -d "$iter_dir/requirements" ] || [ -z "$(ls $iter_dir/requirements/*.md 2>/dev/null)" ]; then
+        printf 'fresh'
+        exit 0
+      fi
+      if [ ! -f "$iter_dir/roadmap.md" ]; then
+        printf 'needs-scope'
+        exit 0
+      fi
+      pending=$(grep -c '^\*\*Status:\*\* pending' "$iter_dir/roadmap.md" 2>/dev/null || echo 0)
+      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$iter_dir/roadmap.md" 2>/dev/null || echo 0)
+      done_count=$(grep -c '^\*\*Status:\*\* done' "$iter_dir/roadmap.md" 2>/dev/null || echo 0)
+      if [ "$pending" -gt 0 ] || [ "$in_progress" -gt 0 ]; then
+        printf 'resume-run-pending-%s-inprogress-%s-done-%s' "$pending" "$in_progress" "$done_count"
+        exit 0
+      fi
+      if [ -f "$iter_dir/.final-audit-clean" ]; then
+        printf 'already-complete'
+        exit 0
+      fi
+      printf 'resume-final-done-%s' "$done_count"
+
+  subgraph bootstrap_extract
+    ref: iter_extract.dip
+
+  subgraph bootstrap_scope
+    ref: iter_scope.dip
+
+  subgraph run_iteration
+    ref: iter_run.dip
+
+  subgraph audit_iteration
+    ref: iter_audit.dip
+
+  tool check_termination
+    label: "Check Termination Condition"
+    timeout: 10s
+    command:
+      set -eu
+      roadmap="docs/superpowers/iterations/roadmap.md"
+      audit_result=".ai/iter-audit-result.txt"
+      if [ ! -f "$roadmap" ]; then
+        printf 'more-iterations'
+        exit 0
+      fi
+      pending=$(grep -c '^\*\*Status:\*\* pending' "$roadmap" 2>/dev/null || echo 0)
+      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$roadmap" 2>/dev/null || echo 0)
+      if [ "$pending" -gt 0 ] || [ "$in_progress" -gt 0 ]; then
+        printf 'more-iterations'
+        exit 0
+      fi
+      if [ ! -f "$audit_result" ]; then
+        printf 'ready-for-final'
+        exit 0
+      fi
+      if grep -q 'AUDIT_CLEAN' "$audit_result" 2>/dev/null; then
+        printf 'final-clean'
+        exit 0
+      fi
+      printf 'final-gaps'
+
+  tool report_loop_progress
+    label: "Report Loop Progress"
+    timeout: 10s
+    command:
+      set -eu
+      roadmap="docs/superpowers/iterations/roadmap.md"
+      if [ ! -f "$roadmap" ]; then
+        printf 'progress-no-roadmap'
+        exit 0
+      fi
+      pending=$(grep -c '^\*\*Status:\*\* pending' "$roadmap" 2>/dev/null || echo 0)
+      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$roadmap" 2>/dev/null || echo 0)
+      done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null || echo 0)
+      total=$((pending + in_progress + done_count))
+      if [ "$total" -gt 0 ]; then
+        pct=$((done_count * 100 / total))
+      else
+        pct=0
+      fi
+      printf 'progress-done-%s-of-%s-%spct-pending-%s-inprogress-%s' "$done_count" "$total" "$pct" "$pending" "$in_progress"
+
+  agent iteration_failure_handler
+    label: "Iteration Failure Handler"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    auto_status: true
+    prompt:
+      An iteration has failed. Your job is to assess the failure type and decide whether to retry or stop.
+
+      Read the iteration log at docs/superpowers/iterations/iteration-log.md to understand what failed.
+      Read the roadmap at docs/superpowers/iterations/roadmap.md to understand the current state.
+
+      Assess the failure by category:
+      1. Task too large — the iteration scope was too broad for one pass → recommend redecompose (return success to retry with smaller scope)
+      2. Model too weak — the task needed stronger reasoning → recommend escalation (return success to retry)
+      3. Plan was wrong — the roadmap iteration plan is incorrect → recommend human review (return fail to stop)
+      4. Transient error — network/tool failure unrelated to task → return success to retry
+      5. Repeated failures on same iteration — return fail to stop and escalate
+
+      Report your assessment clearly with evidence from the logs.
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when retrying is likely to succeed.
+      Use STATUS: fail when the pipeline should stop and a human should intervene.
+
+  agent final_audit
+    label: "Final Behavior-Evidence Audit"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    fidelity: full
+    auto_status: true
+    prompt:
+      You are performing the FINAL behavior-evidence audit before declaring the project complete.
+
+      Read:
+      1. The original spec (find via .ai/iter-extract-temp/chunk_manifest.txt or find *.md in project root)
+      2. docs/superpowers/iterations/requirements/ (all epic files)
+      3. docs/superpowers/iterations/behavior-scenarios.md
+      4. docs/superpowers/iterations/behavior-corpus.md
+      5. docs/superpowers/iterations/roadmap.md
+      6. docs/superpowers/iterations/iteration-log.md
+
+      ## Your Job
+
+      The question is: "Can the system point to passing behavior evidence for every externally observable requirement the spec describes?"
+
+      1. List every major user-facing surface from the original spec
+      2. For each surface verify:
+         - Corresponding stories exist AND are marked done
+         - Corresponding scenarios exist AND have passing evidence at the correct seam
+         - Journey scenarios crossing multiple surfaces pass E2E
+      3. Check behavior corpus completeness:
+         - Every journey spec file has at least one JOURNEY-NNNN scenario
+         - Every scenario has a non-TBD execution command
+         - All sentinel scenarios pass (run the commands)
+      4. Flag surfaces with:
+         - No corresponding story (extraction under-scoped)
+         - No corresponding scenario (evidence gap)
+         - Evidence at weaker seam than required
+         - Manual-residual that could be automated
+
+      If ALL surfaces have adequate evidence: write "AUDIT_CLEAN" to .ai/iter-audit-result.txt and touch docs/superpowers/iterations/.final-audit-clean.
+
+      If gaps found: write gap descriptions to .ai/iter-audit-result.txt, create gap stories in requirements/, update roadmap with new iteration.
+
+      End with STATUS: success (clean) or STATUS: fail (gaps found).
+
+  tool update_final_progress
+    label: "Update Final Progress"
+    timeout: 5s
+    command:
+      set -eu
+      roadmap="docs/superpowers/iterations/roadmap.md"
+      done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null || echo 0)
+      total=$(grep -c '^\*\*Status:\*\*' "$roadmap" 2>/dev/null || echo 0)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      mkdir -p docs/superpowers/iterations
+      cat > docs/superpowers/iterations/final-progress.md << EOF
+      # Final Progress Report
+
+      Generated: $now
+
+      ## Iterations Completed
+
+      $done_count of $total iterations done.
+
+      ## Audit Result
+
+      $(cat .ai/iter-audit-result.txt 2>/dev/null || echo 'No audit result file found.')
+      EOF
+      printf 'final-progress-written'
+
+  agent already_complete_exit
+    label: "Already Complete"
+    max_turns: 1
+    prompt:
+      This project was already completed in a previous run of the iterative development pipeline.
+
+      The .final-audit-clean sentinel file exists, indicating the final behavior-evidence audit passed in a prior session.
+
+      Read docs/superpowers/iterations/final-progress.md (if it exists) and docs/superpowers/iterations/roadmap.md to report a summary of what was completed.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to report the completed state.
+
+  edges
+    Start -> check_resume
+    check_resume -> bootstrap_extract          when ctx.tool_stdout = fresh                     label: fresh_start
+    check_resume -> bootstrap_scope            when ctx.tool_stdout = needs-scope               label: needs_scope
+    check_resume -> run_iteration              when ctx.tool_stdout startswith resume-run       label: resume_run
+    check_resume -> final_audit                when ctx.tool_stdout startswith resume-final     label: resume_final
+    check_resume -> already_complete_exit      when ctx.tool_stdout = already-complete          label: done
+    check_resume -> bootstrap_extract
+    already_complete_exit -> Exit
+    bootstrap_extract -> bootstrap_scope       when ctx.outcome = success   label: extracted
+    bootstrap_extract -> Exit                  when ctx.outcome = fail      label: extract_failed
+    bootstrap_scope -> run_iteration           when ctx.outcome = success   label: scoped
+    bootstrap_scope -> Exit                    when ctx.outcome = fail      label: scope_failed
+
+    # Main loop
+    run_iteration -> audit_iteration           when ctx.outcome = success   label: iteration_done
+    run_iteration -> iteration_failure_handler when ctx.outcome = fail      label: iteration_failed
+    iteration_failure_handler -> run_iteration when ctx.outcome = success   restart: true  label: retry
+    iteration_failure_handler -> Exit          when ctx.outcome = fail      label: give_up
+    audit_iteration -> report_loop_progress
+    report_loop_progress -> check_termination
+    check_termination -> run_iteration         when ctx.tool_stdout = more-iterations          label: continue    restart: true
+    check_termination -> final_audit           when ctx.tool_stdout startswith ready-for-final  label: final
+    check_termination -> update_final_progress when ctx.tool_stdout = final-clean               label: all_clean
+    check_termination -> run_iteration         when ctx.tool_stdout = final-gaps                label: more_work   restart: true
+    check_termination -> Exit
+
+    # Final audit
+    final_audit -> update_final_progress       when ctx.outcome = success   label: final_clean
+    final_audit -> run_iteration               when ctx.outcome = fail      label: final_gaps  restart: true
+    final_audit -> Exit
+    run_iteration -> Exit
+    iteration_failure_handler -> Exit
+    bootstrap_extract -> Exit
+    bootstrap_scope -> Exit
+    update_final_progress -> Exit
