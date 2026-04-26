@@ -1,0 +1,643 @@
+# ABOUTME: Requirements extraction pipeline with parallel extraction agents and PAR omission review.
+# ABOUTME: Reads a spec file, chunks by markdown headings, extracts stories/scenarios, runs PAR review, and aggregates into per-epic files, behavior-scenarios.md, and behavior-corpus.md.
+workflow IterExtract
+  goal: "Extract requirements with proof obligations and behavior scenarios from a spec using chunked parallel extraction with PAR omission review, producing per-epic story files, behavior-scenarios.md, and behavior-corpus.md"
+  start: Start
+  exit: Exit
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 30
+
+  agent Start
+    label: Start
+    prompt:
+      Begin requirements extraction pipeline. Acknowledging pipeline start — do not read or write any files.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Requirements extraction pipeline complete.
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  tool check_extract_resume
+    label: "Check Extract Resume Point"
+    timeout: 10s
+    command:
+      set -eu
+      has_requirements=false
+      has_scenarios=false
+      has_temp=false
+      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$req_count" -gt 0 ]; then
+        has_requirements=true
+      fi
+      if [ -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+        has_scenarios=true
+      fi
+      temp_count=$(ls .ai/iter-extract-temp/extraction_*.json 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$temp_count" -gt 0 ]; then
+        has_temp=true
+      fi
+      if [ "$has_requirements" = "true" ] && [ "$has_scenarios" = "true" ]; then
+        printf 'resume-validate'
+        exit 0
+      fi
+      if [ "$has_temp" = "true" ]; then
+        printf 'resume-aggregate'
+        exit 0
+      fi
+      printf 'fresh-start'
+
+  agent validate_existing
+    label: "Validate Existing Artifacts"
+    prompt:
+      Read and validate the existing extraction artifacts in docs/superpowers/iterations/.
+
+      Check:
+      - docs/superpowers/iterations/requirements/ for per-epic .md files with STORY- IDs
+      - docs/superpowers/iterations/behavior-scenarios.md for SCENARIO- and JOURNEY- IDs
+      - docs/superpowers/iterations/behavior-corpus.md for the corpus table
+
+      Report whether they are complete (all stories have ACs, all behavioral ACs have scenario refs, all scenarios link to stories, corpus has all entries).
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+  tool chunk_spec
+    label: "Chunk Spec by Headings"
+    timeout: 60s
+    command:
+      #!/bin/sh
+      set -eu
+      spec_file="$1"
+      mkdir -p .ai/iter-extract-temp
+      awk '
+        /^## / {
+          if (chunk_num > 0) {
+            close(outfile)
+          }
+          chunk_num++
+          outfile = sprintf(".ai/iter-extract-temp/chunk_%03d.md", chunk_num)
+          heading = $0
+          sub(/^## */, "", heading)
+          printf "CHUNK|%s|%s|%d\n", FILENAME, heading, NR > ".ai/iter-extract-temp/chunk_manifest.txt"
+        }
+        chunk_num > 0 { print > outfile }
+        END {
+          if (chunk_num == 0) {
+            system("cp " FILENAME " .ai/iter-extract-temp/chunk_001.md")
+            printf "CHUNK|%s|whole-file|1\n", FILENAME > ".ai/iter-extract-temp/chunk_manifest.txt"
+            chunk_num = 1
+          }
+          printf "chunks-%d", chunk_num
+        }
+      ' "$spec_file"
+
+  tool count_remaining_chunks
+    label: "Count Remaining Chunks"
+    timeout: 10s
+    command:
+      set -eu
+      remaining=0
+      for chunk in .ai/iter-extract-temp/chunk_*.md; do
+        [ -f "$chunk" ] || continue
+        base=$(basename "$chunk" .md)
+        num=$(printf '%s' "$base" | sed 's/chunk_//')
+        json=".ai/iter-extract-temp/extraction_${num}.json"
+        if [ ! -f "$json" ]; then
+          remaining=$((remaining + 1))
+        fi
+      done
+      if [ "$remaining" -eq 0 ]; then
+        printf 'all-extracted'
+      else
+        printf 'remaining-%d' "$remaining"
+      fi
+
+  tool pick_next_wave
+    label: "Pick Next Wave"
+    timeout: 10s
+    command:
+      set -eu
+      rm -f .ai/iter-extract-temp/current_wave.txt
+      count=0
+      start_num=0
+      end_num=0
+      for chunk in $(ls .ai/iter-extract-temp/chunk_*.md 2>/dev/null | sort); do
+        [ -f "$chunk" ] || continue
+        base=$(basename "$chunk" .md)
+        num=$(printf '%s' "$base" | sed 's/chunk_//')
+        json=".ai/iter-extract-temp/extraction_${num}.json"
+        if [ ! -f "$json" ]; then
+          if [ "$count" -eq 0 ]; then
+            start_num="$num"
+          fi
+          end_num="$num"
+          printf '%s\n' "$chunk" >> .ai/iter-extract-temp/current_wave.txt
+          count=$((count + 1))
+          if [ "$count" -ge 3 ]; then
+            break
+          fi
+        fi
+      done
+      if [ "$count" -eq 0 ]; then
+        printf 'no-more'
+      else
+        printf 'wave-%s-%s' "$start_num" "$end_num"
+      fi
+
+  parallel extract_wave -> extract_agent_1, extract_agent_2, extract_agent_3
+
+  agent extract_agent_1
+    label: "Extract Agent 1"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      You are extracting testable requirements and behavior scenarios from spec documentation.
+
+      Read your assigned chunk file from .ai/iter-extract-temp/current_wave.txt (you are agent 1, read line 1 to get your chunk path). Then read that chunk file.
+
+      If line 1 does not exist in the wave file (fewer than 1 chunks in this wave), do nothing and report that no chunk was assigned to you.
+
+      ## Your Job
+
+      Produce TWO outputs: story cards and scenario cards, as a JSON object.
+
+      ### Output Format
+
+      Write a JSON file to .ai/iter-extract-temp/extraction_<chunk_number>.json with this structure:
+
+      {
+        "stories": [
+          {
+            "title": "Short imperative title",
+            "epic_theme": "Domain grouping theme",
+            "as_a": "actor role",
+            "i_want": "capability",
+            "so_that": "benefit",
+            "acceptance_criteria": [
+              {
+                "id": "AC-1",
+                "text": "Specific testable criterion",
+                "behavioral_impact": "none|local|cross-surface|journey",
+                "proof_seam": "unit|integration|app-level|process-level|e2e"
+              }
+            ],
+            "sources": [{"file": "source.md", "lines": "10-25"}]
+          }
+        ],
+        "scenarios": [
+          {
+            "title": "Descriptive scenario title",
+            "kind": "surface|journey|failure-recovery|contract",
+            "proof_seam": "unit|integration|app-level|process-level|e2e",
+            "preconditions": ["precondition"],
+            "steps": [{"action": "what happens", "expected": ["observable"]}],
+            "final_observables": ["end state"],
+            "owning_story_titles": ["title of related story"],
+            "sources": [{"file": "source.md", "lines": "10-25"}]
+          }
+        ]
+      }
+
+      ### Rules
+      - Every AC with behavioral_impact other than "none" MUST have a corresponding scenario
+      - Journey spec chunks → produce journey scenario chains preserving complete step sequence
+      - Do NOT assign STORY-NNNN or SCENARIO-NNNN IDs — the aggregator does that
+      - Do NOT invent requirements not in the spec
+      - proof_seam: cheapest test level that falsifies the behavior
+
+      After writing the JSON file, report what you extracted.
+
+      HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
+
+  agent extract_agent_2
+    label: "Extract Agent 2"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      You are extracting testable requirements and behavior scenarios from spec documentation.
+
+      Read your assigned chunk file from .ai/iter-extract-temp/current_wave.txt (you are agent 2, read line 2 to get your chunk path). Then read that chunk file.
+
+      If line 2 does not exist in the wave file (fewer than 2 chunks in this wave), do nothing and report that no chunk was assigned to you.
+
+      ## Your Job
+
+      Produce TWO outputs: story cards and scenario cards, as a JSON object.
+
+      ### Output Format
+
+      Write a JSON file to .ai/iter-extract-temp/extraction_<chunk_number>.json with this structure:
+
+      {
+        "stories": [
+          {
+            "title": "Short imperative title",
+            "epic_theme": "Domain grouping theme",
+            "as_a": "actor role",
+            "i_want": "capability",
+            "so_that": "benefit",
+            "acceptance_criteria": [
+              {
+                "id": "AC-1",
+                "text": "Specific testable criterion",
+                "behavioral_impact": "none|local|cross-surface|journey",
+                "proof_seam": "unit|integration|app-level|process-level|e2e"
+              }
+            ],
+            "sources": [{"file": "source.md", "lines": "10-25"}]
+          }
+        ],
+        "scenarios": [
+          {
+            "title": "Descriptive scenario title",
+            "kind": "surface|journey|failure-recovery|contract",
+            "proof_seam": "unit|integration|app-level|process-level|e2e",
+            "preconditions": ["precondition"],
+            "steps": [{"action": "what happens", "expected": ["observable"]}],
+            "final_observables": ["end state"],
+            "owning_story_titles": ["title of related story"],
+            "sources": [{"file": "source.md", "lines": "10-25"}]
+          }
+        ]
+      }
+
+      ### Rules
+      - Every AC with behavioral_impact other than "none" MUST have a corresponding scenario
+      - Journey spec chunks → produce journey scenario chains preserving complete step sequence
+      - Do NOT assign STORY-NNNN or SCENARIO-NNNN IDs — the aggregator does that
+      - Do NOT invent requirements not in the spec
+      - proof_seam: cheapest test level that falsifies the behavior
+
+      After writing the JSON file, report what you extracted.
+
+      HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
+
+  agent extract_agent_3
+    label: "Extract Agent 3"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      You are extracting testable requirements and behavior scenarios from spec documentation.
+
+      Read your assigned chunk file from .ai/iter-extract-temp/current_wave.txt (you are agent 3, read line 3 to get your chunk path). Then read that chunk file.
+
+      If line 3 does not exist in the wave file (fewer than 3 chunks in this wave), do nothing and report that no chunk was assigned to you.
+
+      ## Your Job
+
+      Produce TWO outputs: story cards and scenario cards, as a JSON object.
+
+      ### Output Format
+
+      Write a JSON file to .ai/iter-extract-temp/extraction_<chunk_number>.json with this structure:
+
+      {
+        "stories": [
+          {
+            "title": "Short imperative title",
+            "epic_theme": "Domain grouping theme",
+            "as_a": "actor role",
+            "i_want": "capability",
+            "so_that": "benefit",
+            "acceptance_criteria": [
+              {
+                "id": "AC-1",
+                "text": "Specific testable criterion",
+                "behavioral_impact": "none|local|cross-surface|journey",
+                "proof_seam": "unit|integration|app-level|process-level|e2e"
+              }
+            ],
+            "sources": [{"file": "source.md", "lines": "10-25"}]
+          }
+        ],
+        "scenarios": [
+          {
+            "title": "Descriptive scenario title",
+            "kind": "surface|journey|failure-recovery|contract",
+            "proof_seam": "unit|integration|app-level|process-level|e2e",
+            "preconditions": ["precondition"],
+            "steps": [{"action": "what happens", "expected": ["observable"]}],
+            "final_observables": ["end state"],
+            "owning_story_titles": ["title of related story"],
+            "sources": [{"file": "source.md", "lines": "10-25"}]
+          }
+        ]
+      }
+
+      ### Rules
+      - Every AC with behavioral_impact other than "none" MUST have a corresponding scenario
+      - Journey spec chunks → produce journey scenario chains preserving complete step sequence
+      - Do NOT assign STORY-NNNN or SCENARIO-NNNN IDs — the aggregator does that
+      - Do NOT invent requirements not in the spec
+      - proof_seam: cheapest test level that falsifies the behavior
+
+      After writing the JSON file, report what you extracted.
+
+      HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
+
+  fan_in extract_join <- extract_agent_1, extract_agent_2, extract_agent_3
+
+  tool persist_wave
+    label: "Persist Wave"
+    timeout: 10s
+    command:
+      set -eu
+      missing=0
+      while IFS= read -r chunk; do
+        [ -n "$chunk" ] || continue
+        base=$(basename "$chunk" .md)
+        num=$(printf '%s' "$base" | sed 's/chunk_//')
+        json=".ai/iter-extract-temp/extraction_${num}.json"
+        if [ ! -f "$json" ]; then
+          missing=$((missing + 1))
+        fi
+      done < .ai/iter-extract-temp/current_wave.txt
+      if [ "$missing" -eq 0 ]; then
+        printf 'wave-persisted'
+      else
+        printf 'wave-incomplete-%d' "$missing"
+      fi
+
+  parallel par_omission_dispatch -> par_omission_reviewer_a, par_omission_reviewer_b
+
+  agent par_omission_reviewer_a
+    label: "PAR Omission Reviewer A"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+
+      Scoring: whoever finds the greatest number of serious or critical issues wins 5 points.
+
+      Rules:
+      - Findings must be real and justified with file:line references
+      - Nitpicks don't count toward scoring
+      - False positives are worse than missing things
+      - Be thorough — your competitor is being thorough too
+
+      ---
+
+      You are reviewing extraction completeness. Your job is to find requirements and scenarios that the extraction agents DROPPED.
+
+      Read the original spec file (find it from .ai/iter-extract-temp/chunk_manifest.txt) and ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json.
+
+      For EACH chunk of the spec, compare the source text against the extracted stories and scenarios. Find every:
+      - Requirement in the source NOT represented by any extracted story
+      - Acceptance criterion missing a proof obligation
+      - Observable behavior with no corresponding scenario
+      - Journey steps that were summarized or skipped
+      - Behavioral constraints mentioned but not captured
+
+      Score 5 points for each omission found.
+
+      ## Report Format
+
+      **Critical:** (requirements dropped entirely)
+      - [omission with source file:line reference]
+
+      **Serious:** (observable behavior without scenario coverage)
+      - [omission with source file:line reference]
+
+      **Minor:** (proof seam could be stronger)
+      - [item]
+
+      If you found omissions, write patches to .ai/iter-extract-temp/omission_patches_a.json using the same extraction JSON format.
+
+      If you found no omissions, say so explicitly.
+
+  agent par_omission_reviewer_b
+    label: "PAR Omission Reviewer B"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+
+      Scoring: whoever finds the greatest number of serious or critical issues wins 5 points.
+
+      Rules:
+      - Findings must be real and justified with file:line references
+      - Nitpicks don't count toward scoring
+      - False positives are worse than missing things
+      - Be thorough — your competitor is being thorough too
+
+      ---
+
+      You are reviewing extraction completeness. Your job is to find requirements and scenarios that the extraction agents DROPPED.
+
+      Read the original spec file (find it from .ai/iter-extract-temp/chunk_manifest.txt) and ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json.
+
+      For EACH chunk of the spec, compare the source text against the extracted stories and scenarios. Find every:
+      - Requirement in the source NOT represented by any extracted story
+      - Acceptance criterion missing a proof obligation
+      - Observable behavior with no corresponding scenario
+      - Journey steps that were summarized or skipped
+      - Behavioral constraints mentioned but not captured
+
+      Score 5 points for each omission found.
+
+      ## Report Format
+
+      **Critical:** (requirements dropped entirely)
+      - [omission with source file:line reference]
+
+      **Serious:** (observable behavior without scenario coverage)
+      - [omission with source file:line reference]
+
+      **Minor:** (proof seam could be stronger)
+      - [item]
+
+      If you found omissions, write patches to .ai/iter-extract-temp/omission_patches_b.json using the same extraction JSON format.
+
+      If you found no omissions, say so explicitly.
+
+  fan_in par_omission_join <- par_omission_reviewer_a, par_omission_reviewer_b
+
+  agent par_omission_aggregate
+    label: "PAR Omission Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    prompt:
+      Read both PAR reviewer outputs and the patch files .ai/iter-extract-temp/omission_patches_a.json and .ai/iter-extract-temp/omission_patches_b.json (if they exist).
+
+      Aggregate the findings:
+      - Same omission found by both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      If patches exist in omission_patches_a.json or omission_patches_b.json, merge them into the extraction results by appending their stories and scenarios into the appropriate extraction_NNN.json files or writing a new extraction_patches.json file.
+
+      Summarize what was merged and what the overall omission severity is.
+
+      End with exactly one of:
+      STATUS: pass
+      STATUS: fail
+
+      Use STATUS: pass when there are no critical omissions remaining.
+      Use STATUS: fail when critical omissions were found that require re-extraction.
+
+  agent aggregate_results
+    label: "Aggregate Results"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    prompt:
+      Read ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json (and any omission patch files such as .ai/iter-extract-temp/omission_patches_a.json, .ai/iter-extract-temp/omission_patches_b.json, .ai/iter-extract-temp/extraction_patches.json).
+
+      Aggregate into the iterative-development artifact format:
+
+      1. STORIES: Combine all stories. Deduplicate by title similarity. Group into epics by epic_theme. Assign stable IDs:
+         - EPIC-001, EPIC-002, etc.
+         - STORY-0001, STORY-0002, etc. (global, not per-epic)
+         Write per-epic files to docs/superpowers/iterations/requirements/EPIC-NNN-<theme>.md
+
+         Each epic file format:
+         # EPIC-NNN — <Theme>
+         Progress: 0/<total> stories done
+
+         ## STORY-NNNN — <Title>
+         **As a** <role>, **I want** <capability>, **so that** <benefit>
+         **Acceptance criteria:**
+         - AC-1: <text> · impact:<impact> · seam:<seam>
+         - AC-2: <text> · impact:<impact> · seam:<seam>
+         **Sources:** <file:lines>
+         **Status:** pending
+
+      2. SCENARIOS: Combine all scenarios. Deduplicate by title. Assign stable IDs:
+         - SCENARIO-0001 for surface/contract/failure-recovery
+         - JOURNEY-0001 for journey scenarios
+         Resolve owning_story_titles to STORY-NNNN IDs.
+         Write to docs/superpowers/iterations/behavior-scenarios.md
+
+      3. CORPUS: Build behavior-corpus.md table from scenario list.
+         Journey scenarios → sentinel cadence. Surface scenarios → iteration cadence.
+         Set command to TBD.
+         Write to docs/superpowers/iterations/behavior-corpus.md
+
+      4. Back-link scenarios to story ACs by appending scenario:<ID> to AC lines.
+
+      Create the docs/superpowers/iterations/ and docs/superpowers/iterations/requirements/ directories.
+
+      After writing all files, verify:
+      - Every story has at least one AC
+      - Every AC with behavioral_impact != "none" has a scenario ref
+      - Every scenario has owning_stories resolved to STORY IDs
+      - Behavior corpus has an entry for every scenario
+
+      HARD CONSTRAINT: Only write to docs/superpowers/iterations/. Do NOT modify the original spec.
+
+  tool validate_extraction
+    label: "Validate Extraction"
+    timeout: 15s
+    command:
+      set -eu
+      fail_reason=""
+      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$req_count" -eq 0 ]; then
+        fail_reason="no-requirement-files"
+        printf 'validation-fail-%s' "$fail_reason"
+        exit 0
+      fi
+      if [ ! -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+        fail_reason="missing-behavior-scenarios"
+        printf 'validation-fail-%s' "$fail_reason"
+        exit 0
+      fi
+      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+        fail_reason="missing-behavior-corpus"
+        printf 'validation-fail-%s' "$fail_reason"
+        exit 0
+      fi
+      if ! grep -qr 'STORY-' docs/superpowers/iterations/requirements/; then
+        fail_reason="no-story-ids"
+        printf 'validation-fail-%s' "$fail_reason"
+        exit 0
+      fi
+      if ! grep -qE 'SCENARIO-|JOURNEY-' docs/superpowers/iterations/behavior-scenarios.md; then
+        fail_reason="no-scenario-ids"
+        printf 'validation-fail-%s' "$fail_reason"
+        exit 0
+      fi
+      printf 'validation-pass'
+
+  tool commit_extraction
+    label: "Commit Extraction"
+    timeout: 30s
+    command:
+      set -eu
+      git add docs/superpowers/iterations/
+      git commit -m "docs: extract requirements with proof obligations, scenarios, and corpus index"
+      printf 'committed'
+
+  edges
+    Start -> find_spec
+    find_spec -> no_spec_exit             when ctx.tool_stdout = no_spec_found    label: no_spec
+    find_spec -> check_extract_resume     when ctx.tool_stdout != no_spec_found   label: spec_found
+    find_spec -> check_extract_resume
+    no_spec_exit -> Exit
+    check_extract_resume -> validate_existing          when ctx.tool_stdout startswith resume-validate  label: resume_validate
+    check_extract_resume -> count_remaining_chunks     when ctx.tool_stdout startswith resume-aggregate  label: resume_aggregate
+    check_extract_resume -> chunk_spec                 when ctx.tool_stdout = fresh-start               label: fresh
+    check_extract_resume -> chunk_spec
+    validate_existing -> Exit                          when ctx.outcome = success   label: valid
+    validate_existing -> chunk_spec                    when ctx.outcome = fail      label: invalid
+    chunk_spec -> pick_next_wave
+    pick_next_wave -> extract_wave                     when ctx.tool_stdout startswith wave-   label: has_wave
+    pick_next_wave -> par_omission_dispatch            when ctx.tool_stdout = no-more         label: all_extracted
+    extract_wave -> extract_agent_1
+    extract_wave -> extract_agent_2
+    extract_wave -> extract_agent_3
+    extract_agent_1 -> extract_join
+    extract_agent_2 -> extract_join
+    extract_agent_3 -> extract_join
+    extract_join -> persist_wave
+    persist_wave -> count_remaining_chunks
+    count_remaining_chunks -> pick_next_wave           when ctx.tool_stdout startswith remaining-  label: more_chunks    restart: true
+    count_remaining_chunks -> par_omission_dispatch    when ctx.tool_stdout = all-extracted      label: done_extracting
+    par_omission_dispatch -> par_omission_reviewer_a
+    par_omission_dispatch -> par_omission_reviewer_b
+    par_omission_reviewer_a -> par_omission_join
+    par_omission_reviewer_b -> par_omission_join
+    par_omission_join -> par_omission_aggregate
+    par_omission_aggregate -> aggregate_results
+    aggregate_results -> validate_extraction           when ctx.outcome = success   label: aggregated
+    aggregate_results -> Exit                          when ctx.outcome = fail      label: aggregate_failed
+    validate_extraction -> commit_extraction           when ctx.tool_stdout = validation-pass    label: valid
+    validate_extraction -> aggregate_results           when ctx.tool_stdout startswith validation-fail  label: retry  restart: true
+    commit_extraction -> Exit
