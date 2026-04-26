@@ -146,7 +146,7 @@ workflow GreenfieldValidation
     reasoning_effort: high
     auto_status: true
     max_retries: 3
-    retry_target: TestVectorGenerator
+    retry_target: ValidationParallel
     fallback_target: Gate2Failed
     prompt:
       You are the Gate 2 quality reviewer. Review test vectors and acceptance criteria in workspace/raw/specs/.

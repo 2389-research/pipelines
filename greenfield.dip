@@ -28,6 +28,8 @@ workflow Greenfield
     timeout: 30s
     command:
       set -eu
+      rm -f workspace/.l1-failed workspace/.synthesis-failed workspace/.validation-failed workspace/.review-failed
+      rm -f workspace/.gate1-retries workspace/.gate1b-retries workspace/.gate2-retries workspace/.l6-retries workspace/.l7-retries
       mkdir -p workspace/public/docs workspace/public/ecosystem workspace/public/community
       mkdir -p workspace/raw/source/chunks workspace/raw/source/analysis workspace/raw/source/functions workspace/raw/source/manifests workspace/raw/source/exploration
       mkdir -p workspace/raw/runtime/cli workspace/raw/runtime/web workspace/raw/runtime/behaviors workspace/raw/runtime/ux-flows workspace/raw/runtime/visual
@@ -131,6 +133,10 @@ workflow Greenfield
         printf 'synthesis-failed-%s' "$(cat workspace/.synthesis-failed)"
         exit 0
       fi
+      if [ ! -f "workspace/raw/synthesis/module-map.md" ]; then
+        printf 'synthesis-empty'
+        exit 0
+      fi
       specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
       if [ "$specs" -eq 0 ]; then
         printf 'synthesis-empty'
@@ -216,7 +222,6 @@ workflow Greenfield
     SetupWorkspace -> DiscoverTarget
     DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-0  label: very_low_coverage
     DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-1  label: low_coverage
-    DiscoverTarget -> L1_Discovery          when ctx.tool_stdout startswith discovered     label: sufficient
     DiscoverTarget -> L1_Discovery
     DiscoverTargetReview -> L1_Discovery
     L1_Discovery -> CheckL1Output           when ctx.outcome = success  label: l1_done

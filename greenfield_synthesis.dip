@@ -176,11 +176,20 @@ workflow GreenfieldSynthesis
       You are the Behavior Documenter for Greenfield reverse engineering.
 
       ## Input boundary
-      Read L2 summary files ONLY (workspace/raw/synthesis/).
+      Read L2 summary files ONLY — do NOT read raw L1 chunks:
+      - workspace/raw/synthesis/module-map.md
+      - workspace/raw/synthesis/features/
+      - workspace/raw/synthesis/architecture/
+      - workspace/raw/synthesis/api/
+      - workspace/raw/synthesis/behavioral-summaries/
 
       Write behavioral documentation with provenance for each behavioral domain.
       Focus on observable behaviors, state machines, and decision logic.
       Write to workspace/raw/specs/modules/ (complement DeepDiveAnalyzer's output).
+
+      ## Provenance
+      Every behavioral claim MUST have a provenance citation:
+      <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=behavior-documenter -->
 
   agent UserJourneyAnalyzer
     label: "User Journey Analyzer"
@@ -191,7 +200,12 @@ workflow GreenfieldSynthesis
       You are the User Journey Analyzer for Greenfield reverse engineering.
 
       ## Input boundary
-      Read L2 summary files ONLY (workspace/raw/synthesis/).
+      Read L2 summary files ONLY — do NOT read raw L1 chunks:
+      - workspace/raw/synthesis/module-map.md
+      - workspace/raw/synthesis/features/
+      - workspace/raw/synthesis/architecture/
+      - workspace/raw/synthesis/api/
+      - workspace/raw/synthesis/behavioral-summaries/
 
       Map end-to-end user journeys:
       1. Identify all entry points (CLI commands, API calls, UI interactions)
@@ -199,7 +213,9 @@ workflow GreenfieldSynthesis
       3. Document happy paths and error paths
       4. Write to workspace/raw/specs/journeys/
 
-      Every claim needs provenance.
+      ## Provenance
+      Every behavioral claim MUST have a provenance citation:
+      <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=user-journey-analyzer -->
 
   agent ContractExtractor
     label: "Contract Extractor"
@@ -210,7 +226,12 @@ workflow GreenfieldSynthesis
       You are the Contract Extractor for Greenfield reverse engineering.
 
       ## Input boundary
-      Read L2 summary files ONLY (workspace/raw/synthesis/).
+      Read L2 summary files ONLY — do NOT read raw L1 chunks:
+      - workspace/raw/synthesis/module-map.md
+      - workspace/raw/synthesis/features/
+      - workspace/raw/synthesis/architecture/
+      - workspace/raw/synthesis/api/
+      - workspace/raw/synthesis/behavioral-summaries/
 
       Extract dependency contracts and protocol specs:
       1. External API contracts (what the software calls)
@@ -218,7 +239,9 @@ workflow GreenfieldSynthesis
       3. Dependency API contracts (what breaks if deps change)
       4. Write to workspace/raw/specs/contracts/
 
-      Every claim needs provenance.
+      ## Provenance
+      Every behavioral claim MUST have a provenance citation:
+      <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=contract-extractor -->
 
   fan_in DeepSpecsJoin <- DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
 
@@ -290,14 +313,20 @@ workflow GreenfieldSynthesis
         exit 0
       fi
       gaps=""
-      if [ -d "workspace/raw/source/analysis" ]; then
-        for chunk in workspace/raw/source/analysis/chunk-*.md; do
-          [ -f "$chunk" ] || continue
-          base=$(basename "$chunk")
-          if ! grep -rq "$base" "workspace/raw/specs/" 2>/dev/null; then
-            gaps="${gaps}${base} "
-          fi
-        done
+      if [ -f "workspace/raw/synthesis/module-map.md" ]; then
+        module_count=$(grep -c '^## ' "workspace/raw/synthesis/module-map.md" 2>/dev/null || printf '0')
+        spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -not -name "gate*" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$spec_count" -lt "$module_count" ]; then
+          gaps="module-spec-deficit:expected-${module_count}-got-${spec_count} "
+        fi
+      fi
+      journey_count=$(find "workspace/raw/specs/journeys/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$journey_count" -eq 0 ]; then
+        gaps="${gaps}no-journeys "
+      fi
+      contract_count=$(find "workspace/raw/specs/contracts/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$contract_count" -eq 0 ]; then
+        gaps="${gaps}no-contracts "
       fi
       if [ -n "$gaps" ]; then
         printf 'gaps-%s' "$gaps"
