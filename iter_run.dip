@@ -428,14 +428,9 @@ workflow IterRun
         task_done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
       fi
       mkdir -p docs/superpowers/iterations
-      cat > docs/superpowers/iterations/progress.md <<EOF
-# Iteration Progress
-
-**Iteration:** ${iter_id}
-**Phase:** task-decomposition
-**Tasks:** ${task_done}/${task_total} done
-**Updated:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
-EOF
+      printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** task-decomposition\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
+        "$iter_id" "$task_done" "$task_total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > docs/superpowers/iterations/progress.md
       printf 'progress-updated'
 
   # ── PHASE: Per-Task Loop ─────────────────────────────────────────────────────
@@ -902,14 +897,9 @@ EOF
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
       done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
-      cat > docs/superpowers/iterations/progress.md <<EOF
-# Iteration Progress
-
-**Iteration:** ${iter_id}
-**Phase:** per-task-loop
-**Tasks:** ${done}/${total} done
-**Updated:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
-EOF
+      printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** per-task-loop\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
+        "$iter_id" "$done" "$total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > docs/superpowers/iterations/progress.md
       printf 'progress-%d-of-%d' "$done" "$total"
 
   # ── PHASE: Post-Iteration ────────────────────────────────────────────────────
