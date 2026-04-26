@@ -35,14 +35,17 @@ workflow IterExtract
     timeout: 30s
     command:
       set -eu
+      mkdir -p .ai/iter-extract-temp
       for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
         if [ -f "$f" ]; then
+          printf '%s' "$f" > .ai/iter-extract-temp/spec_path.txt
           printf '%s' "$f"
           exit 0
         fi
       done
       first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
       if [ -n "$first" ]; then
+        printf '%s' "$first" > .ai/iter-extract-temp/spec_path.txt
         printf '%s' "$first"
         exit 0
       fi
@@ -79,6 +82,7 @@ workflow IterExtract
 
   agent validate_existing
     label: "Validate Existing Artifacts"
+    auto_status: true
     prompt:
       Read and validate the existing extraction artifacts in docs/superpowers/iterations/.
 
@@ -99,7 +103,20 @@ workflow IterExtract
     command:
       #!/bin/sh
       set -eu
-      spec_file="$1"
+      # Read spec path from temp file written by find_spec result
+      if [ -f .ai/iter-extract-temp/spec_path.txt ]; then
+        spec_file=$(cat .ai/iter-extract-temp/spec_path.txt)
+      else
+        # Fallback: search for spec like find_spec does
+        spec_file=""
+        for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+          if [ -f "$f" ]; then spec_file="$f"; break; fi
+        done
+        if [ -z "$spec_file" ]; then
+          printf 'no-spec-for-chunking'
+          exit 1
+        fi
+      fi
       mkdir -p .ai/iter-extract-temp
       awk '
         /^## / {
@@ -492,6 +509,7 @@ workflow IterExtract
     label: "PAR Omission Aggregate"
     model: gemini-3-flash-preview
     provider: gemini
+    auto_status: true
     prompt:
       Read both PAR reviewer outputs and the patch files .ai/iter-extract-temp/omission_patches_a.json and .ai/iter-extract-temp/omission_patches_b.json (if they exist).
 
@@ -505,10 +523,10 @@ workflow IterExtract
       Summarize what was merged and what the overall omission severity is.
 
       End with exactly one of:
-      STATUS: pass
+      STATUS: success
       STATUS: fail
 
-      Use STATUS: pass when there are no critical omissions remaining.
+      Use STATUS: success when there are no critical omissions remaining.
       Use STATUS: fail when critical omissions were found that require re-extraction.
 
   agent aggregate_results
@@ -602,14 +620,18 @@ workflow IterExtract
     command:
       set -eu
       git add docs/superpowers/iterations/
-      git commit -m "docs: extract requirements with proof obligations, scenarios, and corpus index"
-      printf 'committed'
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+      else
+        git commit -m "docs: extract requirements with proof obligations, scenarios, and corpus index"
+        printf 'committed'
+      fi
 
   edges
     Start -> find_spec
     find_spec -> no_spec_exit             when ctx.tool_stdout = no_spec_found    label: no_spec
     find_spec -> check_extract_resume     when ctx.tool_stdout != no_spec_found   label: spec_found
-    find_spec -> check_extract_resume
+    find_spec -> no_spec_exit
     no_spec_exit -> Exit
     check_extract_resume -> validate_existing          when ctx.tool_stdout startswith resume-validate  label: resume_validate
     check_extract_resume -> count_remaining_chunks     when ctx.tool_stdout startswith resume-aggregate  label: resume_aggregate
