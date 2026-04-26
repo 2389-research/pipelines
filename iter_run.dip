@@ -71,7 +71,7 @@ workflow IterRun
         exit 0
       fi
       printf '%s' "$iter_id" > .ai/iter-current-iteration.txt
-      printf 'next-ITER-%s' "$iter_id"
+      printf 'next-%s' "$iter_id"
 
   agent all_done_exit
     label: "All Iterations Complete"
@@ -403,8 +403,16 @@ workflow IterRun
         printf 'error-no-roadmap'
         exit 1
       fi
-      sed -i.bak "s/\*\*Status:\*\* pending/\*\*Status:\*\* in_progress/g" docs/superpowers/iterations/roadmap.md
-      rm -f docs/superpowers/iterations/roadmap.md.bak
+      # Only update the FIRST pending iteration's status (the current one)
+      awk -v target="$iter_id" '
+        /^### / { in_target = ($0 ~ target) }
+        in_target && /\*\*Status:\*\* pending/ {
+          sub(/\*\*Status:\*\* pending/, "**Status:** in_progress")
+          in_target = 0
+        }
+        { print }
+      ' docs/superpowers/iterations/roadmap.md > docs/superpowers/iterations/roadmap.md.tmp
+      mv docs/superpowers/iterations/roadmap.md.tmp docs/superpowers/iterations/roadmap.md
       printf 'iteration-in-progress-%s' "$iter_id"
 
   tool update_progress
