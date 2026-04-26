@@ -165,6 +165,83 @@ workflow GreenfieldValidation
       Write workspace/.validation-failed with the failure reason.
       HARD CONSTRAINT: Do NOT fix anything. Report only.
 
+  parallel SanitizationParallel -> SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria
+
+  agent SanitizerSpecs
+    label: "Sanitizer — Specs"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are a Sanitizer worker for Greenfield. Rewrite raw behavioral specs to output form.
+
+      Read workspace/raw/specs/modules/ and workspace/raw/specs/journeys/.
+      Write sanitized versions to workspace/output/specs/.
+
+      PRESERVE: environment variables, CLI flags, config keys, API fields, protocol names, error messages, user-facing paths.
+      REMOVE: function names, variable names, minified identifiers, line numbers, source file paths, code structure descriptions.
+
+      Provenance citations survive — but replace raw source paths with workspace-relative refs.
+
+      You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
+
+  agent SanitizerTestVectors
+    label: "Sanitizer — Test Vectors"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are a Sanitizer worker for Greenfield. Sanitize test vectors.
+
+      Read workspace/raw/specs/test-vectors/.
+      Write sanitized versions to workspace/output/test-vectors/.
+
+      Same PRESERVE/REMOVE rules as spec sanitization. Test vectors should describe behavior (Given/When/Then) without referencing internal code.
+
+  agent SanitizerAcceptanceCriteria
+    label: "Sanitizer — Acceptance Criteria"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are a Sanitizer worker for Greenfield. Sanitize acceptance criteria.
+
+      Read workspace/raw/specs/validation/.
+      Write sanitized versions to workspace/output/validation/acceptance-criteria/.
+
+      Same PRESERVE/REMOVE rules. AC IDs and spec links must be preserved.
+
+  fan_in SanitizationJoin <- SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria
+
+  tool SanitizationToolCheck
+    label: "Sanitization Check"
+    timeout: 15s
+    command:
+      set -eu
+      errors=""
+      spec_count=$(find "workspace/output/specs/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$spec_count" -eq 0 ]; then errors="${errors}no-output-specs "; fi
+      tv_count=$(find "workspace/output/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$tv_count" -eq 0 ]; then errors="${errors}no-output-test-vectors "; fi
+      ac_count=$(find "workspace/output/validation/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$ac_count" -eq 0 ]; then errors="${errors}no-output-acceptance-criteria "; fi
+      if [ -n "$errors" ]; then
+        printf 'sanitization-incomplete-%s' "$errors"
+        exit 0
+      fi
+      printf 'sanitization-ok-specs-%s-tv-%s-ac-%s' "$spec_count" "$tv_count" "$ac_count"
+
+  tool WriteL4L5Summary
+    label: "Write L4/L5 Summary"
+    timeout: 10s
+    command:
+      set -eu
+      raw_specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      output_specs=$(find "workspace/output/specs/" -name "*.md" 2>/dev/null | wc -l)
+      tv=$(find "workspace/output/test-vectors/" -name "*.md" 2>/dev/null | wc -l)
+      ac=$(find "workspace/output/validation/" -name "*.md" 2>/dev/null | wc -l)
+      printf 'l4l5-done-raw-%s-output-%s-tv-%s-ac-%s' "$raw_specs" "$output_specs" "$tv" "$ac"
+
   edges
     Start -> ReadSpecs
     ReadSpecs -> ValidationParallel  when ctx.tool_stdout startswith specs-ready  label: specs_ok
@@ -181,7 +258,18 @@ workflow GreenfieldValidation
     Gate2ToolCheck -> Gate2AgentReview     when ctx.tool_stdout startswith invalid  label: gate2_tool_issues
     Gate2ToolCheck -> Gate2Failed          when ctx.tool_stdout = budget-exhausted  label: gate2_budget
     Gate2ToolCheck -> Gate2Failed
-    Gate2AgentReview -> Exit       when ctx.outcome = success  label: gate2_pass
-    Gate2AgentReview -> Gate2Failed when ctx.outcome = fail     label: gate2_fail
+    Gate2AgentReview -> SanitizationParallel  when ctx.outcome = success  label: gate2_pass
+    Gate2AgentReview -> Gate2Failed            when ctx.outcome = fail     label: gate2_fail
     Gate2AgentReview -> Gate2Failed
+    SanitizationParallel -> SanitizerSpecs
+    SanitizationParallel -> SanitizerTestVectors
+    SanitizationParallel -> SanitizerAcceptanceCriteria
+    SanitizerSpecs -> SanitizationJoin
+    SanitizerTestVectors -> SanitizationJoin
+    SanitizerAcceptanceCriteria -> SanitizationJoin
+    SanitizationJoin -> SanitizationToolCheck
+    SanitizationToolCheck -> WriteL4L5Summary  when ctx.tool_stdout startswith sanitization-ok  label: sanitization_ok
+    SanitizationToolCheck -> Gate2Failed       when ctx.tool_stdout startswith sanitization-incomplete  label: sanitization_failed
+    SanitizationToolCheck -> WriteL4L5Summary
+    WriteL4L5Summary -> Exit
     Gate2Failed -> Exit
