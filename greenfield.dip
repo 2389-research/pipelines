@@ -1,0 +1,248 @@
+# ABOUTME: Top-level runner for Greenfield reverse engineering pipeline.
+# ABOUTME: Chains 4 layer subgraphs (discovery, synthesis, validation, review) with state checks.
+workflow Greenfield
+  goal: "Reverse engineer a target codebase into clean behavioral specs, test vectors, and acceptance criteria via a 7-layer pipeline with quality gates."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 5
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge that the Greenfield reverse engineering pipeline is starting.
+      HARD CONSTRAINT: Your ONLY job is to acknowledge start.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      Greenfield pipeline complete. Report final status.
+      HARD CONSTRAINT: Your ONLY job is to acknowledge completion.
+
+  tool SetupWorkspace
+    label: "Setup Workspace"
+    timeout: 30s
+    command:
+      set -eu
+      mkdir -p workspace/public/docs workspace/public/ecosystem workspace/public/community
+      mkdir -p workspace/raw/source/chunks workspace/raw/source/analysis workspace/raw/source/functions workspace/raw/source/manifests workspace/raw/source/exploration
+      mkdir -p workspace/raw/runtime/cli workspace/raw/runtime/web workspace/raw/runtime/behaviors workspace/raw/runtime/ux-flows workspace/raw/runtime/visual
+      mkdir -p workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence
+      mkdir -p workspace/raw/synthesis/features workspace/raw/synthesis/architecture workspace/raw/synthesis/api workspace/raw/synthesis/behavioral-summaries
+      mkdir -p workspace/raw/specs/modules workspace/raw/specs/journeys workspace/raw/specs/contracts workspace/raw/specs/test-vectors workspace/raw/specs/validation
+      mkdir -p workspace/output/specs workspace/output/test-vectors workspace/output/validation/acceptance-criteria
+      mkdir -p workspace/provenance/sessions workspace/review
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf '{"target": ".", "started_at": "%s", "excluded_sources": [], "pipeline_version": "1.0"}\n' "$now" > workspace/workspace.json
+      printf 'workspace-ready'
+
+  tool DiscoverTarget
+    label: "Discover Target"
+    timeout: 30s
+    command:
+      set -eu
+      src=false; docs=false; sdk=false; runtime=false; binary=false; git=false; tests=false; visual=false; contracts=false
+      count=1
+      if find . -maxdepth 3 -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.c" -o -name "*.cpp" -o -name "*.rb" 2>/dev/null | head -1 | grep -q .; then
+        src=true; count=$((count + 1))
+      fi
+      if [ -d docs ] || [ -d doc ] || find . -maxdepth 2 -name "README*" 2>/dev/null | head -1 | grep -q .; then
+        docs=true; count=$((count + 1))
+      fi
+      if [ -f package.json ] || [ -f go.mod ] || [ -f Cargo.toml ] || [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f Gemfile ]; then
+        sdk=true; count=$((count + 1))
+      fi
+      if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
+        runtime=true; count=$((count + 1))
+      fi
+      if find . -maxdepth 2 -name "*.exe" -o -name "*.so" -o -name "*.dylib" -o -name "*.dll" 2>/dev/null | head -1 | grep -q .; then
+        binary=true; count=$((count + 1))
+      fi
+      if [ -d .git ]; then
+        git=true; count=$((count + 1))
+      fi
+      if find . -maxdepth 3 -name "*test*" -o -name "*spec*" 2>/dev/null | head -1 | grep -q .; then
+        tests=true; count=$((count + 1))
+      fi
+      if find . -maxdepth 3 -name "*.html" -o -name "*.jsx" -o -name "*.tsx" -o -name "*.vue" -o -name "*.svelte" 2>/dev/null | head -1 | grep -q .; then
+        visual=true; count=$((count + 1))
+      fi
+      if find . -maxdepth 3 -name "*.proto" -o -name "openapi*" -o -name "swagger*" -o -name "*.graphql" 2>/dev/null | head -1 | grep -q .; then
+        contracts=true; count=$((count + 1))
+      fi
+      noncommunity=$((count - 1))
+      printf 'target: "."\nsources:\n  source_code: %s\n  docs: %s\n  sdk: %s\n  community: true\n  runtime: %s\n  binary: %s\n  git_history: %s\n  tests: %s\n  visual: %s\n  contracts: %s\nsource_count: %s\n' "$src" "$docs" "$sdk" "$runtime" "$binary" "$git" "$tests" "$visual" "$contracts" "$count" > workspace/discovery-manifest.yaml
+      printf 'discovered-%s-sources-noncommunity-%s' "$count" "$noncommunity"
+
+  agent DiscoverTargetReview
+    label: "Discovery Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      You are the Discovery Review agent. The automated target discovery found fewer than 2 non-community source types.
+
+      Read workspace/discovery-manifest.yaml. Then examine the target directory manually — look for sources the automated probe may have missed:
+      - Documentation in non-standard locations
+      - Tests with non-standard naming
+      - Source code in unexpected languages or locations
+      - Embedded docs in source comments
+
+      If you find additional sources, update workspace/discovery-manifest.yaml accordingly.
+
+  subgraph L1_Discovery
+    ref: greenfield_discovery.dip
+
+  tool CheckL1Output
+    label: "Check L1 Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.l1-failed" ]; then
+        printf 'l1-failed-%s' "$(cat workspace/.l1-failed)"
+        exit 0
+      fi
+      completed=0
+      dirs="workspace/raw/source workspace/public/docs workspace/public/ecosystem workspace/public/community workspace/raw/runtime workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence"
+      for d in $dirs; do
+        if [ -f "$d/.completed" ]; then
+          completed=$((completed + 1))
+        fi
+      done
+      if [ "$completed" -eq 0 ]; then
+        printf 'l1-empty'
+        exit 0
+      fi
+      printf 'l1-ok-%s-sources' "$completed"
+
+  subgraph L2L3_Synthesis
+    ref: greenfield_synthesis.dip
+
+  tool CheckSynthesisOutput
+    label: "Check Synthesis Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.synthesis-failed" ]; then
+        printf 'synthesis-failed-%s' "$(cat workspace/.synthesis-failed)"
+        exit 0
+      fi
+      specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      if [ "$specs" -eq 0 ]; then
+        printf 'synthesis-empty'
+        exit 0
+      fi
+      printf 'synthesis-ok-%s-specs' "$specs"
+
+  subgraph L4L5_Validation
+    ref: greenfield_validation.dip
+
+  tool CheckValidationOutput
+    label: "Check Validation Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.validation-failed" ]; then
+        printf 'validation-failed-%s' "$(cat workspace/.validation-failed)"
+        exit 0
+      fi
+      output_specs=$(find "workspace/output/specs/" -name "*.md" 2>/dev/null | wc -l)
+      tv=$(find "workspace/output/test-vectors/" -name "*.md" 2>/dev/null | wc -l)
+      ac=$(find "workspace/output/validation/" -name "*.md" 2>/dev/null | wc -l)
+      if [ "$output_specs" -eq 0 ] || [ "$tv" -eq 0 ] || [ "$ac" -eq 0 ]; then
+        printf 'validation-incomplete-specs-%s-tv-%s-ac-%s' "$output_specs" "$tv" "$ac"
+        exit 0
+      fi
+      printf 'validation-ok'
+
+  subgraph L6L7_Review
+    ref: greenfield_review.dip
+
+  agent FinalReport
+    label: "Final Report"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    max_turns: 3
+    prompt:
+      You are the Final Report agent. The Greenfield pipeline has completed all 7 layers.
+
+      Read workspace/workspace.json, workspace/raw/l1-summary.yaml, and the output directory.
+
+      Summarize:
+      1. Target analyzed and sources discovered
+      2. Number of behavioral specs produced
+      3. Number of test vectors and acceptance criteria
+      4. Gate results (all passed)
+      5. Overall confidence assessment
+      6. Output location: workspace/output/
+
+  agent DiscoveryFailed
+    label: "Discovery Failed"
+    max_turns: 1
+    prompt:
+      L1 discovery subgraph failed. Write workspace/.l1-failed with reason. Report.
+
+  agent L1Failed
+    label: "L1 Output Check Failed"
+    max_turns: 1
+    prompt:
+      L1 output check failed — no intelligence sources produced results. Report.
+
+  agent SynthesisFailed
+    label: "Synthesis Failed"
+    max_turns: 1
+    prompt:
+      L2/L3 synthesis failed. Check workspace/.synthesis-failed for details. Report.
+
+  agent ValidationFailed
+    label: "Validation Failed"
+    max_turns: 1
+    prompt:
+      L4/L5 validation failed. Check workspace/.validation-failed for details. Report.
+
+  agent ReviewFailed
+    label: "Review Failed"
+    max_turns: 1
+    prompt:
+      L6/L7 review failed. Check workspace/.review-failed for details. Report.
+
+  edges
+    Start -> SetupWorkspace
+    SetupWorkspace -> DiscoverTarget
+    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-0  label: very_low_coverage
+    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-1  label: low_coverage
+    DiscoverTarget -> L1_Discovery          when ctx.tool_stdout startswith discovered     label: sufficient
+    DiscoverTarget -> L1_Discovery
+    DiscoverTargetReview -> L1_Discovery
+    L1_Discovery -> CheckL1Output           when ctx.outcome = success  label: l1_done
+    L1_Discovery -> DiscoveryFailed         when ctx.outcome = fail     label: l1_subgraph_failed
+    L1_Discovery -> DiscoveryFailed
+    CheckL1Output -> L2L3_Synthesis         when ctx.tool_stdout startswith l1-ok  label: l1_ok
+    CheckL1Output -> L1Failed               when ctx.tool_stdout startswith l1-    label: l1_problem
+    CheckL1Output -> L1Failed
+    L2L3_Synthesis -> CheckSynthesisOutput   when ctx.outcome = success  label: synthesis_done
+    L2L3_Synthesis -> SynthesisFailed        when ctx.outcome = fail     label: synthesis_subgraph_failed
+    L2L3_Synthesis -> SynthesisFailed
+    CheckSynthesisOutput -> L4L5_Validation  when ctx.tool_stdout startswith synthesis-ok  label: synthesis_ok
+    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout startswith synthesis-    label: synthesis_problem
+    CheckSynthesisOutput -> SynthesisFailed
+    L4L5_Validation -> CheckValidationOutput  when ctx.outcome = success  label: validation_done
+    L4L5_Validation -> ValidationFailed       when ctx.outcome = fail     label: validation_subgraph_failed
+    L4L5_Validation -> ValidationFailed
+    CheckValidationOutput -> L6L7_Review      when ctx.tool_stdout = validation-ok  label: validation_ok
+    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-  label: validation_problem
+    CheckValidationOutput -> ValidationFailed
+    L6L7_Review -> FinalReport                when ctx.outcome = success  label: review_done
+    L6L7_Review -> ReviewFailed               when ctx.outcome = fail     label: review_subgraph_failed
+    L6L7_Review -> ReviewFailed
+    FinalReport -> Exit
+    DiscoveryFailed -> Exit
+    L1Failed -> Exit
+    SynthesisFailed -> Exit
+    ValidationFailed -> Exit
+    ReviewFailed -> Exit
