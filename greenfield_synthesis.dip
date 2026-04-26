@@ -1,0 +1,151 @@
+# ABOUTME: L2 synthesis + L3 deep specs + Gate 1/1b for Greenfield reverse engineering.
+# ABOUTME: Synthesizes L1 evidence into module map, writes behavioral specs, verifies with quality gates.
+workflow GreenfieldSynthesis
+  goal: "Synthesize L1 evidence into a unified module map (L2), write deep behavioral specs (L3), and verify correctness and completeness via Gate 1 and Gate 1b quality gates."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 15
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge that the L2/L3 synthesis pipeline is starting. Report ready status.
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Your ONLY job is to acknowledge start.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      L2/L3 synthesis pipeline complete. Report final status.
+      HARD CONSTRAINT: Do NOT write code. Do NOT modify files. Your ONLY job is to acknowledge completion.
+
+  tool ReadL1Summary
+    label: "Read L1 Summary"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f "workspace/raw/l1-summary.yaml" ]; then
+        printf 'no-l1-summary'
+        exit 0
+      fi
+      completed=$(yq '.completed_sources' "workspace/raw/l1-summary.yaml")
+      printf 'l1-ready-%s-sources' "$completed"
+
+  parallel SynthesisParallel -> FeatureDiscoverer, ArchitectureAnalyst, ApiExtractor, ModuleMapper
+
+  agent FeatureDiscoverer
+    label: "Feature Discoverer"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Feature Discoverer for Greenfield reverse engineering.
+
+      Read ALL evidence in workspace/raw/ and workspace/public/ — source analysis, docs, SDK info, community intelligence, runtime observations, test evidence, git history.
+
+      Build a comprehensive feature inventory:
+      1. List every user-facing feature, CLI command, API endpoint, configuration option
+      2. For each feature: name, description, behavioral summary, evidence sources
+      3. Assign priority: P0 (critical), P1 (important), P2 (minor), P3 (edge case)
+      4. Write the inventory to workspace/raw/synthesis/features/inventory.md
+
+      Every claim needs provenance: <!-- cite: source=synthesis, ref=<evidence-path>, confidence=<level>, agent=feature-discoverer -->
+
+  agent ArchitectureAnalyst
+    label: "Architecture Analyst"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Architecture Analyst for Greenfield reverse engineering.
+
+      Read ALL evidence in workspace/raw/ and workspace/public/.
+
+      Infer the architecture model:
+      1. Identify major components and their boundaries
+      2. Map data flow between components
+      3. Identify external interfaces (APIs, protocols, file formats)
+      4. Document architectural patterns (MVC, microservices, event-driven, etc.)
+      5. Write to workspace/raw/synthesis/architecture/
+
+      Every claim needs provenance.
+
+  agent ApiExtractor
+    label: "API Extractor"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the API Extractor for Greenfield reverse engineering.
+
+      Read ALL evidence in workspace/raw/ and workspace/public/.
+
+      Extract every external API contract:
+      1. CLI flags and commands (including hidden/debug ones)
+      2. HTTP/gRPC/WebSocket endpoints with request/response formats
+      3. Environment variables and configuration keys
+      4. File format contracts (input/output)
+      5. Write to workspace/raw/synthesis/api/
+
+      Every claim needs provenance.
+
+  agent ModuleMapper
+    label: "Module Mapper"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Module Mapper for Greenfield reverse engineering.
+
+      Read ALL evidence in workspace/raw/ and workspace/public/.
+
+      Map code structure to behavioral domains:
+      1. Identify logical modules/domains (not source file boundaries — behavioral boundaries)
+      2. For each module: what behavior it owns, what it depends on, what depends on it
+      3. Write module map to workspace/raw/synthesis/behavioral-summaries/
+
+      Every claim needs provenance.
+
+  fan_in SynthesisJoin <- FeatureDiscoverer, ArchitectureAnalyst, ApiExtractor, ModuleMapper
+
+  agent Synthesizer
+    label: "Synthesizer"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Synthesizer for Greenfield reverse engineering.
+
+      Read all L2 outputs:
+      - workspace/raw/synthesis/features/
+      - workspace/raw/synthesis/architecture/
+      - workspace/raw/synthesis/api/
+      - workspace/raw/synthesis/behavioral-summaries/
+
+      Merge them into a unified module map:
+      1. Reconcile overlapping findings from the 4 L2 agents
+      2. Resolve any contradictions (cite which evidence is stronger)
+      3. Produce a single coherent module map with behavioral domains, interfaces, and dependencies
+      4. Write to workspace/raw/synthesis/module-map.md
+
+      This module map is the PRIMARY input for L3 deep spec agents. It must be comprehensive.
+
+  edges
+    Start -> ReadL1Summary
+    ReadL1Summary -> SynthesisParallel  when ctx.tool_stdout startswith l1-ready  label: l1_ok
+    ReadL1Summary -> Exit               when ctx.tool_stdout = no-l1-summary      label: no_l1
+    ReadL1Summary -> Exit
+    SynthesisParallel -> FeatureDiscoverer
+    SynthesisParallel -> ArchitectureAnalyst
+    SynthesisParallel -> ApiExtractor
+    SynthesisParallel -> ModuleMapper
+    FeatureDiscoverer -> SynthesisJoin
+    ArchitectureAnalyst -> SynthesisJoin
+    ApiExtractor -> SynthesisJoin
+    ModuleMapper -> SynthesisJoin
+    SynthesisJoin -> Synthesizer
+    Synthesizer -> Exit
