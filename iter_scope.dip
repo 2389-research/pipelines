@@ -167,17 +167,12 @@ workflow IterScope
     timeout: 15s
     command:
       set -eu
-      missing=""
+      rm -f /tmp/iter-scope-missing-ids.txt
       for f in .ai/iter-scope-temp/skeleton.md .ai/iter-scope-temp/iterations.md; do
         [ -f "$f" ] || continue
         grep -oE 'STORY-[0-9]+[a-z]?' "$f" | sort -u | while IFS= read -r story_id; do
           base_id=$(printf '%s' "$story_id" | sed 's/[a-z]$//')
           if ! grep -qr "$base_id" docs/superpowers/iterations/requirements/ 2>/dev/null; then
-            if [ -z "$missing" ]; then
-              missing="$story_id"
-            else
-              missing="${missing},${story_id}"
-            fi
             printf '%s\n' "$story_id" >> /tmp/iter-scope-missing-ids.txt
           fi
         done
