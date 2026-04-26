@@ -34,27 +34,7 @@ workflow IterRun
         printf 'no-roadmap'
         exit 0
       fi
-      # Find the first iteration block with Status: pending
-      iter_id=$(awk '
-        /^\*\*Status:\*\* pending/ { found_pending=1 }
-        found_pending && /^## ITER-/ {
-          match($0, /ITER-[0-9]+/)
-          if (RSTART > 0) {
-            print substr($0, RSTART, RLENGTH)
-            exit
-          }
-        }
-        /^## ITER-/ {
-          match($0, /ITER-[0-9]+/)
-          if (RSTART > 0) { current_iter = substr($0, RSTART, RLENGTH) }
-          found_pending=0
-        }
-        found_pending && current_iter != "" {
-          print current_iter
-          exit
-        }
-      ' docs/superpowers/iterations/roadmap.md)
-      # Simpler two-pass: find first section that contains Status: pending
+      # Find the first iteration section containing Status: pending
       iter_id=$(awk '
         /^## ITER-/ {
           match($0, /ITER-[0-9]+/)
@@ -117,7 +97,9 @@ workflow IterRun
       fi
       total=0
       passed=0
-      # Extract sentinel rows from corpus table (tab or pipe delimited)
+      # Truncate baseline from prior iteration before writing fresh results
+      : > .ai/iter-sentinel-baseline.txt
+      # Extract sentinel rows from corpus table (pipe delimited)
       while IFS='|' read -r col1 col2 col3 col4 col5 rest; do
         # Strip whitespace
         cadence=$(printf '%s' "$col4" | tr -d ' ')
@@ -522,6 +504,7 @@ workflow IterRun
 
   agent provide_context
     label: "Provide Context"
+    auto_status: true
     prompt:
       The implementer reported NEEDS_CONTEXT or is blocked.
 
@@ -539,6 +522,10 @@ workflow IterRun
       - Suggestions for the correct approach given the codebase patterns
 
       Write the context brief to .ai/iter-run-temp/context_brief.txt.
+
+      If the implementer is truly BLOCKED (not just missing context — blocked means the task cannot be completed as specified), report STATUS: fail so the task can be escalated.
+
+      If you found the missing context and wrote it to the brief, report STATUS: success so the implementer can retry.
 
       HARD CONSTRAINT: Do not write code. Do not modify source files. Only read files and write to .ai/iter-run-temp/.
 
@@ -928,7 +915,8 @@ workflow IterRun
         exit 0
       fi
       # Run iteration-cadence scenarios whose owning stories are in this iteration
-      while IFS='|' read -r scenario_id title cadence_col cmd_col rest; do
+      # Corpus columns: id | title | seam | cadence | command
+      while IFS='|' read -r scenario_id title seam_col cadence_col cmd_col rest; do
         scenario_id=$(printf '%s' "$scenario_id" | tr -d ' ')
         cadence=$(printf '%s' "$cadence_col" | tr -d ' ')
         cmd=$(printf '%s' "$cmd_col" | tr -d ' ')
@@ -967,7 +955,8 @@ workflow IterRun
         exit 0
       fi
       regressions=""
-      while IFS='|' read -r scenario_id title cadence_col cmd_col rest; do
+      # Corpus columns: id | title | seam | cadence | command
+      while IFS='|' read -r scenario_id title seam_col cadence_col cmd_col rest; do
         scenario_id=$(printf '%s' "$scenario_id" | tr -d ' ')
         cadence=$(printf '%s' "$cadence_col" | tr -d ' ')
         cmd=$(printf '%s' "$cmd_col" | tr -d ' ')
@@ -1096,7 +1085,8 @@ workflow IterRun
         exit 0
       fi
       # Check iteration status is done in roadmap
-      if ! grep -q "Status.*done" docs/superpowers/iterations/roadmap.md 2>/dev/null; then
+      # Verify THIS iteration (not just any) is marked done
+      if ! grep -A3 "$iter_id" docs/superpowers/iterations/roadmap.md 2>/dev/null | grep -q "Status.*done"; then
         printf 'wrapup-invalid-iteration-not-marked-done'
         exit 0
       fi
@@ -1162,7 +1152,8 @@ workflow IterRun
     mark_task_in_progress -> implement_task
     implement_task -> par_spec_dispatch            when ctx.outcome = success   label: implemented
     implement_task -> provide_context              when ctx.outcome = fail      label: needs_help
-    provide_context -> implement_task              restart: true
+    provide_context -> implement_task              when ctx.outcome = success   restart: true  label: context_provided
+    provide_context -> escalate_task               when ctx.outcome = fail      label: truly_blocked
     escalate_task -> read_next_task                restart: true
 
     # PAR spec-compliance (Stage 1)

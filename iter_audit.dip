@@ -207,10 +207,10 @@ workflow IterAudit
       - Observable behavior without corpus entries
 
       End your response with exactly one of:
-      STATUS: pass
+      STATUS: success
       STATUS: fail
 
-      Use STATUS: pass when all stories have adequate evidence for all ACs.
+      Use STATUS: success when all stories have adequate evidence for all ACs.
       Use STATUS: fail when any story has a failing AC or weak evidence at wrong seam.
 
   parallel par_tier2_dispatch -> par_tier2_auditor_a, par_tier2_auditor_b
@@ -336,10 +336,10 @@ workflow IterAudit
       - Recommended actions for each flagged scenario
 
       End your response with exactly one of:
-      STATUS: pass
+      STATUS: success
       STATUS: fail
 
-      Use STATUS: pass when all impacted scenarios still correctly represent system behavior.
+      Use STATUS: success when all impacted scenarios still correctly represent system behavior.
       Use STATUS: fail when any scenario fails its test or has unaddressed behavioral drift.
 
   parallel par_tier3_dispatch -> par_tier3_auditor_a, par_tier3_auditor_b
@@ -468,10 +468,10 @@ workflow IterAudit
       - Uncertain results requiring manual verification
 
       End your response with exactly one of:
-      STATUS: pass
+      STATUS: success
       STATUS: fail
 
-      Use STATUS: pass when there are zero confirmed regressions and zero uncertain results.
+      Use STATUS: success when there are zero confirmed regressions and zero uncertain results.
       Use STATUS: fail when any regression is confirmed or any result is uncertain.
 
   agent synthesize_audit
@@ -574,6 +574,8 @@ workflow IterAudit
     label: "Report Clean"
     timeout: 5s
     command:
+      # Overwrite stale gaps from prior iterations so orchestrator sees clean state
+      printf 'AUDIT_CLEAN' > .ai/iter-audit-result.txt
       printf 'clean'
 
   edges
