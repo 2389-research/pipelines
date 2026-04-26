@@ -159,6 +159,114 @@ workflow GreenfieldReview
       Write workspace/.review-failed with the failure reason.
       HARD CONSTRAINT: Report only.
 
+  parallel FidelityParallel -> FidelityValidatorSpecs, FidelityValidatorTestVectors
+
+  agent FidelityValidatorSpecs
+    label: "Fidelity Validator — Specs"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Fidelity Validator for specs. Compare workspace/raw/specs/ against workspace/output/specs/.
+
+      Flag where behavioral detail was lost or weakened during sanitization.
+
+      Write findings to workspace/review/l7-fidelity-specs.md:
+      ## Fidelity Flag FL-001
+      **Raw spec:** <file>
+      **Output spec:** <file>
+      **Lost detail:** <description>
+      **Severity:** critical | notable | minor
+      **Recommendation:** <how to restore without reintroducing contamination>
+
+  agent FidelityValidatorTestVectors
+    label: "Fidelity Validator — Test Vectors"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Fidelity Validator for test vectors. Compare workspace/raw/specs/test-vectors/ against workspace/output/test-vectors/.
+
+      Flag where test assertions were weakened or test scenarios were lost.
+
+      Write findings to workspace/review/l7-fidelity-test-vectors.md using the same format.
+
+  fan_in FidelityJoin <- FidelityValidatorSpecs, FidelityValidatorTestVectors
+
+  tool L7ToolCheck
+    label: "L7 Tool Check"
+    timeout: 30s
+    command:
+      set -eu
+      retries=0
+      if [ -f "workspace/.l7-retries" ]; then
+        retries=$(cat "workspace/.l7-retries")
+      fi
+      retries=$((retries + 1))
+      printf '%s' "$retries" > "workspace/.l7-retries"
+      if [ "$retries" -gt 3 ]; then
+        printf 'budget-exhausted'
+        exit 0
+      fi
+      critical=$(find "workspace/review/" -name "l7-*.md" -print0 2>/dev/null | xargs -0 grep -c "^\*\*Severity:\*\* critical" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      notable=$(find "workspace/review/" -name "l7-*.md" -print0 2>/dev/null | xargs -0 grep -c "^\*\*Severity:\*\* notable" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      minor=$(find "workspace/review/" -name "l7-*.md" -print0 2>/dev/null | xargs -0 grep -c "^\*\*Severity:\*\* minor" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      if [ "$critical" -gt 0 ]; then
+        printf 'l7-has-flags-critical-%s-notable-%s-minor-%s' "$critical" "$notable" "$minor"
+        exit 0
+      fi
+      if [ "$notable" -gt 0 ] || [ "$minor" -gt 0 ]; then
+        printf 'l7-has-flags-notable-%s-minor-%s' "$notable" "$minor"
+        exit 0
+      fi
+      rm -f "workspace/.l7-retries"
+      printf 'l7-clean'
+
+  agent L7AgentVerdict
+    label: "L7 Verdict"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    auto_status: true
+    max_retries: 3
+    retry_target: RemediateL7
+    fallback_target: L7Failed
+    prompt:
+      You are the L7 fidelity verdict agent. Review workspace/review/l7-*.md.
+
+      If critical fidelity flags exist (behavioral detail meaningfully lost), STATUS: fail.
+      If only notable/minor flags, use judgment.
+      If no flags, STATUS: success.
+
+  agent RemediateL7
+    label: "Remediate L7 Findings"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the L7 Remediation agent. Restore behavioral detail that was over-sanitized.
+
+      Read workspace/review/l7-*.md for fidelity flags.
+      Restore lost detail in workspace/output/ WITHOUT reintroducing implementation contamination.
+      This is the hardest job in the pipeline — balance fidelity against cleanliness.
+
+  agent L7Failed
+    label: "L7 Failed"
+    max_turns: 1
+    prompt:
+      L7 fidelity validation has exhausted its retry budget. Report findings.
+      Write workspace/.review-failed with the failure reason.
+      HARD CONSTRAINT: Report only.
+
+  tool WriteReviewSummary
+    label: "Write Review Summary"
+    timeout: 10s
+    command:
+      set -eu
+      l6_findings=$(find "workspace/review/" -name "l6-*.md" -print0 2>/dev/null | xargs -0 grep -c "## Finding" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      l7_flags=$(find "workspace/review/" -name "l7-*.md" -print0 2>/dev/null | xargs -0 grep -c "## Fidelity Flag" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      printf 'review-done-l6-findings-%s-l7-flags-%s' "$l6_findings" "$l7_flags"
+
   edges
     Start -> ReadSanitizedOutput
     ReadSanitizedOutput -> ReviewParallel  when ctx.tool_stdout startswith output-ready  label: output_ok
@@ -176,8 +284,22 @@ workflow GreenfieldReview
     L6ToolCheck -> L6AgentVerdict     when ctx.tool_stdout startswith l6-  label: l6_check
     L6ToolCheck -> L6Failed           when ctx.tool_stdout = budget-exhausted  label: l6_budget
     L6ToolCheck -> L6AgentVerdict
-    L6AgentVerdict -> Exit        when ctx.outcome = success  label: l6_pass
-    L6AgentVerdict -> RemediateL6 when ctx.outcome = fail     label: l6_retry
+    L6AgentVerdict -> FidelityParallel  when ctx.outcome = success  label: l6_pass
+    L6AgentVerdict -> RemediateL6       when ctx.outcome = fail     label: l6_retry
     L6AgentVerdict -> L6Failed
     RemediateL6 -> L6ToolCheck   restart: true
+    FidelityParallel -> FidelityValidatorSpecs
+    FidelityParallel -> FidelityValidatorTestVectors
+    FidelityValidatorSpecs -> FidelityJoin
+    FidelityValidatorTestVectors -> FidelityJoin
+    FidelityJoin -> L7ToolCheck
+    L7ToolCheck -> L7AgentVerdict     when ctx.tool_stdout startswith l7-  label: l7_check
+    L7ToolCheck -> L7Failed           when ctx.tool_stdout = budget-exhausted  label: l7_budget
+    L7ToolCheck -> L7AgentVerdict
+    L7AgentVerdict -> WriteReviewSummary  when ctx.outcome = success  label: l7_pass
+    L7AgentVerdict -> RemediateL7         when ctx.outcome = fail     label: l7_retry
+    L7AgentVerdict -> L7Failed
+    RemediateL7 -> L7ToolCheck   restart: true
+    WriteReviewSummary -> Exit
+    L7Failed -> Exit
     L6Failed -> Exit
