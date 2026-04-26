@@ -1,5 +1,9 @@
 # ABOUTME: L4 test vectors + Gate 2 + L5 sanitization for Greenfield reverse engineering.
 # ABOUTME: Generates test vectors/acceptance criteria, reviews for leakage, sanitizes to output/.
+# PROVIDER DEPENDENCIES:
+# Primary: openai (L4 test vectors, Gate 2 review)
+# Secondary: anthropic (L5 sanitizers)
+# See spec section "Provider Outage Handling" for fallback strategies.
 workflow GreenfieldValidation
   goal: "Generate test vectors and acceptance criteria (L4), review for implementation leakage (Gate 2), and sanitize raw specs into clean output/ form (L5)."
   start: Start

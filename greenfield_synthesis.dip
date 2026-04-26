@@ -1,5 +1,9 @@
 # ABOUTME: L2 synthesis + L3 deep specs + Gate 1/1b for Greenfield reverse engineering.
 # ABOUTME: Synthesizes L1 evidence into module map, writes behavioral specs, verifies with quality gates.
+# PROVIDER DEPENDENCIES:
+# Primary: anthropic (all L2/L3 agents, gates, remediation)
+# No fallback — Anthropic unavailable is a hard failure for synthesis.
+# See spec section "Provider Outage Handling" for details.
 workflow GreenfieldSynthesis
   goal: "Synthesize L1 evidence into a unified module map (L2), write deep behavioral specs (L3), and verify correctness and completeness via Gate 1 and Gate 1b quality gates."
   start: Start

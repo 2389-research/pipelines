@@ -1,5 +1,9 @@
 # ABOUTME: L6 second-pass review + L7 fidelity validation for Greenfield reverse engineering.
 # ABOUTME: Independent review of sanitized output for contamination and fidelity loss.
+# PROVIDER DEPENDENCIES:
+# Primary: openai (L6 reviewers, L6/L7 verdicts)
+# Secondary: anthropic (L6/L7 remediation, L7 fidelity validators)
+# See spec section "Provider Outage Handling" for fallback strategies.
 workflow GreenfieldReview
   goal: "Review sanitized output specs for implementation contamination (L6) and behavioral fidelity loss (L7). Remediate findings. Also serves the /sanitize re-run use case."
   start: Start

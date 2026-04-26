@@ -1,5 +1,9 @@
 # ABOUTME: L1 intelligence gathering pipeline for Greenfield reverse engineering.
 # ABOUTME: Reads target through 8 parallel intelligence sources, writes raw evidence to workspace/raw/.
+# PROVIDER DEPENDENCIES:
+# Primary: gemini (L1 intelligence agents)
+# Fallback: anthropic (CoverageAgent)
+# See spec section "Provider Outage Handling" for fallback strategies.
 workflow GreenfieldDiscovery
   goal: "Read the target through every available intelligence source (source code, docs, SDK, community, runtime, binary, git history, tests). Write raw evidence to workspace/raw/ with provenance citations. Each agent writes a completion marker (.completed, .skipped, or .failed) for fan-in verification."
   start: Start
