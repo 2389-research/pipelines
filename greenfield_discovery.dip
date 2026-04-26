@@ -1,0 +1,119 @@
+# ABOUTME: L1 intelligence gathering pipeline for Greenfield reverse engineering.
+# ABOUTME: Reads target through 8 parallel intelligence sources, writes raw evidence to workspace/raw/.
+workflow GreenfieldDiscovery
+  goal: "Read the target through every available intelligence source (source code, docs, SDK, community, runtime, binary, git history, tests). Write raw evidence to workspace/raw/ with provenance citations. Each agent writes a completion marker (.completed, .skipped, or .failed) for fan-in verification."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 10
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge that the L1 intelligence gathering pipeline is starting. Report ready status.
+
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      L1 intelligence gathering complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+
+  tool ReadManifest
+    label: "Read Discovery Manifest"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f "workspace/discovery-manifest.yaml" ]; then
+        printf 'no-manifest'
+        exit 0
+      fi
+      count=$(yq '.source_count' "workspace/discovery-manifest.yaml")
+      printf 'manifest-ready-%s-sources' "$count"
+
+  tool WriteSkipMarkers
+    label: "Write Skip Markers"
+    timeout: 15s
+    command:
+      set -eu
+      sources="source_code:source docs:public/docs sdk:public/ecosystem community:public/community runtime:runtime binary:binary git_history:project-history tests:test-evidence"
+      for entry in $sources; do
+        key=$(printf '%s' "$entry" | cut -d: -f1)
+        dir=$(printf '%s' "$entry" | cut -d: -f2)
+        available=$(yq ".sources.${key}" "workspace/discovery-manifest.yaml" 2>/dev/null)
+        if [ "$key" = "community" ]; then
+          continue
+        fi
+        case "$dir" in
+          public/*) base="workspace/$dir" ;;
+          *) base="workspace/raw/$dir" ;;
+        esac
+        mkdir -p "$base"
+        if [ "$available" != "true" ]; then
+          printf 'Source type %s not available for this target\n' "$key" > "$base/.skipped"
+        fi
+      done
+      mkdir -p "workspace/public/community"
+      printf 'skip-markers-written'
+
+  tool CoverageCheck
+    label: "Coverage Check"
+    timeout: 15s
+    command:
+      set -eu
+      completed=0
+      skipped=0
+      failed=0
+      missing=0
+      dirs="workspace/raw/source workspace/public/docs workspace/public/ecosystem workspace/public/community workspace/raw/runtime workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence"
+      for d in $dirs; do
+        if [ -f "$d/.completed" ]; then
+          completed=$((completed + 1))
+        elif [ -f "$d/.skipped" ]; then
+          skipped=$((skipped + 1))
+        elif [ -f "$d/.failed" ]; then
+          failed=$((failed + 1))
+        else
+          missing=$((missing + 1))
+        fi
+      done
+      if [ "$missing" -gt 0 ]; then
+        printf 'incomplete-missing-%s-markers' "$missing"
+        exit 0
+      fi
+      non_community=$((completed - 1))
+      if [ "$completed" -le 1 ]; then
+        non_community=0
+      fi
+      printf 'coverage-%s-completed-%s-skipped-%s-failed-noncommunity-%s' "$completed" "$skipped" "$failed" "$non_community"
+
+  tool WriteL1Summary
+    label: "Write L1 Summary"
+    timeout: 10s
+    command:
+      set -eu
+      completed=0
+      dirs="workspace/raw/source workspace/public/docs workspace/public/ecosystem workspace/public/community workspace/raw/runtime workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence"
+      for d in $dirs; do
+        if [ -f "$d/.completed" ]; then
+          completed=$((completed + 1))
+        fi
+      done
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf 'completed_sources: %s\ntimestamp: "%s"\nprovider_fallback: false\n' "$completed" "$now" > "workspace/raw/l1-summary.yaml"
+      printf 'l1-summary-written-%s-sources' "$completed"
+
+  edges
+    Start -> ReadManifest
+    ReadManifest -> WriteSkipMarkers  when ctx.tool_stdout startswith manifest-ready  label: manifest_ok
+    ReadManifest -> Exit              when ctx.tool_stdout = no-manifest              label: no_manifest
+    ReadManifest -> Exit
+    WriteSkipMarkers -> CoverageCheck
+    CoverageCheck -> WriteL1Summary
+    WriteL1Summary -> Exit
