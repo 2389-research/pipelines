@@ -1,0 +1,449 @@
+# ABOUTME: Walking skeleton and iteration roadmap pipeline with PAR scope review and story splitting.
+# ABOUTME: Reads extracted requirements/scenarios, defines ITER-0000, orders follow-on iterations, runs PAR scope review, writes roadmap.md.
+workflow IterScope
+  goal: "Define walking skeleton (ITER-0000) and ordered iteration roadmap from extracted requirements, with PAR scope review and story splitting for heterogeneous-dependency ACs"
+  start: Start
+  exit: Exit
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 20
+
+  agent Start
+    label: Start
+    prompt:
+      Begin walking skeleton and roadmap pipeline. Acknowledging pipeline start — do not read or write any files.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Walking skeleton and roadmap pipeline complete.
+
+  tool check_scope_resume
+    label: "Check Scope Resume Point"
+    timeout: 10s
+    command:
+      set -eu
+      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$req_count" -eq 0 ]; then
+        printf 'no-requirements'
+        exit 0
+      fi
+      if [ -f docs/superpowers/iterations/roadmap.md ] && grep -q '## Walking skeleton' docs/superpowers/iterations/roadmap.md; then
+        printf 'has-roadmap'
+        exit 0
+      fi
+      printf 'no-roadmap'
+
+  agent no_requirements_exit
+    label: "No Requirements Found"
+    prompt:
+      Requirements must be extracted before defining the walking skeleton and roadmap.
+
+      The requirements directory docs/superpowers/iterations/requirements/ is empty or does not exist.
+
+      Please run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.
+
+  agent validate_existing_roadmap
+    label: "Validate Existing Roadmap"
+    auto_status: true
+    prompt:
+      Read and validate the existing roadmap at docs/superpowers/iterations/roadmap.md.
+
+      Check:
+      1. The roadmap has a "## Walking skeleton" section with ITER-0000 defined
+      2. Every STORY-NNNN cited in the roadmap exists in docs/superpowers/iterations/requirements/
+      3. Each iteration section has **Stories:**, **Rationale:**, **Status:**, and **Impacted scenarios:** fields
+      4. At least one JOURNEY-NNNN scenario is cited as the walking skeleton's journey scenario
+
+      Report what is valid and what is missing or broken.
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+  agent read_backlog
+    label: "Read Backlog"
+    model: gemini-3-flash-preview
+    provider: gemini
+    prompt:
+      Read all epic files in docs/superpowers/iterations/requirements/ — scan epic headers, story titles, status fields, and AC proof obligations. Also read docs/superpowers/iterations/behavior-scenarios.md for scenario coverage.
+
+      Write a backlog summary to .ai/iter-scope-temp/backlog_summary.md listing:
+      - Total epics and total stories (pending vs done)
+      - Total scenarios (surface vs journey), counting SCENARIO-NNNN and JOURNEY-NNNN separately
+      - A matrix of which stories have scenario coverage vs which don't (cross-reference story titles/IDs against owning_stories fields in behavior-scenarios.md)
+
+      Create the .ai/iter-scope-temp/ directory if it does not exist.
+
+      HARD CONSTRAINT: Do NOT modify any files in docs/superpowers/iterations/. Only write to .ai/iter-scope-temp/backlog_summary.md.
+
+  agent define_skeleton
+    label: "Define Walking Skeleton"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    prompt:
+      You are defining the Walking Skeleton — ITER-0000 — for an iterative development project.
+
+      Read:
+      1. .ai/iter-scope-temp/backlog_summary.md
+      2. All epic files in docs/superpowers/iterations/requirements/
+      3. docs/superpowers/iterations/behavior-scenarios.md
+
+      ## Walking Skeleton Requirements
+
+      Select a SMALL cohesive set of stories from as many distinct epics as possible. The skeleton proves the end-to-end shape of the product works.
+
+      MANDATORY:
+      - ITER-0000 MUST include stories that close at least ONE journey scenario chain (JOURNEY-NNNN)
+      - Prefer the core product journey over edge cases
+      - The skeleton's FIRST task must be designing and building the E2E test harness
+      - The skeleton must produce the first sentinel corpus entries
+
+      Selection rule: "if someone ran just these stories, they should see a demo that proves the product exists AND have at least one passing journey scenario."
+
+      ## Output
+
+      Write your walking skeleton definition to .ai/iter-scope-temp/skeleton.md:
+
+      ## Walking Skeleton (ITER-0000)
+      **Intent:** <one-line description>
+      **Design rationale:** <why these stories>
+      **Journey scenario:** <JOURNEY-NNNN that must pass>
+      **Stories committed:**
+      - STORY-NNNN (EPIC-NNN) — <title>
+      **Harness-first task:** Design and build E2E test harness before product features
+      **Sentinel corpus seeds:** <which scenarios become sentinels>
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+  agent order_iterations
+    label: "Order Iterations"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    prompt:
+      You are ordering the remaining stories (not in the walking skeleton) into follow-on iterations.
+
+      Read:
+      1. .ai/iter-scope-temp/skeleton.md (walking skeleton definition)
+      2. All epic files in docs/superpowers/iterations/requirements/
+      3. docs/superpowers/iterations/behavior-scenarios.md
+
+      ## Rules
+
+      - Each iteration = a sprint's worth of cohesive work. Granularity is judgment-based.
+      - STORY SPLITTING: Check each story's ACs for dependency profiles. If some ACs can be satisfied in iteration N but others require subsystems from iteration N+M, SPLIT the story:
+        1. Create version with satisfiable ACs for iteration N
+        2. Create version with remaining ACs for iteration N+M
+        3. Append a/b to the STORY-ID (e.g., STORY-0005a, STORY-0005b)
+      - Each iteration lists impacted scenarios from behavior-scenarios.md
+      - Look-ahead: does this iteration block or get blocked by neighbors?
+
+      ## Output
+
+      Write to .ai/iter-scope-temp/iterations.md — one section per iteration:
+
+      ### ITER-NNNN — <name>
+      **Stories:** STORY-NNNN, STORY-NNNN
+      **Rationale:** <why together>
+      **Impacted scenarios:** SCENARIO-NNNN, JOURNEY-NNNN
+      **Look-ahead:** <blocks/blocked-by analysis>
+      **Story splits:** <any stories split, with AC breakdown> or "None"
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+  tool check_citations
+    label: "Check Story Citations"
+    timeout: 15s
+    command:
+      set -eu
+      missing=""
+      for f in .ai/iter-scope-temp/skeleton.md .ai/iter-scope-temp/iterations.md; do
+        [ -f "$f" ] || continue
+        grep -oE 'STORY-[0-9]+[a-z]?' "$f" | sort -u | while IFS= read -r story_id; do
+          base_id=$(printf '%s' "$story_id" | sed 's/[a-z]$//')
+          if ! grep -qr "$base_id" docs/superpowers/iterations/requirements/ 2>/dev/null; then
+            if [ -z "$missing" ]; then
+              missing="$story_id"
+            else
+              missing="${missing},${story_id}"
+            fi
+            printf '%s\n' "$story_id" >> /tmp/iter-scope-missing-ids.txt
+          fi
+        done
+      done
+      if [ -f /tmp/iter-scope-missing-ids.txt ]; then
+        ids=$(sort -u /tmp/iter-scope-missing-ids.txt | tr '\n' ',' | sed 's/,$//')
+        rm -f /tmp/iter-scope-missing-ids.txt
+        printf 'citations-fail-%s' "$ids"
+      else
+        rm -f /tmp/iter-scope-missing-ids.txt
+        printf 'citations-ok'
+      fi
+
+  agent fix_citations
+    label: "Fix Citations"
+    prompt:
+      Read the citation check results — some STORY-NNNN IDs in .ai/iter-scope-temp/skeleton.md or .ai/iter-scope-temp/iterations.md do not match any story in docs/superpowers/iterations/requirements/.
+
+      Read:
+      1. .ai/iter-scope-temp/skeleton.md
+      2. .ai/iter-scope-temp/iterations.md
+      3. All epic files in docs/superpowers/iterations/requirements/ to find the correct IDs
+
+      For each missing ID, find the story that was intended (by title match or context) and correct the ID in skeleton.md and/or iterations.md.
+
+      If a cited story genuinely does not exist in the requirements, remove it and choose the closest existing story as replacement.
+
+      Update both files with correct citations only.
+
+  parallel par_scope_dispatch -> par_scope_reviewer_a, par_scope_reviewer_b
+
+  agent par_scope_reviewer_a
+    label: "PAR Scope Reviewer A"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings. Score 5 points per serious/critical finding.
+
+      ---
+
+      You are reviewing the scope of the walking skeleton and iteration roadmap BEFORE any code is written.
+
+      Read:
+      1. .ai/iter-scope-temp/skeleton.md
+      2. .ai/iter-scope-temp/iterations.md
+      3. docs/superpowers/iterations/requirements/ (all epic files)
+      4. docs/superpowers/iterations/behavior-scenarios.md
+
+      ## Your Five Checks
+
+      ### 1. Citation Integrity
+      Every committed story cites a valid STORY-NNNN from the requirements directory. Do the stories actually mean what the spec says? (Semantic check, not just ID existence.)
+
+      ### 2. Scope Creep
+      Is ITER-0000 trying to do too much? Could any story be deferred without breaking the skeleton? Are follow-on iterations well-bounded?
+
+      ### 3. Boxing-In Look-Ahead
+      Would ITER-0000's design approach block ITER-0001, 0002, or 0003? Does any iteration introduce hard coupling, premature abstraction, or structural commitments that would need undoing?
+
+      ### 4. Scenario Coverage
+      Does any iteration leave externally observable behavior without planned scenario coverage? Does ITER-0000 close at least one JOURNEY scenario?
+
+      ### 5. Story Splitting
+      Are there stories with heterogeneous-dependency ACs scoped whole into one iteration? If ACs have different dependency profiles, they should be split.
+
+      ## Report Format
+      - **Citation Integrity:** PASS | issues
+      - **Scope Creep:** PASS | recommendations
+      - **Boxing-In:** PASS | risks with specific downstream iterations
+      - **Scenario Coverage:** PASS | observable behavior without scenarios
+      - **Story Splitting:** PASS | stories to split with AC breakdown
+
+      Overall: APPROVE | REVISE — with specific changes needed
+
+  agent par_scope_reviewer_b
+    label: "PAR Scope Reviewer B"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings. Score 5 points per serious/critical finding.
+
+      ---
+
+      You are reviewing the scope of the walking skeleton and iteration roadmap BEFORE any code is written.
+
+      Read:
+      1. .ai/iter-scope-temp/skeleton.md
+      2. .ai/iter-scope-temp/iterations.md
+      3. docs/superpowers/iterations/requirements/ (all epic files)
+      4. docs/superpowers/iterations/behavior-scenarios.md
+
+      ## Your Five Checks
+
+      ### 1. Citation Integrity
+      Every committed story cites a valid STORY-NNNN from the requirements directory. Do the stories actually mean what the spec says? (Semantic check, not just ID existence.)
+
+      ### 2. Scope Creep
+      Is ITER-0000 trying to do too much? Could any story be deferred without breaking the skeleton? Are follow-on iterations well-bounded?
+
+      ### 3. Boxing-In Look-Ahead
+      Would ITER-0000's design approach block ITER-0001, 0002, or 0003? Does any iteration introduce hard coupling, premature abstraction, or structural commitments that would need undoing?
+
+      ### 4. Scenario Coverage
+      Does any iteration leave externally observable behavior without planned scenario coverage? Does ITER-0000 close at least one JOURNEY scenario?
+
+      ### 5. Story Splitting
+      Are there stories with heterogeneous-dependency ACs scoped whole into one iteration? If ACs have different dependency profiles, they should be split.
+
+      ## Report Format
+      - **Citation Integrity:** PASS | issues
+      - **Scope Creep:** PASS | recommendations
+      - **Boxing-In:** PASS | risks with specific downstream iterations
+      - **Scenario Coverage:** PASS | observable behavior without scenarios
+      - **Story Splitting:** PASS | stories to split with AC breakdown
+
+      Overall: APPROVE | REVISE — with specific changes needed
+
+  fan_in par_scope_join <- par_scope_reviewer_a, par_scope_reviewer_b
+
+  agent par_scope_aggregate
+    label: "PAR Scope Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    auto_status: true
+    prompt:
+      Read both PAR reviewer outputs from par_scope_reviewer_a and par_scope_reviewer_b.
+
+      Aggregate the findings:
+      - Same issue found by both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      If both reviewers say APPROVE, output STATUS: success.
+      If either reviewer says REVISE, output STATUS: fail with a consolidated list of specific changes required.
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+  agent adjust_scope
+    label: "Adjust Scope"
+    prompt:
+      Read the scope review findings from par_scope_aggregate. Adjust skeleton.md and iterations.md to address all raised issues.
+
+      Read:
+      1. .ai/iter-scope-temp/skeleton.md
+      2. .ai/iter-scope-temp/iterations.md
+      3. docs/superpowers/iterations/requirements/ (all epic files, if story splits are needed)
+
+      Apply any recommended story splits by:
+      1. Updating .ai/iter-scope-temp/skeleton.md and .ai/iter-scope-temp/iterations.md with the split story IDs (STORY-NNNNa, STORY-NNNNb)
+      2. Updating the affected epic files in docs/superpowers/iterations/requirements/ to reflect the split stories
+
+      Address every REVISE item from the scope review. Update both temp files with the corrected scope.
+
+  agent write_roadmap
+    label: "Write Roadmap"
+    model: claude-sonnet-4-6
+    goal_gate: true
+    auto_status: true
+    prompt:
+      Read .ai/iter-scope-temp/skeleton.md and .ai/iter-scope-temp/iterations.md.
+
+      Write docs/superpowers/iterations/roadmap.md in this exact format:
+
+      # Roadmap
+
+      ## Walking skeleton (ITER-0000)
+
+      **Intent:** <one-line>
+      **Design rationale:** <why>
+      **Journey scenario:** JOURNEY-NNNN
+      **Stories committed:**
+      - STORY-NNNN (EPIC-NNN)
+      **Status:** pending
+
+      ## Iteration list
+
+      ### ITER-0001 — <name>
+      **Stories:** STORY-NNNN, STORY-NNNN
+      **Rationale:** <why together>
+      **Status:** pending
+      **Impacted scenarios:** SCENARIO-NNNN, JOURNEY-NNNN
+      **Look-ahead check:** <blocks/blocked-by>
+
+      Continue for all iterations from iterations.md.
+
+      If story splits were applied in iterations.md, also update the affected epic files in docs/superpowers/iterations/requirements/ to reflect the split stories (STORY-NNNNa, STORY-NNNNb format).
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+  tool validate_roadmap
+    label: "Validate Roadmap"
+    timeout: 10s
+    command:
+      set -eu
+      fail_reason=""
+      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+        printf 'roadmap-invalid-file-missing'
+        exit 0
+      fi
+      if ! grep -q '## Walking skeleton' docs/superpowers/iterations/roadmap.md; then
+        printf 'roadmap-invalid-missing-walking-skeleton-section'
+        exit 0
+      fi
+      iter_count=$(grep -c '^### ITER-' docs/superpowers/iterations/roadmap.md 2>/dev/null || true)
+      if [ "$iter_count" -eq 0 ]; then
+        printf 'roadmap-invalid-no-iter-sections'
+        exit 0
+      fi
+      if ! grep -q '\*\*Status:\*\*' docs/superpowers/iterations/roadmap.md; then
+        printf 'roadmap-invalid-missing-status-fields'
+        exit 0
+      fi
+      if ! grep -q 'STORY-' docs/superpowers/iterations/roadmap.md; then
+        printf 'roadmap-invalid-no-story-refs'
+        exit 0
+      fi
+      printf 'roadmap-valid'
+
+  tool commit_roadmap
+    label: "Commit Roadmap"
+    timeout: 30s
+    command:
+      set -eu
+      git add docs/superpowers/iterations/
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+      else
+        git commit -m "docs: add roadmap — walking skeleton with journey scenario + iteration plan"
+        printf 'committed'
+      fi
+
+  edges
+    Start -> check_scope_resume
+    check_scope_resume -> no_requirements_exit    when ctx.tool_stdout = no-requirements     label: no_reqs
+    check_scope_resume -> validate_existing_roadmap  when ctx.tool_stdout = has-roadmap      label: has_roadmap
+    check_scope_resume -> read_backlog            when ctx.tool_stdout = no-roadmap          label: fresh
+    check_scope_resume -> read_backlog
+    no_requirements_exit -> Exit
+    validate_existing_roadmap -> Exit             when ctx.outcome = success   label: valid
+    validate_existing_roadmap -> read_backlog     when ctx.outcome = fail      label: invalid
+    read_backlog -> define_skeleton
+    define_skeleton -> order_iterations           when ctx.outcome = success   label: skeleton_defined
+    define_skeleton -> Exit                       when ctx.outcome = fail      label: skeleton_failed
+    order_iterations -> check_citations           when ctx.outcome = success   label: ordered
+    order_iterations -> Exit                      when ctx.outcome = fail      label: ordering_failed
+    check_citations -> par_scope_dispatch         when ctx.tool_stdout = citations-ok         label: citations_ok
+    check_citations -> fix_citations              when ctx.tool_stdout startswith citations-fail  label: citations_bad
+    fix_citations -> check_citations              restart: true
+    par_scope_dispatch -> par_scope_reviewer_a
+    par_scope_dispatch -> par_scope_reviewer_b
+    par_scope_reviewer_a -> par_scope_join
+    par_scope_reviewer_b -> par_scope_join
+    par_scope_join -> par_scope_aggregate
+    par_scope_aggregate -> write_roadmap          when ctx.outcome = success   label: approved
+    par_scope_aggregate -> adjust_scope           when ctx.outcome = fail      label: revise
+    adjust_scope -> check_citations               restart: true
+    write_roadmap -> validate_roadmap             when ctx.outcome = success   label: written
+    write_roadmap -> Exit                         when ctx.outcome = fail      label: write_failed
+    validate_roadmap -> commit_roadmap            when ctx.tool_stdout = roadmap-valid        label: valid
+    validate_roadmap -> write_roadmap             when ctx.tool_stdout startswith roadmap-invalid  label: invalid  restart: true
+    commit_roadmap -> Exit
