@@ -310,10 +310,9 @@ workflow GreenfieldDiscovery
         printf 'incomplete-missing-%s-markers' "$missing"
         exit 0
       fi
-      non_community=$((completed - 1))
-      if [ "$completed" -le 1 ]; then
-        non_community=0
-      fi
+      community_done=0
+      [ -f "workspace/public/community/.completed" ] && community_done=1
+      non_community=$((completed - community_done))
       printf 'coverage-%s-completed-%s-skipped-%s-failed-noncommunity-%s' "$completed" "$skipped" "$failed" "$non_community"
 
   agent CoverageAgent
@@ -348,7 +347,9 @@ workflow GreenfieldDiscovery
         fi
       done
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      printf 'completed_sources: %s\ntimestamp: "%s"\nprovider_fallback: false\n' "$completed" "$now" > "workspace/raw/l1-summary.yaml"
+      fallback=false
+      [ -f "workspace/raw/coverage-assessment.md" ] && fallback=true
+      printf 'completed_sources: %s\ntimestamp: "%s"\nprovider_fallback: %s\n' "$completed" "$now" "$fallback" > "workspace/raw/l1-summary.yaml"
       printf 'l1-summary-written-%s-sources' "$completed"
 
   edges
@@ -376,7 +377,6 @@ workflow GreenfieldDiscovery
     IntelligenceJoin -> CoverageCheck
     CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith noncommunity-0  label: low_coverage_zero
     CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith noncommunity-1  label: low_coverage_one
-    CoverageCheck -> WriteL1Summary     when ctx.tool_stdout startswith coverage-     label: sufficient
     CoverageCheck -> Exit               when ctx.tool_stdout startswith incomplete    label: fan_in_failed
     CoverageCheck -> WriteL1Summary
     CoverageAgent -> WriteL1Summary

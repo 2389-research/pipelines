@@ -155,6 +155,8 @@ workflow GreenfieldReview
       Rewrite ONLY the affected sections in workspace/output/. Preserve everything else.
       Do not reintroduce contamination while fixing.
 
+      After fixing all issues, rewrite each workspace/review/l6-*.md file to remove the findings you resolved. Keep only unresolved findings (if any). This ensures the L6 tool re-check sees accurate counts on retry.
+
   agent L6Failed
     label: "L6 Failed"
     max_turns: 1
@@ -253,6 +255,8 @@ workflow GreenfieldReview
       Read workspace/review/l7-*.md for fidelity flags.
       Restore lost detail in workspace/output/ WITHOUT reintroducing implementation contamination.
       This is the hardest job in the pipeline — balance fidelity against cleanliness.
+
+      After fixing all issues, rewrite each workspace/review/l7-*.md file to remove the fidelity flags you resolved. Keep only unresolved flags (if any). This ensures the L7 tool re-check sees accurate counts on retry.
 
   agent L7Failed
     label: "L7 Failed"

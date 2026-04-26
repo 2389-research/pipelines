@@ -227,20 +227,23 @@ workflow Greenfield
     L1_Discovery -> CheckL1Output           when ctx.outcome = success  label: l1_done
     L1_Discovery -> DiscoveryFailed         when ctx.outcome = fail     label: l1_subgraph_failed
     L1_Discovery -> DiscoveryFailed
-    CheckL1Output -> L2L3_Synthesis         when ctx.tool_stdout startswith l1-ok  label: l1_ok
-    CheckL1Output -> L1Failed               when ctx.tool_stdout startswith l1-    label: l1_problem
+    CheckL1Output -> L2L3_Synthesis         when ctx.tool_stdout startswith l1-ok      label: l1_ok
+    CheckL1Output -> L1Failed               when ctx.tool_stdout startswith l1-failed  label: l1_failed
+    CheckL1Output -> L1Failed               when ctx.tool_stdout = l1-empty            label: l1_empty
     CheckL1Output -> L1Failed
     L2L3_Synthesis -> CheckSynthesisOutput   when ctx.outcome = success  label: synthesis_done
     L2L3_Synthesis -> SynthesisFailed        when ctx.outcome = fail     label: synthesis_subgraph_failed
     L2L3_Synthesis -> SynthesisFailed
-    CheckSynthesisOutput -> L4L5_Validation  when ctx.tool_stdout startswith synthesis-ok  label: synthesis_ok
-    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout startswith synthesis-    label: synthesis_problem
+    CheckSynthesisOutput -> L4L5_Validation  when ctx.tool_stdout startswith synthesis-ok      label: synthesis_ok
+    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout startswith synthesis-failed  label: synthesis_failed
+    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout = synthesis-empty             label: synthesis_empty
     CheckSynthesisOutput -> SynthesisFailed
     L4L5_Validation -> CheckValidationOutput  when ctx.outcome = success  label: validation_done
     L4L5_Validation -> ValidationFailed       when ctx.outcome = fail     label: validation_subgraph_failed
     L4L5_Validation -> ValidationFailed
-    CheckValidationOutput -> L6L7_Review      when ctx.tool_stdout = validation-ok  label: validation_ok
-    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-  label: validation_problem
+    CheckValidationOutput -> L6L7_Review      when ctx.tool_stdout = validation-ok                  label: validation_ok
+    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-failed      label: validation_failed
+    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-incomplete  label: validation_incomplete
     CheckValidationOutput -> ValidationFailed
     L6L7_Review -> FinalReport                when ctx.outcome = success  label: review_done
     L6L7_Review -> ReviewFailed               when ctx.outcome = fail     label: review_subgraph_failed

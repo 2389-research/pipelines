@@ -136,6 +136,8 @@ workflow GreenfieldSynthesis
       3. Produce a single coherent module map with behavioral domains, interfaces, and dependencies
       4. Write to workspace/raw/synthesis/module-map.md
 
+      FORMAT CONSTRAINT: Use exactly one `## ModuleName` heading per behavioral module. Do not use ## for non-module sections. Downstream gates count ## headings to verify spec completeness.
+
       This module map is the PRIMARY input for L3 deep spec agents. It must be comprehensive.
 
   parallel DeepSpecsParallel -> DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
@@ -185,7 +187,7 @@ workflow GreenfieldSynthesis
 
       Write behavioral documentation with provenance for each behavioral domain.
       Focus on observable behaviors, state machines, and decision logic.
-      Write to workspace/raw/specs/modules/ (complement DeepDiveAnalyzer's output).
+      Write to workspace/raw/specs/modules/ using filenames prefixed with `bd-` (e.g., bd-authentication.md) to avoid collisions with DeepDiveAnalyzer output.
 
       ## Provenance
       Every behavioral claim MUST have a provenance citation:
@@ -282,7 +284,7 @@ workflow GreenfieldSynthesis
     reasoning_effort: high
     auto_status: true
     max_retries: 3
-    retry_target: DeepDiveAnalyzer
+    retry_target: DeepSpecsParallel
     fallback_target: Gate1Failed
     prompt:
       You are the Gate 1 quality reviewer. Evaluate the behavioral specs in workspace/raw/specs/.
