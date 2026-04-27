@@ -140,6 +140,8 @@ workflow GreenfieldSynthesis
 
       This module map is the PRIMARY input for L3 deep spec agents. It must be comprehensive.
 
+      Every claim needs provenance: <!-- cite: source=synthesis, ref=<L2-evidence-path>, confidence=<level>, agent=synthesizer -->
+
   parallel DeepSpecsParallel -> DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
 
   agent DeepDiveAnalyzer
@@ -247,6 +249,28 @@ workflow GreenfieldSynthesis
 
   fan_in DeepSpecsJoin <- DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
 
+  agent Gate1Remediation
+    label: "Gate 1 Remediation"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Gate 1 Remediation agent. Gate 1 found quality issues with the behavioral specs.
+
+      Read workspace/raw/specs/gate1-findings.md for the specific issues found.
+      Before rewriting any spec file, remove the old version first. If gate1-findings.md identifies modules that were renamed or merged, delete the orphaned files from workspace/raw/specs/modules/ to prevent stale file accumulation.
+
+      Read L2 summary files for context:
+      - workspace/raw/synthesis/module-map.md
+      - workspace/raw/synthesis/features/
+      - workspace/raw/synthesis/architecture/
+      - workspace/raw/synthesis/api/
+      - workspace/raw/synthesis/behavioral-summaries/
+
+      Fix ONLY the issues identified in gate1-findings.md. Rewrite the affected spec files in workspace/raw/specs/modules/. Do NOT re-run full L3 analysis — make targeted fixes.
+
+      Every claim needs provenance: <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=gate1-remediation -->
+
   tool Gate1ToolCheck
     label: "Gate 1 Tool Check"
     timeout: 30s
@@ -284,7 +308,7 @@ workflow GreenfieldSynthesis
     reasoning_effort: high
     auto_status: true
     max_retries: 3
-    retry_target: DeepSpecsParallel
+    retry_target: Gate1Remediation
     fallback_target: Gate1Failed
     prompt:
       You are the Gate 1 quality reviewer. Evaluate the behavioral specs in workspace/raw/specs/.
@@ -317,7 +341,7 @@ workflow GreenfieldSynthesis
       gaps=""
       if [ -f "workspace/raw/synthesis/module-map.md" ]; then
         module_count=$(grep -c '^## ' "workspace/raw/synthesis/module-map.md" 2>/dev/null || printf '0')
-        spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -not -name "gate*" 2>/dev/null | wc -l | tr -d ' ')
+        spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -not -name "gate*" -not -name "bd-*" 2>/dev/null | wc -l | tr -d ' ')
         if [ "$spec_count" -lt "$module_count" ]; then
           gaps="module-spec-deficit:expected-${module_count}-got-${spec_count} "
         fi
@@ -349,7 +373,9 @@ workflow GreenfieldSynthesis
     prompt:
       You are the Gate 1b completeness reviewer. Verify every user-facing surface is captured in specs.
 
-      Read the gap list from the Gate 1b tool check. Assess whether the gaps represent missing behavioral coverage or are benign (e.g., utility code with no user-facing behavior).
+      The Gate 1b tool check identified gaps (reported in the tool output above you in the conversation). The gap format is: module-spec-deficit:expected-N-got-M, no-journeys, no-contracts.
+
+      Assess whether the gaps represent missing behavioral coverage or are benign (e.g., utility code with no user-facing behavior). Read workspace/raw/synthesis/module-map.md to understand what modules exist. Read workspace/raw/specs/ to see what specs are present.
 
       Write findings to workspace/raw/specs/gate1b-findings.md.
 
@@ -375,9 +401,11 @@ workflow GreenfieldSynthesis
     timeout: 10s
     command:
       set -eu
-      spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -not -name "gate*" -not -name "bd-*" 2>/dev/null | wc -l)
       journey_count=$(find "workspace/raw/specs/journeys/" -name "*.md" 2>/dev/null | wc -l)
       contract_count=$(find "workspace/raw/specs/contracts/" -name "*.md" 2>/dev/null | wc -l)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf 'spec_count: %s\njourney_count: %s\ncontract_count: %s\ntimestamp: "%s"\n' "$spec_count" "$journey_count" "$contract_count" "$now" > "workspace/raw/l2l3-summary.yaml"
       printf 'summary-specs-%s-journeys-%s-contracts-%s' "$spec_count" "$journey_count" "$contract_count"
 
   agent Gate1Failed
@@ -417,15 +445,15 @@ workflow GreenfieldSynthesis
     Gate1ToolCheck -> Gate1Failed          when ctx.tool_stdout = budget-exhausted  label: gate1_budget
     Gate1ToolCheck -> Gate1Failed
     Gate1AgentReview -> Gate1bCompleteness  when ctx.outcome = success  label: gate1_pass
-    Gate1AgentReview -> Gate1Failed         when ctx.outcome = fail     label: gate1_fail
-    Gate1AgentReview -> Gate1Failed
+    Gate1AgentReview -> Gate1Remediation    when ctx.outcome = fail     label: gate1_remediate
     Gate1bCompleteness -> Gate1bAgent       when ctx.tool_stdout startswith gaps    label: gaps_found
     Gate1bCompleteness -> WriteL2L3Summary  when ctx.tool_stdout = gate1b-pass      label: gate1b_pass
     Gate1bCompleteness -> Gate1Failed       when ctx.tool_stdout = budget-exhausted label: gate1b_budget
-    Gate1bCompleteness -> WriteL2L3Summary
+    Gate1bCompleteness -> Gate1Failed
     Gate1bAgent -> WriteL2L3Summary            when ctx.outcome = success  label: gate1b_pass
     Gate1bAgent -> JourneyContractRemediation  when ctx.outcome = fail     label: gate1b_retry
     Gate1bAgent -> Gate1Failed
+    Gate1Remediation -> Gate1ToolCheck  restart: true
     JourneyContractRemediation -> Gate1bCompleteness  restart: true
     WriteL2L3Summary -> Exit
     Gate1Failed -> Exit
