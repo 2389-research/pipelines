@@ -28,15 +28,19 @@ workflow IterRun
     label: "Find Next Iteration"
     timeout: 15s
     command:
-      set -eu
+      set -euo pipefail
       mkdir -p .ai/iter-run-temp
+      # Clear stale temp files from prior iteration (tasks/scope are overwritten but reviews may linger)
+      rm -f .ai/iter-run-temp/spec_review.md .ai/iter-run-temp/quality_review.md \
+            .ai/iter-run-temp/context_brief.txt .ai/iter-run-temp/escalation_notes.txt \
+            .ai/iter-run-temp/scope.md
       if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
         printf 'no-roadmap'
         exit 0
       fi
       # Find the first iteration section containing Status: pending
       iter_id=$(awk '
-        /^## ITER-/ {
+        /^### ITER-/ {
           match($0, /ITER-[0-9]+/)
           if (RSTART > 0) { cur = substr($0, RSTART, RLENGTH) }
         }
@@ -90,7 +94,7 @@ workflow IterRun
     label: "Run Sentinel Baseline"
     timeout: 300s
     command:
-      set -eu
+      set -euo pipefail
       if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
         printf 'baseline-0-of-0-sentinels'
         exit 0
@@ -99,14 +103,15 @@ workflow IterRun
       passed=0
       # Truncate baseline from prior iteration before writing fresh results
       : > .ai/iter-sentinel-baseline.txt
-      # Extract sentinel rows from corpus table (pipe delimited)
-      while IFS='|' read -r col1 col2 col3 col4 col5 rest; do
-        # Strip whitespace
-        cadence=$(printf '%s' "$col4" | tr -d ' ')
-        cmd=$(printf '%s' "$col5" | tr -d ' ')
+      # Extract sentinel rows from corpus table (pipe delimited, leading | handled)
+      while IFS='|' read -r _leading col1 col2 col3 col4 col5 rest; do
+        # Strip leading/trailing whitespace only (preserve internal spaces in commands)
+        cadence=$(printf '%s' "$col4" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cmd=$(printf '%s' "$col5" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        scenario_name=$(printf '%s' "$col1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         if [ "$cadence" = "sentinel" ] && [ "$cmd" != "TBD" ] && [ -n "$cmd" ]; then
           total=$((total + 1))
-          if eval "$cmd" >/dev/null 2>&1; then
+          if sh -c "$cmd" >/dev/null 2>&1; then
             passed=$((passed + 1))
             printf 'PASS %s\n' "$cmd" >> .ai/iter-sentinel-baseline.txt
           else
@@ -114,7 +119,7 @@ workflow IterRun
           fi
         elif [ "$cadence" = "sentinel" ] && [ "$cmd" = "TBD" ]; then
           total=$((total + 1))
-          printf 'TBD %s\n' "$col1" >> .ai/iter-sentinel-baseline.txt
+          printf 'TBD %s\n' "$scenario_name" >> .ai/iter-sentinel-baseline.txt
         fi
       done < docs/superpowers/iterations/behavior-corpus.md
       printf 'baseline-%d-of-%d-sentinels' "$passed" "$total"
@@ -123,7 +128,7 @@ workflow IterRun
     label: "Consistency Audit"
     timeout: 15s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       if [ -z "$iter_id" ]; then
         printf 'inconsistent-no-iteration-id'
@@ -135,8 +140,8 @@ workflow IterRun
       fi
       # Extract STORY- IDs from the current iteration section
       story_ids=$(awk -v iter="$iter_id" '
-        $0 ~ ("^## " iter) { in_section=1; next }
-        in_section && /^## ITER-/ { exit }
+        $0 ~ ("^### " iter) { in_section=1; next }
+        in_section && /^### ITER-/ { exit }
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
       ' docs/superpowers/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
@@ -375,7 +380,7 @@ workflow IterRun
     label: "Mark Iteration In Progress"
     timeout: 10s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       if [ -z "$iter_id" ]; then
         printf 'error-no-iteration-id'
@@ -401,7 +406,7 @@ workflow IterRun
     label: "Update Progress"
     timeout: 5s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       task_total=0
       task_done=0
@@ -421,7 +426,7 @@ workflow IterRun
     label: "Read Next Task"
     timeout: 5s
     command:
-      set -eu
+      set -euo pipefail
       if [ ! -f .ai/iter-run-temp/task_status.txt ]; then
         printf 'all-tasks-done'
         exit 0
@@ -437,14 +442,15 @@ workflow IterRun
     label: "Mark Task In Progress"
     timeout: 5s
     command:
-      set -eu
+      set -euo pipefail
       next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
       if [ -z "$next" ]; then
         printf 'no-pending-task'
         exit 1
       fi
-      sed -i.bak "s/^${next}|pending$/${next}|in_progress/" .ai/iter-run-temp/task_status.txt
-      rm -f .ai/iter-run-temp/task_status.txt.bak
+      awk -v id="$next" 'BEGIN{FS=OFS="|"} $1==id && $2=="pending" {$2="in_progress"} {print}' \
+        .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
+      mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
       printf 'in-progress-%s' "$next"
 
   agent implement_task
@@ -866,21 +872,22 @@ workflow IterRun
     label: "Mark Task Done"
     timeout: 5s
     command:
-      set -eu
+      set -euo pipefail
       task_id=$(grep '|in_progress' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
       if [ -z "$task_id" ]; then
         printf 'no-in-progress-task'
         exit 1
       fi
-      sed -i.bak "s/^${task_id}|in_progress$/${task_id}|done/" .ai/iter-run-temp/task_status.txt
-      rm -f .ai/iter-run-temp/task_status.txt.bak
+      awk -v id="$task_id" 'BEGIN{FS=OFS="|"} $1==id && $2=="in_progress" {$2="done"} {print}' \
+        .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
+      mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
       printf 'task-done'
 
   tool update_task_progress
     label: "Update Task Progress"
     timeout: 5s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
       done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
@@ -895,7 +902,7 @@ workflow IterRun
     label: "Run Impacted Scenarios"
     timeout: 300s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
         printf 'impacted-all-tbd'
@@ -906,8 +913,8 @@ workflow IterRun
       tbd=0
       # Get stories in this iteration
       story_ids=$(awk -v iter="$iter_id" '
-        $0 ~ ("^## " iter) { in_section=1; next }
-        in_section && /^## ITER-/ { exit }
+        $0 ~ ("^### " iter) { in_section=1; next }
+        in_section && /^### ITER-/ { exit }
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
       ' docs/superpowers/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
@@ -915,11 +922,11 @@ workflow IterRun
         exit 0
       fi
       # Run iteration-cadence scenarios whose owning stories are in this iteration
-      # Corpus columns: id | title | seam | cadence | command
-      while IFS='|' read -r scenario_id title seam_col cadence_col cmd_col rest; do
-        scenario_id=$(printf '%s' "$scenario_id" | tr -d ' ')
-        cadence=$(printf '%s' "$cadence_col" | tr -d ' ')
-        cmd=$(printf '%s' "$cmd_col" | tr -d ' ')
+      # Corpus columns: | id | title | seam | cadence | command | (leading pipe from markdown)
+      while IFS='|' read -r _leading scenario_id title seam_col cadence_col cmd_col rest; do
+        scenario_id=$(printf '%s' "$scenario_id" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cadence=$(printf '%s' "$cadence_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cmd=$(printf '%s' "$cmd_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ "$cadence" = "iteration" ] || continue
         # Check if this scenario is owned by a story in this iteration
         is_impacted=false
@@ -935,7 +942,7 @@ workflow IterRun
         total=$((total + 1))
         if [ "$cmd" = "TBD" ] || [ -z "$cmd" ]; then
           tbd=$((tbd + 1))
-        elif eval "$cmd" >/dev/null 2>&1; then
+        elif sh -c "$cmd" >/dev/null 2>&1; then
           passed=$((passed + 1))
         fi
       done < docs/superpowers/iterations/behavior-corpus.md
@@ -949,25 +956,25 @@ workflow IterRun
     label: "Run Sentinel Scenarios"
     timeout: 300s
     command:
-      set -eu
+      set -euo pipefail
       if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
         printf 'sentinel-pass'
         exit 0
       fi
       regressions=""
-      # Corpus columns: id | title | seam | cadence | command
-      while IFS='|' read -r scenario_id title seam_col cadence_col cmd_col rest; do
-        scenario_id=$(printf '%s' "$scenario_id" | tr -d ' ')
-        cadence=$(printf '%s' "$cadence_col" | tr -d ' ')
-        cmd=$(printf '%s' "$cmd_col" | tr -d ' ')
+      # Corpus columns: | id | title | seam | cadence | command | (leading pipe from markdown)
+      while IFS='|' read -r _leading scenario_id title seam_col cadence_col cmd_col rest; do
+        scenario_id=$(printf '%s' "$scenario_id" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cadence=$(printf '%s' "$cadence_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cmd=$(printf '%s' "$cmd_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ "$cadence" = "sentinel" ] || continue
         [ "$cmd" != "TBD" ] && [ -n "$cmd" ] || continue
-        # Check baseline
+        # Check baseline (use fixed-string grep to avoid regex interpretation)
         baseline_result=""
         if [ -f .ai/iter-sentinel-baseline.txt ]; then
-          baseline_result=$(grep "$cmd" .ai/iter-sentinel-baseline.txt | head -1 | cut -d' ' -f1 || true)
+          baseline_result=$(grep -F "$cmd" .ai/iter-sentinel-baseline.txt | head -1 | cut -d' ' -f1 || true)
         fi
-        if eval "$cmd" >/dev/null 2>&1; then
+        if sh -c "$cmd" >/dev/null 2>&1; then
           : # passed
         else
           # Failed now — check if it passed in baseline (regression)
@@ -1010,7 +1017,7 @@ workflow IterRun
     label: "Resolve TODOs"
     timeout: 15s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       if [ -z "$iter_id" ]; then
         printf 'todos-clean'
@@ -1078,7 +1085,7 @@ workflow IterRun
     label: "Validate Wrap-Up"
     timeout: 10s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       if [ -z "$iter_id" ]; then
         printf 'wrapup-invalid-no-iteration-id'
@@ -1105,7 +1112,7 @@ workflow IterRun
     label: "Commit Iteration"
     timeout: 30s
     command:
-      set -eu
+      set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
       git add docs/superpowers/iterations/
       if git diff --cached --quiet; then
@@ -1119,6 +1126,7 @@ workflow IterRun
     # Setup
     Start -> find_next_iteration
     find_next_iteration -> all_done_exit          when ctx.tool_stdout = all-done              label: all_done
+    find_next_iteration -> Exit                   when ctx.tool_stdout = no-roadmap            label: no_roadmap
     find_next_iteration -> load_scope             when ctx.tool_stdout startswith next-         label: found
     find_next_iteration -> load_scope
     all_done_exit -> Exit
@@ -1128,7 +1136,8 @@ workflow IterRun
     run_sentinel_baseline -> consistency_audit
     consistency_audit -> par_run_scope_dispatch    when ctx.tool_stdout = consistent            label: consistent
     consistency_audit -> reconcile_state           when ctx.tool_stdout startswith inconsistent  label: inconsistent
-    reconcile_state -> consistency_audit           restart: true
+    reconcile_state -> consistency_audit         when ctx.outcome = success   restart: true  label: reconciled
+    reconcile_state -> Exit                       when ctx.outcome = fail      label: irreconcilable
 
     # PAR scope review
     par_run_scope_dispatch -> par_run_scope_reviewer_a
@@ -1154,7 +1163,8 @@ workflow IterRun
     implement_task -> provide_context              when ctx.outcome = fail      label: needs_help
     provide_context -> implement_task              when ctx.outcome = success   restart: true  label: context_provided
     provide_context -> escalate_task               when ctx.outcome = fail      label: truly_blocked
-    escalate_task -> read_next_task                restart: true
+    escalate_task -> read_next_task              when ctx.outcome = success   restart: true  label: skip_blocked
+    escalate_task -> Exit                        when ctx.outcome = fail      label: needs_human
 
     # PAR spec-compliance (Stage 1)
     par_spec_dispatch -> par_spec_reviewer_a

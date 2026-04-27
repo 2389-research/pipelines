@@ -25,7 +25,7 @@ workflow IterAudit
     label: "Read Iteration State"
     timeout: 15s
     command:
-      set -eu
+      set -euo pipefail
       mkdir -p .ai/iter-audit-temp
       if [ ! -f .ai/iter-current-iteration.txt ]; then
         printf 'state-missing-.ai/iter-current-iteration.txt'
@@ -56,6 +56,7 @@ workflow IterAudit
 
   agent no_state_exit
     label: "No State Found"
+    auto_status: true
     prompt:
       The iteration audit pipeline cannot proceed — required state files are missing.
 
@@ -67,6 +68,8 @@ workflow IterAudit
 
       Optional but recommended:
       - .ai/iter-sentinel-baseline.txt — pre-iteration sentinel baseline (tier 3 audit will skip regression comparison without it)
+
+      STATUS: fail
 
       To produce these files:
       1. Run iter_extract.dip to extract requirements and scenarios
@@ -192,6 +195,7 @@ workflow IterAudit
     label: "Tier 1 Aggregate"
     model: gemini-3-flash-preview
     provider: gemini
+    auto_status: true
     prompt:
       Read both Tier 1 PAR reviewer outputs from par_tier1_auditor_a and par_tier1_auditor_b.
 
@@ -321,6 +325,7 @@ workflow IterAudit
     label: "Tier 2 Aggregate"
     model: gemini-3-flash-preview
     provider: gemini
+    auto_status: true
     prompt:
       Read both Tier 2 PAR reviewer outputs from par_tier2_auditor_a and par_tier2_auditor_b.
 
@@ -555,7 +560,7 @@ workflow IterAudit
     label: "Commit Gaps"
     timeout: 30s
     command:
-      set -eu
+      set -euo pipefail
       git add docs/superpowers/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'

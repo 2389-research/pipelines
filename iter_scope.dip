@@ -25,7 +25,7 @@ workflow IterScope
     label: "Check Scope Resume Point"
     timeout: 10s
     command:
-      set -eu
+      set -euo pipefail
       req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$req_count" -eq 0 ]; then
         printf 'no-requirements'
@@ -39,12 +39,15 @@ workflow IterScope
 
   agent no_requirements_exit
     label: "No Requirements Found"
+    auto_status: true
     prompt:
       Requirements must be extracted before defining the walking skeleton and roadmap.
 
       The requirements directory docs/superpowers/iterations/requirements/ is empty or does not exist.
 
       Please run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.
+
+      STATUS: fail
 
   agent validate_existing_roadmap
     label: "Validate Existing Roadmap"
@@ -166,23 +169,23 @@ workflow IterScope
     label: "Check Story Citations"
     timeout: 15s
     command:
-      set -eu
-      rm -f /tmp/iter-scope-missing-ids.txt
+      set -euo pipefail
+      rm -f .ai/iter-scope-temp/missing-ids.txt
       for f in .ai/iter-scope-temp/skeleton.md .ai/iter-scope-temp/iterations.md; do
         [ -f "$f" ] || continue
         grep -oE 'STORY-[0-9]+[a-z]?' "$f" | sort -u | while IFS= read -r story_id; do
           base_id=$(printf '%s' "$story_id" | sed 's/[a-z]$//')
           if ! grep -qr "$base_id" docs/superpowers/iterations/requirements/ 2>/dev/null; then
-            printf '%s\n' "$story_id" >> /tmp/iter-scope-missing-ids.txt
+            printf '%s\n' "$story_id" >> .ai/iter-scope-temp/missing-ids.txt
           fi
         done
       done
-      if [ -f /tmp/iter-scope-missing-ids.txt ]; then
-        ids=$(sort -u /tmp/iter-scope-missing-ids.txt | tr '\n' ',' | sed 's/,$//')
-        rm -f /tmp/iter-scope-missing-ids.txt
+      if [ -f .ai/iter-scope-temp/missing-ids.txt ]; then
+        ids=$(sort -u .ai/iter-scope-temp/missing-ids.txt | tr '\n' ',' | sed 's/,$//')
+        rm -f .ai/iter-scope-temp/missing-ids.txt
         printf 'citations-fail-%s' "$ids"
       else
-        rm -f /tmp/iter-scope-missing-ids.txt
+        rm -f .ai/iter-scope-temp/missing-ids.txt
         printf 'citations-ok'
       fi
 
@@ -374,7 +377,7 @@ workflow IterScope
     label: "Validate Roadmap"
     timeout: 10s
     command:
-      set -eu
+      set -euo pipefail
       fail_reason=""
       if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
         printf 'roadmap-invalid-file-missing'
@@ -403,7 +406,7 @@ workflow IterScope
     label: "Commit Roadmap"
     timeout: 30s
     command:
-      set -eu
+      set -euo pipefail
       git add docs/superpowers/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'

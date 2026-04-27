@@ -37,7 +37,7 @@ workflow IterDev
     timeout: 15s
     command:
       #!/bin/sh
-      set -eu
+      set -euo pipefail
       iter_dir="docs/superpowers/iterations"
       if [ ! -d "$iter_dir" ]; then
         printf 'fresh'
@@ -80,7 +80,7 @@ workflow IterDev
     label: "Check Termination Condition"
     timeout: 10s
     command:
-      set -eu
+      set -euo pipefail
       roadmap="docs/superpowers/iterations/roadmap.md"
       audit_result=".ai/iter-audit-result.txt"
       if [ ! -f "$roadmap" ]; then
@@ -97,8 +97,13 @@ workflow IterDev
         printf 'ready-for-final'
         exit 0
       fi
-      if grep -q 'AUDIT_CLEAN' "$audit_result" 2>/dev/null; then
+      if grep -q 'FINAL_AUDIT_CLEAN' "$audit_result" 2>/dev/null; then
         printf 'final-clean'
+        exit 0
+      fi
+      # Per-iteration AUDIT_CLEAN means audits passed but final audit hasn't run yet
+      if grep -q 'AUDIT_CLEAN' "$audit_result" 2>/dev/null; then
+        printf 'ready-for-final'
         exit 0
       fi
       printf 'final-gaps'
@@ -107,7 +112,7 @@ workflow IterDev
     label: "Report Loop Progress"
     timeout: 10s
     command:
-      set -eu
+      set -euo pipefail
       roadmap="docs/superpowers/iterations/roadmap.md"
       if [ ! -f "$roadmap" ]; then
         printf 'progress-no-roadmap'
@@ -188,7 +193,7 @@ workflow IterDev
          - Evidence at weaker seam than required
          - Manual-residual that could be automated
 
-      If ALL surfaces have adequate evidence: write "AUDIT_CLEAN" to .ai/iter-audit-result.txt and touch docs/superpowers/iterations/.final-audit-clean.
+      If ALL surfaces have adequate evidence: write "FINAL_AUDIT_CLEAN" to .ai/iter-audit-result.txt and touch docs/superpowers/iterations/.final-audit-clean.
 
       If gaps found: write gap descriptions to .ai/iter-audit-result.txt, create gap stories in requirements/, update roadmap with new iteration.
 
@@ -198,25 +203,21 @@ workflow IterDev
     label: "Update Final Progress"
     timeout: 5s
     command:
-      set -eu
+      set -euo pipefail
       roadmap="docs/superpowers/iterations/roadmap.md"
       done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null || echo 0)
       total=$(grep -c '^\*\*Status:\*\*' "$roadmap" 2>/dev/null || echo 0)
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       mkdir -p docs/superpowers/iterations
-      cat > docs/superpowers/iterations/final-progress.md << EOF
-      # Final Progress Report
-
-      Generated: $now
-
-      ## Iterations Completed
-
-      $done_count of $total iterations done.
-
-      ## Audit Result
-
-      $(cat .ai/iter-audit-result.txt 2>/dev/null || echo 'No audit result file found.')
-      EOF
+      audit_result=$(cat .ai/iter-audit-result.txt 2>/dev/null || printf 'No audit result file found.')
+      printf '%s\n%s\n\n%s\n\n%s\n\n%s\n' \
+        "# Final Progress Report" \
+        "Generated: $now" \
+        "## Iterations Completed" \
+        "$done_count of $total iterations done." \
+        "## Audit Result" \
+        > docs/superpowers/iterations/final-progress.md
+      printf '%s\n' "$audit_result" >> docs/superpowers/iterations/final-progress.md
       printf 'final-progress-written'
 
   agent already_complete_exit
