@@ -198,90 +198,81 @@ workflow IterRun
   parallel par_run_scope_dispatch -> par_run_scope_reviewer_a, par_run_scope_reviewer_b
 
   agent par_run_scope_reviewer_a
-    label: "PAR Scope Reviewer A"
-    model: claude-sonnet-4-6
+    label: "PAR Scope Reviewer A — Pre-Flight Readiness"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer A. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      You are Reviewer A (Pre-Flight Readiness). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing the scope of THIS SPECIFIC ITERATION before implementation begins.
+      ## Your Lens: Can implementation START right now?
+
+      You are a pre-flight checklist. You verify that every artifact the implementer needs EXISTS, RESOLVES, and is INTERNALLY CONSISTENT.
 
       Read:
       1. .ai/iter-run-temp/scope.md for the iteration scope summary
       2. .ai/iter-current-iteration.txt for the current iteration ID
       3. docs/superpowers/iterations/roadmap.md for the full iteration definition
       4. The relevant story cards from docs/superpowers/iterations/requirements/
+      5. docs/superpowers/iterations/behavior-scenarios.md
 
-      ## 5 Checks
+      ### Checks
 
-      1. **Citation integrity**: Every story in this iteration — do all story IDs exist in requirements/? Are ACs complete and have proof obligations (seam + impact)?
+      1. **Story resolution**: Every STORY-NNNN in this iteration's roadmap section exists in requirements/. Every story has at least 1 AC with behavioral_impact and proof_seam.
 
-      2. **Scope creep**: Are there stories in this iteration that belong to a later iteration? Is the scope too large to complete in one focused iteration?
+      2. **Scenario resolution**: Every AC with behavioral_impact != "none" has a matching scenario in behavior-scenarios.md. Every scenario has preconditions, steps, and final_observables.
 
-      3. **Boxing-in**: Do any stories introduce hard couplings, hardcoded values, or interface commitments that would block future iterations listed in the roadmap?
+      3. **Internal consistency**: Story IDs in roadmap match story IDs in epic files. Scenario owning_stories back-reference the correct story IDs.
 
-      4. **Scenario coverage**: For every AC with behavioral_impact != "none", is there a scenario in behavior-scenarios.md? Is the proof seam declared correctly?
-
-      5. **Story splitting**: Are any stories too large to implement as single TDD tasks? Should they be split?
+      4. **No dangling references**: No story references a dependency (requires_story, depends_on) that doesn't exist or isn't in an earlier/same iteration.
 
       ## Report Format
 
-      For each check: PASS or FAIL with specific issues.
+      For each check: PASS or FAIL with specific broken references.
 
-      Overall: ✅ Scope approved | ❌ Revisions needed: [list]
+      Overall: ✅ Ready for implementation | ❌ Blocked: [specific missing/broken artifacts]
 
   agent par_run_scope_reviewer_b
-    label: "PAR Scope Reviewer B"
-    model: claude-sonnet-4-6
+    label: "PAR Scope Reviewer B — Implementation Feasibility"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer B. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      You are Reviewer B (Implementation Feasibility). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing the scope of THIS SPECIFIC ITERATION before implementation begins.
+      ## Your Lens: Can these stories actually be BUILT via TDD in this iteration?
+
+      You think like the implementer who's about to sit down and write code. You look for practical blockers.
 
       Read:
       1. .ai/iter-run-temp/scope.md for the iteration scope summary
       2. .ai/iter-current-iteration.txt for the current iteration ID
-      3. docs/superpowers/iterations/roadmap.md for the full iteration definition
+      3. docs/superpowers/iterations/roadmap.md — this iteration AND the next 2-3 iterations
       4. The relevant story cards from docs/superpowers/iterations/requirements/
 
-      ## 5 Checks
+      ### Checks
 
-      1. **Citation integrity**: Every story in this iteration — do all story IDs exist in requirements/? Are ACs complete and have proof obligations (seam + impact)?
+      1. **TDD feasibility**: Can each AC be expressed as a failing test BEFORE writing implementation? Are proof seams testable (e.g., "app-level" seam requires a running server — is that available)?
 
-      2. **Scope creep**: Are there stories in this iteration that belong to a later iteration? Is the scope too large to complete in one focused iteration?
+      2. **Scope sizing**: How many TDD cycles will this iteration need? Flag if >8 stories or if any story has >5 ACs. Each TDD cycle is ~15 minutes — is this iteration reasonably sized?
 
-      3. **Boxing-in**: Do any stories introduce hard couplings, hardcoded values, or interface commitments that would block future iterations listed in the roadmap?
+      3. **Boxing-in**: Does implementing these stories lock in architectural decisions that would need undoing in iterations 2-3 ahead? Read future iteration stories to check.
 
-      4. **Scenario coverage**: For every AC with behavioral_impact != "none", is there a scenario in behavior-scenarios.md? Is the proof seam declared correctly?
+      4. **Dependency ordering**: Can the stories be implemented in ANY order, or is there an implicit dependency chain? If so, is the chain feasible?
 
-      5. **Story splitting**: Are any stories too large to implement as single TDD tasks? Should they be split?
+      5. **Story granularity**: Are any stories too large for a single TDD task? Are any so small they should be merged?
 
       ## Report Format
 
-      For each check: PASS or FAIL with specific issues.
+      For each check: PASS or FAIL with specific implementation concerns.
 
-      Overall: ✅ Scope approved | ❌ Revisions needed: [list]
+      Overall: ✅ Scope approved | ❌ Revisions needed: [specific changes]
 
   fan_in par_run_scope_join <- par_run_scope_reviewer_a, par_run_scope_reviewer_b
 
@@ -455,8 +446,8 @@ workflow IterRun
 
   agent implement_task
     label: "Implement Task"
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     reasoning_effort: high
     fidelity: summary:high
     auto_status: true
@@ -572,94 +563,97 @@ workflow IterRun
   parallel par_spec_dispatch -> par_spec_reviewer_a, par_spec_reviewer_b
 
   agent par_spec_reviewer_a
-    label: "PAR Spec Reviewer A"
-    model: claude-sonnet-4-6
+    label: "PAR Spec Reviewer A — Top-Down Trace"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer A. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      You are Reviewer A (Top-Down Spec Tracer). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing whether an implementation matches its specification AND whether behavior evidence exists at the correct seam.
+      ## Your Lens: Spec → Code (Do the requirements have implementations?)
 
-      Read .ai/iter-run-temp/task_status.txt to find the current task. Read the task description from .ai/iter-run-temp/tasks.md. Read the relevant story cards from docs/superpowers/iterations/requirements/.
+      You start from the SPEC and trace DOWNWARD into code. Your question: "For each requirement, does the code deliver it?"
 
-      ## CRITICAL: Do Not Trust the Implementer's Report
+      Read .ai/iter-run-temp/task_status.txt to find the current in_progress task. Read .ai/iter-run-temp/tasks.md for task details. Read the relevant story cards from docs/superpowers/iterations/requirements/.
 
-      Verify everything by reading actual code:
-      - Everything requested actually implemented?
-      - Requirements skipped or misunderstood?
-      - Features built that weren't requested?
-      - Requirements interpreted differently than intended?
+      ### Method
 
-      ## Evidence Quality
+      1. For EACH AC in the current task's story:
+         - Find the implementing code (search by function name, class name, or grep for the AC's key terms)
+         - Read the actual implementation file:line
+         - Verify the code does what the AC says, not just something similar
+         - Flag: AC implemented but semantics differ from spec intent
+         - Flag: AC not implemented at all (code doesn't exist)
 
-      For each AC with behavioral_impact != "none":
-      - Does a scenario exist covering this AC?
-      - Is evidence at the declared proof seam (not weaker)?
-      - Does the test prove observable behavior?
-      - REJECT: unit-only evidence for app-level behavior
-      - REJECT: no scenario for changed observable behavior
+      2. For each AC with behavioral_impact != "none":
+         - Find the scenario in behavior-scenarios.md
+         - Find the test that proves the scenario
+         - Read the test: does it actually test the AC's observable behavior?
+         - REJECT: unit test that only tests internal logic for an app-level AC
+         - Verify proof seam matches declaration (not weaker)
+
+      3. Check for MISSING implementations:
+         - ACs where the implementer wrote no code at all
+         - ACs where the implementer wrote a stub or TODO
 
       ## Report Format
 
-      **Spec Compliance:** ✅ Compliant | ❌ Issues: [list with file:line]
-      **Evidence Quality:** ✅ Adequate | ❌ Weak: [list with seam analysis]
+      **Per-AC Trace:**
+      - AC-N: IMPLEMENTED | MISSING | WRONG — [code file:line] — [explanation]
+      - Evidence: ADEQUATE | WEAK | MISSING — [test file:line]
 
-      Overall: ✅ Spec compliant with adequate evidence | ❌ Issues found: [list]
+      Overall: ✅ Spec compliant | ❌ Issues found: [list]
 
   agent par_spec_reviewer_b
-    label: "PAR Spec Reviewer B"
-    model: claude-sonnet-4-6
+    label: "PAR Spec Reviewer B — Bottom-Up Diff Audit"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer B. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      You are Reviewer B (Bottom-Up Diff Auditor). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing whether an implementation matches its specification AND whether behavior evidence exists at the correct seam.
+      ## Your Lens: Code → Spec (Does every code change trace to a requirement?)
 
-      Read .ai/iter-run-temp/task_status.txt to find the current task. Read the task description from .ai/iter-run-temp/tasks.md. Read the relevant story cards from docs/superpowers/iterations/requirements/.
+      You start from the GIT DIFF and trace UPWARD into the spec. Your question: "For each change, is it authorized by a requirement?"
 
-      ## CRITICAL: Do Not Trust the Implementer's Report
+      Run `git diff HEAD~1` to see all changes made by the implementer. Read .ai/iter-run-temp/tasks.md and the relevant story cards from docs/superpowers/iterations/requirements/.
 
-      Verify everything by reading actual code:
-      - Everything requested actually implemented?
-      - Requirements skipped or misunderstood?
-      - Features built that weren't requested?
-      - Requirements interpreted differently than intended?
+      ### Method
 
-      ## Evidence Quality
+      1. For EACH changed file in the diff:
+         - What was added, modified, or deleted?
+         - Which AC authorized this change? (Trace the change to a specific AC)
+         - Flag: code change with NO authorizing AC (unrequested feature / scope creep)
+         - Flag: code change that contradicts an AC's stated behavior
+         - Flag: deleted code that was required by a different AC
 
-      For each AC with behavioral_impact != "none":
-      - Does a scenario exist covering this AC?
-      - Is evidence at the declared proof seam (not weaker)?
-      - Does the test prove observable behavior?
-      - REJECT: unit-only evidence for app-level behavior
-      - REJECT: no scenario for changed observable behavior
+      2. For EACH new test file or test function in the diff:
+         - What behavior does it test?
+         - Does it actually prove an AC's observable behavior?
+         - REJECT: test that passes trivially (e.g., testing mock responses)
+         - REJECT: test at wrong seam (unit test for app-level AC)
+         - Flag: AC with behavioral_impact but no new test in the diff
+
+      3. Check for UNAUTHORIZED changes:
+         - Files modified that are outside the current task's scope
+         - Configuration changes not specified in any AC
+         - Dependency additions not justified by requirements
 
       ## Report Format
 
-      **Spec Compliance:** ✅ Compliant | ❌ Issues: [list with file:line]
-      **Evidence Quality:** ✅ Adequate | ❌ Weak: [list with seam analysis]
+      **Per-File Audit:**
+      - [file:line range] → authorized by AC-N of STORY-NNNN | UNAUTHORIZED
 
-      Overall: ✅ Spec compliant with adequate evidence | ❌ Issues found: [list]
+      **Unrequested Changes:** [list or "none"]
+      **Missing Evidence:** [ACs with behavioral_impact but no new test]
+
+      Overall: ✅ All changes authorized | ❌ Issues found: [list]
 
   fan_in par_spec_join <- par_spec_reviewer_a, par_spec_reviewer_b
 
@@ -690,6 +684,8 @@ workflow IterRun
 
   agent fix_spec_issues
     label: "Fix Spec Issues"
+    model: gpt-5.5
+    provider: openai
     auto_status: true
     prompt:
       Read the aggregated spec review findings from .ai/iter-run-temp/spec_review.md.
@@ -716,102 +712,87 @@ workflow IterRun
   parallel par_quality_dispatch -> par_quality_reviewer_a, par_quality_reviewer_b
 
   agent par_quality_reviewer_a
-    label: "PAR Quality Reviewer A"
-    model: claude-sonnet-4-6
+    label: "PAR Quality Reviewer A — Code Health"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer A. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      You are Reviewer A (Code Health Specialist). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing code quality, architectural soundness, and behavior corpus contribution.
+      ## Your Lens: Internal Code Quality and Engineering Health
 
-      Read the current task from .ai/iter-run-temp/tasks.md. Read the code changes via git diff.
+      You evaluate the code AS IT IS RIGHT NOW. You don't think about future iterations.
 
-      Also read the next 3 pending iterations from docs/superpowers/iterations/roadmap.md for boxing-in check.
+      Read the current task from .ai/iter-run-temp/tasks.md. Run `git diff HEAD~1` to see changes.
 
-      ### Code Quality
-      - Clean and maintainable? Clear domain-appropriate names?
-      - Dead code or unused imports? Tests testing real behavior?
-      - Each file one clear responsibility?
+      ### Code Quality (your PRIMARY focus)
+      - Read EVERY changed file. Is each function doing one thing? Clear names?
+      - Dead code or unused imports introduced by this change?
+      - Tests testing real observable behavior or just implementation details?
+      - Error handling: appropriate or paranoid? Missing where needed?
 
       ### Engineering Health
-      - Abstraction justification: Do abstractions serve the product or just the test harness? SERIOUS if unjustified.
-      - Platform fit: Working with native idioms or fighting them? SERIOUS if fighting.
-      - Navigability: Can someone unfamiliar find things by domain?
-      - Coordination creep: Single file accumulating knowledge of every subsystem? SERIOUS.
+      - Abstraction justification: Does every new abstraction (class, interface, helper) have 2+ callers? SERIOUS if unjustified abstraction.
+      - Platform fit: Using native idioms or fighting them? SERIOUS if fighting the framework.
+      - File responsibility: Each new/modified file has one clear job? SERIOUS if a file is becoming a God object.
+      - Duplication: Any copy-paste code that should be extracted? (Only flag if 3+ copies)
 
-      ### Boxing-In Check
-      Given the next 3 pending iterations: does this code introduce hard coupling, hardcoded values, or interface commitments that would block downstream? CRITICAL if specific downstream iteration blocked.
-
-      ### Corpus Contribution Quality
-      If scenarios were added/updated: clearly written? Reusable? Prove observable behavior? Correct proof seam? Could survive a refactor?
+      ### Corpus Contribution
+      If scenarios were added/updated: do they test OBSERVABLE behavior (not internal state)? Could they survive a refactor without changing? Is the proof seam correct?
 
       ## Report Format
 
       **Strengths:** [brief list]
       **Issues:** Critical / Serious / Minor with file:line refs
-      **Boxing-In:** CLEAR | RISK with downstream iterations
-      **Corpus Quality:** GOOD | WEAK with issues
+      **Corpus Quality:** GOOD | WEAK with specific issues
 
-      Overall: ✅ Approved | ❌ Changes needed
+      Overall: ✅ Approved | ❌ Changes needed: [specific refactoring required]
 
   agent par_quality_reviewer_b
-    label: "PAR Quality Reviewer B"
-    model: claude-sonnet-4-6
+    label: "PAR Quality Reviewer B — Future-Proofing"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer B. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      You are Reviewer B (Future-Proofing Specialist). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing code quality, architectural soundness, and behavior corpus contribution.
+      ## Your Lens: Does This Code Set Up Future Iterations for Success?
 
-      Read the current task from .ai/iter-run-temp/tasks.md. Read the code changes via git diff.
+      You evaluate code RELATIVE TO WHAT COMES NEXT. You think 3 iterations ahead.
 
-      Also read the next 3 pending iterations from docs/superpowers/iterations/roadmap.md for boxing-in check.
+      Read the current task from .ai/iter-run-temp/tasks.md. Run `git diff HEAD~1` to see changes. Read the next 3 pending iterations from docs/superpowers/iterations/roadmap.md.
 
-      ### Code Quality
-      - Clean and maintainable? Clear domain-appropriate names?
-      - Dead code or unused imports? Tests testing real behavior?
-      - Each file one clear responsibility?
+      ### Boxing-In Analysis (your PRIMARY focus)
+      For EACH changed file, ask: "What future iteration would need to modify this?"
+      - Hard coupling: does this code import/depend on something that a future iteration would replace?
+      - Interface lock-in: does this define a public API/schema/protocol that future iterations would need to break?
+      - Data model: does this create storage structure that future iterations would need to migrate?
+      - Configuration: are there hardcoded values that future iterations would parameterize?
+      - CRITICAL if a specific downstream iteration (name it!) would be blocked
 
-      ### Engineering Health
-      - Abstraction justification: Do abstractions serve the product or just the test harness? SERIOUS if unjustified.
-      - Platform fit: Working with native idioms or fighting them? SERIOUS if fighting.
-      - Navigability: Can someone unfamiliar find things by domain?
-      - Coordination creep: Single file accumulating knowledge of every subsystem? SERIOUS.
+      ### Navigability
+      - Can someone unfamiliar with the codebase find this code by domain concept?
+      - Is the file/directory structure building toward a coherent architecture?
+      - Would the next implementer know where to add their iteration's code?
 
-      ### Boxing-In Check
-      Given the next 3 pending iterations: does this code introduce hard coupling, hardcoded values, or interface commitments that would block downstream? CRITICAL if specific downstream iteration blocked.
-
-      ### Corpus Contribution Quality
-      If scenarios were added/updated: clearly written? Reusable? Prove observable behavior? Correct proof seam? Could survive a refactor?
+      ### Coordination Creep
+      - Is any single file accumulating knowledge of multiple subsystems?
+      - Are there cross-cutting concerns that should be separated before they grow?
+      - SERIOUS if a file touches 3+ domains
 
       ## Report Format
 
-      **Strengths:** [brief list]
-      **Issues:** Critical / Serious / Minor with file:line refs
-      **Boxing-In:** CLEAR | RISK with downstream iterations
-      **Corpus Quality:** GOOD | WEAK with issues
+      **Boxing-In:** CLEAR | RISK — [specific downstream iterations affected and why]
+      **Navigability:** GOOD | POOR — [specific confusion points]
+      **Coordination Creep:** NONE | [files becoming God objects]
 
-      Overall: ✅ Approved | ❌ Changes needed
+      Overall: ✅ Approved | ❌ Changes needed: [specific architectural changes]
 
   fan_in par_quality_join <- par_quality_reviewer_a, par_quality_reviewer_b
 
@@ -843,6 +824,8 @@ workflow IterRun
 
   agent fix_quality_issues
     label: "Fix Quality Issues"
+    model: gpt-5.5
+    provider: openai
     auto_status: true
     prompt:
       Read the aggregated quality review findings from .ai/iter-run-temp/quality_review.md.
@@ -991,6 +974,8 @@ workflow IterRun
 
   agent create_fix_task
     label: "Create Fix Task"
+    model: gpt-5.5
+    provider: openai
     auto_status: true
     prompt:
       A regression or unresolved TODO was detected after the task loop completed.

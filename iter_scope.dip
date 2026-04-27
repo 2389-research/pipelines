@@ -208,17 +208,19 @@ workflow IterScope
   parallel par_scope_dispatch -> par_scope_reviewer_a, par_scope_reviewer_b
 
   agent par_scope_reviewer_a
-    label: "PAR Scope Reviewer A"
-    model: claude-sonnet-4-6
+    label: "PAR Scope Reviewer A — Structural Linkage"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer A. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings. Score 5 points per serious/critical finding.
+      You are Reviewer A (Structural Linkage Specialist). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing the scope of the walking skeleton and iteration roadmap BEFORE any code is written.
+      ## Your Lens: Citation Integrity, Scenario Coverage, Story Decomposition
+
+      You verify that the roadmap's structural links are correct and complete. You are a data integrity auditor.
 
       Read:
       1. .ai/iter-scope-temp/skeleton.md
@@ -226,44 +228,45 @@ workflow IterScope
       3. docs/superpowers/iterations/requirements/ (all epic files)
       4. docs/superpowers/iterations/behavior-scenarios.md
 
-      ## Your Five Checks
+      ### 1. Citation Integrity (your PRIMARY focus)
+      For EACH story ID in the skeleton and iterations:
+      - Does STORY-NNNN exist in requirements/? (ID check)
+      - Does the story card's description match how the roadmap uses it? (Semantic check)
+      - Are all ACs present with proof obligations (behavioral_impact + proof_seam)?
+      - Flag any story ID that appears in roadmap but NOT in requirements/
 
-      ### 1. Citation Integrity
-      Every committed story cites a valid STORY-NNNN from the requirements directory. Do the stories actually mean what the spec says? (Semantic check, not just ID existence.)
+      ### 2. Scenario Coverage
+      For EACH AC with behavioral_impact != "none":
+      - Does a scenario exist in behavior-scenarios.md?
+      - Is the proof seam correct (not weaker than declared)?
+      - Does ITER-0000 close at least one JOURNEY scenario end-to-end?
+      - Flag iterations that add observable behavior with zero scenario coverage
 
-      ### 2. Scope Creep
-      Is ITER-0000 trying to do too much? Could any story be deferred without breaking the skeleton? Are follow-on iterations well-bounded?
-
-      ### 3. Boxing-In Look-Ahead
-      Would ITER-0000's design approach block ITER-0001, 0002, or 0003? Does any iteration introduce hard coupling, premature abstraction, or structural commitments that would need undoing?
-
-      ### 4. Scenario Coverage
-      Does any iteration leave externally observable behavior without planned scenario coverage? Does ITER-0000 close at least one JOURNEY scenario?
-
-      ### 5. Story Splitting
-      Are there stories with heterogeneous-dependency ACs scoped whole into one iteration? If ACs have different dependency profiles, they should be split.
+      ### 3. Story Splitting
+      For each story: do all ACs have the same dependency profile? If AC-1 needs a database and AC-2 needs an API client, they should be in different iterations.
+      - Flag stories with heterogeneous dependencies scoped whole into one iteration
 
       ## Report Format
-      - **Citation Integrity:** PASS | issues
-      - **Scope Creep:** PASS | recommendations
-      - **Boxing-In:** PASS | risks with specific downstream iterations
-      - **Scenario Coverage:** PASS | observable behavior without scenarios
-      - **Story Splitting:** PASS | stories to split with AC breakdown
+      - **Citation Integrity:** PASS | [list of broken/missing citations]
+      - **Scenario Coverage:** PASS | [list of uncovered ACs]
+      - **Story Splitting:** PASS | [stories to split with AC breakdown]
 
-      Overall: APPROVE | REVISE — with specific changes needed
+      Overall: APPROVE | REVISE — with specific structural fixes needed
 
   agent par_scope_reviewer_b
-    label: "PAR Scope Reviewer B"
-    model: claude-sonnet-4-6
+    label: "PAR Scope Reviewer B — Strategic Risk"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer B. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings. Score 5 points per serious/critical finding.
+      You are Reviewer B (Strategic Risk Specialist). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
 
       ---
 
-      You are reviewing the scope of the walking skeleton and iteration roadmap BEFORE any code is written.
+      ## Your Lens: Scope Creep, Boxing-In, Iteration Ordering Risk
+
+      You evaluate whether the roadmap sets up future iterations for success or failure. You think 3 iterations ahead.
 
       Read:
       1. .ai/iter-scope-temp/skeleton.md
@@ -271,31 +274,30 @@ workflow IterScope
       3. docs/superpowers/iterations/requirements/ (all epic files)
       4. docs/superpowers/iterations/behavior-scenarios.md
 
-      ## Your Five Checks
+      ### 1. Scope Creep (your PRIMARY focus)
+      - Is ITER-0000 minimal? Could ANY story be deferred without breaking the skeleton?
+      - For each story in ITER-0000: is it structurally required for the skeleton, or is it nice-to-have?
+      - Are follow-on iterations well-bounded (clear entry/exit criteria)?
+      - Total story count per iteration: flag any iteration with >5 stories as potentially over-scoped
 
-      ### 1. Citation Integrity
-      Every committed story cites a valid STORY-NNNN from the requirements directory. Do the stories actually mean what the spec says? (Semantic check, not just ID existence.)
+      ### 2. Boxing-In Look-Ahead
+      For EACH iteration, simulate: "If I build this, what am I committing to?"
+      - Hard coupling: does ITER-0000's architecture force ITER-0001 into a specific approach?
+      - Premature abstraction: does any iteration build generics before proving the specific case?
+      - Interface lock-in: does any iteration define a public API that later iterations would need to break?
+      - Data model lock-in: does any iteration create schema that later iterations would need to migrate?
 
-      ### 2. Scope Creep
-      Is ITER-0000 trying to do too much? Could any story be deferred without breaking the skeleton? Are follow-on iterations well-bounded?
-
-      ### 3. Boxing-In Look-Ahead
-      Would ITER-0000's design approach block ITER-0001, 0002, or 0003? Does any iteration introduce hard coupling, premature abstraction, or structural commitments that would need undoing?
-
-      ### 4. Scenario Coverage
-      Does any iteration leave externally observable behavior without planned scenario coverage? Does ITER-0000 close at least one JOURNEY scenario?
-
-      ### 5. Story Splitting
-      Are there stories with heterogeneous-dependency ACs scoped whole into one iteration? If ACs have different dependency profiles, they should be split.
+      ### 3. Iteration Ordering Risk
+      - Could any later iteration be done EARLIER with less risk?
+      - Are there dependency cycles between iterations?
+      - Does the ordering maximize learning (riskiest unknowns first)?
 
       ## Report Format
-      - **Citation Integrity:** PASS | issues
-      - **Scope Creep:** PASS | recommendations
-      - **Boxing-In:** PASS | risks with specific downstream iterations
-      - **Scenario Coverage:** PASS | observable behavior without scenarios
-      - **Story Splitting:** PASS | stories to split with AC breakdown
+      - **Scope Creep:** PASS | [stories to defer with rationale]
+      - **Boxing-In:** PASS | [risks with specific downstream iterations affected]
+      - **Ordering Risk:** PASS | [reordering recommendations]
 
-      Overall: APPROVE | REVISE — with specific changes needed
+      Overall: APPROVE | REVISE — with specific strategic changes needed
 
   fan_in par_scope_join <- par_scope_reviewer_a, par_scope_reviewer_b
 

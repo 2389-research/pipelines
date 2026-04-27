@@ -413,98 +413,94 @@ workflow IterExtract
   parallel par_omission_dispatch -> par_omission_reviewer_a, par_omission_reviewer_b
 
   agent par_omission_reviewer_a
-    label: "PAR Omission Reviewer A"
-    model: claude-sonnet-4-6
+    label: "PAR Omission Reviewer A — Textual Coverage"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer A. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+      You are Reviewer A (Textual Coverage Specialist). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings.
 
-      Scoring: whoever finds the greatest number of serious or critical issues wins 5 points.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      Scoring: 5 points per serious/critical finding. False positives cost you 3 points.
 
       ---
 
-      You are reviewing extraction completeness. Your job is to find requirements and scenarios that the extraction agents DROPPED.
+      ## Your Lens: Sentence-Level Textual Coverage
+
+      Your method is EXHAUSTIVE LINE-BY-LINE COMPARISON. You read the spec like a contract lawyer.
 
       Read the original spec file (find it from .ai/iter-extract-temp/chunk_manifest.txt) and ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json.
 
-      For EACH chunk of the spec, compare the source text against the extracted stories and scenarios. Find every:
-      - Requirement in the source NOT represented by any extracted story
-      - Acceptance criterion missing a proof obligation
-      - Observable behavior with no corresponding scenario
-      - Journey steps that were summarized or skipped
-      - Behavioral constraints mentioned but not captured
+      For EACH paragraph in the spec:
+      1. Highlight every verb phrase that implies system behavior ("shall", "must", "will", "should", "displays", "sends", "validates", etc.)
+      2. For each verb phrase, find the extracted story + AC that covers it
+      3. If no story/AC covers it → CRITICAL omission
+      4. If a story exists but the AC is vague or missing proof obligation → SERIOUS
+      5. Check: are there implicit requirements in conditional language ("if X, then Y", "unless", "when")? These are frequently dropped.
 
-      Score 5 points for each omission found.
+      Also check:
+      - Negative requirements ("must NOT", "shall never") — these are the most commonly omitted
+      - Error handling requirements ("if the connection fails", "when input is invalid")
+      - Performance/timing constraints ("within 500ms", "before the next frame")
+      - Cross-cutting concerns mentioned in passing (security, logging, accessibility)
 
       ## Report Format
 
       **Critical:** (requirements dropped entirely)
-      - [omission with source file:line reference]
+      - [spec file:line] "exact quote from spec" → no corresponding story/AC
 
-      **Serious:** (observable behavior without scenario coverage)
-      - [omission with source file:line reference]
+      **Serious:** (covered but proof obligation missing or weak)
+      - [spec file:line] "quote" → story STORY-NNNN but AC lacks proof seam
 
       **Minor:** (proof seam could be stronger)
       - [item]
 
-      If you found omissions, write patches to .ai/iter-extract-temp/omission_patches_a.json using the same extraction JSON format.
-
-      If you found no omissions, say so explicitly.
+      Write patches to .ai/iter-extract-temp/omission_patches_a.json using the extraction JSON format.
 
   agent par_omission_reviewer_b
-    label: "PAR Omission Reviewer B"
-    model: claude-sonnet-4-6
+    label: "PAR Omission Reviewer B — Semantic Intent"
+    model: claude-opus-4-7
     provider: anthropic
     prompt:
       ## Competitive Context
 
-      You are Reviewer B. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+      You are Reviewer B (Semantic Intent Specialist). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings.
 
-      Scoring: whoever finds the greatest number of serious or critical issues wins 5 points.
-
-      Rules:
-      - Findings must be real and justified with file:line references
-      - Nitpicks don't count toward scoring
-      - False positives are worse than missing things
-      - Be thorough — your competitor is being thorough too
+      Scoring: 5 points per serious/critical finding. False positives cost you 3 points.
 
       ---
 
-      You are reviewing extraction completeness. Your job is to find requirements and scenarios that the extraction agents DROPPED.
+      ## Your Lens: User Intent and Journey Completeness
+
+      Your method is INTENT RECONSTRUCTION. You read the spec like a product manager asking "what does the user actually need?"
 
       Read the original spec file (find it from .ai/iter-extract-temp/chunk_manifest.txt) and ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json.
 
-      For EACH chunk of the spec, compare the source text against the extracted stories and scenarios. Find every:
-      - Requirement in the source NOT represented by any extracted story
-      - Acceptance criterion missing a proof obligation
-      - Observable behavior with no corresponding scenario
-      - Journey steps that were summarized or skipped
-      - Behavioral constraints mentioned but not captured
+      For EACH section of the spec:
+      1. Identify the user-facing GOAL (what problem does this solve for the user?)
+      2. Reconstruct the full user journey from trigger to completion
+      3. For each journey step, verify an extracted scenario captures the OBSERVABLE behavior
+      4. Check: can the user achieve the stated goal using ONLY the extracted stories? Are there missing intermediate steps?
+      5. Identify implicit dependencies between stories that would prevent a journey from working if built in the wrong order
 
-      Score 5 points for each omission found.
+      Also check:
+      - Journey dead-ends: paths where the user gets stuck with no extracted story covering the recovery
+      - Multi-actor journeys: specs mentioning admin/user/system interactions where one actor's behavior was dropped
+      - State transitions: "after X completes, Y becomes available" — is the transition itself covered?
+      - Edge-case journeys: what happens when the user does something unexpected? Did the extraction capture error states?
 
       ## Report Format
 
-      **Critical:** (requirements dropped entirely)
-      - [omission with source file:line reference]
+      **Critical:** (user journey broken — cannot achieve stated goal)
+      - [journey description] → missing story/scenario for step N
 
-      **Serious:** (observable behavior without scenario coverage)
-      - [omission with source file:line reference]
+      **Serious:** (journey works but observable behavior uncovered)
+      - [journey step] → no scenario proves this behavior
 
-      **Minor:** (proof seam could be stronger)
+      **Minor:** (journey covered but proof seam could be stronger)
       - [item]
 
-      If you found omissions, write patches to .ai/iter-extract-temp/omission_patches_b.json using the same extraction JSON format.
-
-      If you found no omissions, say so explicitly.
+      Write patches to .ai/iter-extract-temp/omission_patches_b.json using the extraction JSON format.
 
   fan_in par_omission_join <- par_omission_reviewer_a, par_omission_reviewer_b
 
