@@ -375,8 +375,8 @@ workflow GreenfieldDiscovery
     GitArchaeologist -> IntelligenceJoin
     TestSuiteAnalyzer -> IntelligenceJoin
     IntelligenceJoin -> CoverageCheck
-    CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith noncommunity-0  label: low_coverage_zero
-    CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith noncommunity-1  label: low_coverage_one
+    CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith -noncommunity-0  label: low_coverage_zero
+    CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith -noncommunity-1  label: low_coverage_one
     CoverageCheck -> Exit               when ctx.tool_stdout startswith incomplete    label: fan_in_failed
     CoverageCheck -> WriteL1Summary
     CoverageAgent -> WriteL1Summary

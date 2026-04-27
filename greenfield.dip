@@ -220,8 +220,8 @@ workflow Greenfield
   edges
     Start -> SetupWorkspace
     SetupWorkspace -> DiscoverTarget
-    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-0  label: very_low_coverage
-    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-1  label: low_coverage
+    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith -noncommunity-0  label: very_low_coverage
+    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith -noncommunity-1  label: low_coverage
     DiscoverTarget -> L1_Discovery
     DiscoverTargetReview -> L1_Discovery
     L1_Discovery -> CheckL1Output           when ctx.outcome = success  label: l1_done
