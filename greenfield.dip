@@ -52,7 +52,7 @@ workflow Greenfield
       if find . -path ./workspace -prune -o -maxdepth 3 \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.c" -o -name "*.cpp" -o -name "*.rb" \) -print 2>/dev/null | head -1 | grep -q .; then
         src=true; count=$((count + 1))
       fi
-      if [ -d docs ] || [ -d doc ] || find . -maxdepth 2 -name "README*" 2>/dev/null | head -1 | grep -q .; then
+      if [ -d docs ] || [ -d doc ] || find . -path ./workspace -prune -o -maxdepth 2 -name "README*" -print 2>/dev/null | head -1 | grep -q .; then
         docs=true; count=$((count + 1))
       fi
       if [ -f package.json ] || [ -f go.mod ] || [ -f Cargo.toml ] || [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f Gemfile ]; then

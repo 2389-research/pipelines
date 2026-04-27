@@ -310,6 +310,7 @@ workflow GreenfieldDiscovery
           missing_types="${missing_types}${key},"
         fi
       done
+      missing_types="${missing_types%,}"
       if [ -n "$missing_types" ]; then
         printf 'incomplete-%s' "$missing_types"
         exit 0

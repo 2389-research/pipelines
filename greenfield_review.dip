@@ -76,7 +76,7 @@ workflow GreenfieldReview
 
       Write findings to workspace/review/l6-content-contamination.md using the same format.
 
-      SCOPE BOUNDARY: Focus on individual identifiers, paths, and symbols ONLY. Do NOT flag structural/organizational patterns — that's the Structural Leakage Reviewer's job.
+      SCOPE BOUNDARY: Focus on individual identifiers, paths, and symbols ONLY. Do NOT flag structural/organizational patterns — that's the Structural Leakage Reviewer's job. Do NOT assess coverage gaps — that's the Behavioral Completeness Reviewer's job.
 
   agent BehavioralCompletenessReviewer
     label: "Behavioral Completeness Reviewer"
@@ -102,7 +102,7 @@ workflow GreenfieldReview
 
       Focus on: implied code knowledge (descriptions that only make sense if you've read the source), accidental specificity (exact byte sizes, buffer counts, thread pool sizes that leak implementation), and prose that reads like paraphrased source comments.
 
-      Do NOT duplicate findings from the other three L6 reviewers. Read their output files first (workspace/review/l6-structural-leakage.md, l6-content-contamination.md, l6-behavioral-completeness.md) and skip anything already flagged.
+      Do NOT duplicate findings from the other three L6 reviewers. If their output files exist (workspace/review/l6-structural-leakage.md, l6-content-contamination.md, l6-behavioral-completeness.md), read them and skip anything already flagged. These files may not yet exist if you run concurrently — in that case, focus on your own scope (subtle/implicit leakage) and accept that some overlap may occur.
 
       Write findings to workspace/review/l6-deep-read-audit.md.
 

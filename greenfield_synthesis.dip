@@ -401,9 +401,9 @@ workflow GreenfieldSynthesis
     timeout: 10s
     command:
       set -eu
-      spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -not -name "gate*" -not -name "bd-*" 2>/dev/null | wc -l)
-      journey_count=$(find "workspace/raw/specs/journeys/" -name "*.md" 2>/dev/null | wc -l)
-      contract_count=$(find "workspace/raw/specs/contracts/" -name "*.md" 2>/dev/null | wc -l)
+      spec_count=$(find "workspace/raw/specs/modules/" -name "*.md" -not -name "gate*" -not -name "bd-*" 2>/dev/null | wc -l | tr -d ' ')
+      journey_count=$(find "workspace/raw/specs/journeys/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+      contract_count=$(find "workspace/raw/specs/contracts/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       printf 'spec_count: %s\njourney_count: %s\ncontract_count: %s\ntimestamp: "%s"\n' "$spec_count" "$journey_count" "$contract_count" "$now" > "workspace/raw/l2l3-summary.yaml"
       printf 'summary-specs-%s-journeys-%s-contracts-%s' "$spec_count" "$journey_count" "$contract_count"
