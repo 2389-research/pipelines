@@ -162,6 +162,8 @@ workflow GreenfieldDiscovery
 
       Community analysis is ALWAYS available (web search). There is no skip marker for this source type.
 
+      First, read workspace/discovery-manifest.yaml for the target path. Read any README*, package.json, go.mod, Cargo.toml, or pyproject.toml in the target to identify the project name, description, and key terms for searching.
+
       1. Search for the project name, key APIs, error messages
       2. Document community understanding of behavior, known issues, common patterns
       3. Write evidence to workspace/public/community/
@@ -293,9 +295,11 @@ workflow GreenfieldDiscovery
       completed=0
       skipped=0
       failed=0
-      missing=0
-      dirs="workspace/raw/source workspace/public/docs workspace/public/ecosystem workspace/public/community workspace/raw/runtime workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence"
-      for d in $dirs; do
+      missing_types=""
+      entries="source:workspace/raw/source docs:workspace/public/docs ecosystem:workspace/public/ecosystem community:workspace/public/community runtime:workspace/raw/runtime binary:workspace/raw/binary git_history:workspace/raw/project-history tests:workspace/raw/test-evidence"
+      for entry in $entries; do
+        key=$(printf '%s' "$entry" | cut -d: -f1)
+        d=$(printf '%s' "$entry" | cut -d: -f2)
         if [ -f "$d/.completed" ]; then
           completed=$((completed + 1))
         elif [ -f "$d/.skipped" ]; then
@@ -303,11 +307,11 @@ workflow GreenfieldDiscovery
         elif [ -f "$d/.failed" ]; then
           failed=$((failed + 1))
         else
-          missing=$((missing + 1))
+          missing_types="${missing_types}${key},"
         fi
       done
-      if [ "$missing" -gt 0 ]; then
-        printf 'incomplete-missing-%s-markers' "$missing"
+      if [ -n "$missing_types" ]; then
+        printf 'incomplete-%s' "$missing_types"
         exit 0
       fi
       community_done=0
@@ -334,22 +338,48 @@ workflow GreenfieldDiscovery
 
       HARD CONSTRAINT: If evidence is truly insufficient (binary-only with no decompiler, no docs, no community presence), report this clearly. Do not fabricate evidence.
 
+  agent L1IncompleteFailed
+    label: "L1 Incomplete — Missing Markers"
+    max_turns: 2
+    prompt:
+      One or more L1 intelligence agents completed without writing a completion marker (.completed, .skipped, or .failed).
+
+      Check each directory for markers:
+      - workspace/raw/source/
+      - workspace/public/docs/
+      - workspace/public/ecosystem/
+      - workspace/public/community/
+      - workspace/raw/runtime/
+      - workspace/raw/binary/
+      - workspace/raw/project-history/
+      - workspace/raw/test-evidence/
+
+      Report which agents are missing markers. Write workspace/.l1-failed with "incomplete fan-in: <list of missing agent types>".
+
   tool WriteL1Summary
     label: "Write L1 Summary"
     timeout: 10s
     command:
       set -eu
       completed=0
-      dirs="workspace/raw/source workspace/public/docs workspace/public/ecosystem workspace/public/community workspace/raw/runtime workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence"
-      for d in $dirs; do
+      paths=""
+      entries="source:workspace/raw/source docs:workspace/public/docs ecosystem:workspace/public/ecosystem community:workspace/public/community runtime:workspace/raw/runtime binary:workspace/raw/binary git_history:workspace/raw/project-history tests:workspace/raw/test-evidence"
+      for entry in $entries; do
+        key=$(printf '%s' "$entry" | cut -d: -f1)
+        d=$(printf '%s' "$entry" | cut -d: -f2)
         if [ -f "$d/.completed" ]; then
           completed=$((completed + 1))
+          paths="${paths}\n  ${key}: ${d}"
+        elif [ -f "$d/.skipped" ]; then
+          paths="${paths}\n  ${key}: skipped"
+        elif [ -f "$d/.failed" ]; then
+          paths="${paths}\n  ${key}: failed"
         fi
       done
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       fallback=false
       [ -f "workspace/raw/coverage-assessment.md" ] && fallback=true
-      printf 'completed_sources: %s\ntimestamp: "%s"\nprovider_fallback: %s\n' "$completed" "$now" "$fallback" > "workspace/raw/l1-summary.yaml"
+      printf 'completed_sources: %s\ntimestamp: "%s"\nprovider_fallback: %s\nsource_paths:%b\n' "$completed" "$now" "$fallback" "$paths" > "workspace/raw/l1-summary.yaml"
       printf 'l1-summary-written-%s-sources' "$completed"
 
   edges
@@ -377,7 +407,8 @@ workflow GreenfieldDiscovery
     IntelligenceJoin -> CoverageCheck
     CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith -noncommunity-0  label: low_coverage_zero
     CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith -noncommunity-1  label: low_coverage_one
-    CoverageCheck -> Exit               when ctx.tool_stdout startswith incomplete    label: fan_in_failed
+    CoverageCheck -> L1IncompleteFailed  when ctx.tool_stdout startswith incomplete  label: fan_in_failed
     CoverageCheck -> WriteL1Summary
     CoverageAgent -> WriteL1Summary
+    L1IncompleteFailed -> Exit
     WriteL1Summary -> Exit
