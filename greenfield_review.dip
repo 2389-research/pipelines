@@ -64,6 +64,8 @@ workflow GreenfieldReview
       **Evidence:** <the offending text>
       **Recommendation:** <fix>
 
+      SCOPE BOUNDARY: Focus on structural/organizational leakage ONLY. Do NOT flag individual identifiers or variable names — that's the Content Contamination Reviewer's job. Do NOT assess coverage gaps — that's the Behavioral Completeness Reviewer's job.
+
   agent ContentContaminationReviewer
     label: "Content Contamination Reviewer"
     model: gpt-5.4
@@ -73,6 +75,8 @@ workflow GreenfieldReview
       You are the Content Contamination Reviewer. Look for variable names, file paths, identifiers, and minified symbols in workspace/output/.
 
       Write findings to workspace/review/l6-content-contamination.md using the same format.
+
+      SCOPE BOUNDARY: Focus on individual identifiers, paths, and symbols ONLY. Do NOT flag structural/organizational patterns — that's the Structural Leakage Reviewer's job.
 
   agent BehavioralCompletenessReviewer
     label: "Behavioral Completeness Reviewer"
@@ -86,13 +90,19 @@ workflow GreenfieldReview
 
       Write findings to workspace/review/l6-behavioral-completeness.md.
 
+      SCOPE BOUNDARY: Focus on coverage and completeness ONLY. Do NOT flag contamination — that's the job of the Structural Leakage and Content Contamination Reviewers.
+
   agent DeepReadAuditor
     label: "Deep Read Auditor"
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
     prompt:
-      You are the Deep Read Auditor. Line-by-line audit of workspace/output/specs/ for any contamination the other reviewers might have missed.
+      You are the Deep Read Auditor. Line-by-line audit of workspace/output/specs/ for subtle contamination that pattern-based reviewers miss.
+
+      Focus on: implied code knowledge (descriptions that only make sense if you've read the source), accidental specificity (exact byte sizes, buffer counts, thread pool sizes that leak implementation), and prose that reads like paraphrased source comments.
+
+      Do NOT duplicate findings from the other three L6 reviewers. Read their output files first (workspace/review/l6-structural-leakage.md, l6-content-contamination.md, l6-behavioral-completeness.md) and skip anything already flagged.
 
       Write findings to workspace/review/l6-deep-read-audit.md.
 
@@ -165,7 +175,7 @@ workflow GreenfieldReview
       Write workspace/.review-failed with the failure reason.
       HARD CONSTRAINT: Report only.
 
-  parallel FidelityParallel -> FidelityValidatorSpecs, FidelityValidatorTestVectors
+  parallel FidelityParallel -> FidelityValidatorSpecs, FidelityValidatorTestVectors, FidelityValidatorAcceptanceCriteria
 
   agent FidelityValidatorSpecs
     label: "Fidelity Validator — Specs"
@@ -197,7 +207,25 @@ workflow GreenfieldReview
 
       Write findings to workspace/review/l7-fidelity-test-vectors.md using the same format.
 
-  fan_in FidelityJoin <- FidelityValidatorSpecs, FidelityValidatorTestVectors
+  agent FidelityValidatorAcceptanceCriteria
+    label: "Fidelity Validator — Acceptance Criteria"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are the Fidelity Validator for acceptance criteria. Compare workspace/raw/specs/validation/ against workspace/output/validation/acceptance-criteria/.
+
+      Flag where acceptance criteria were weakened, IDs were lost, or spec links were broken during sanitization.
+
+      Write findings to workspace/review/l7-fidelity-acceptance-criteria.md using the same format:
+      ## Fidelity Flag FL-001
+      **Raw spec:** <file>
+      **Output spec:** <file>
+      **Lost detail:** <description>
+      **Severity:** critical | notable | minor
+      **Recommendation:** <how to restore without reintroducing contamination>
+
+  fan_in FidelityJoin <- FidelityValidatorSpecs, FidelityValidatorTestVectors, FidelityValidatorAcceptanceCriteria
 
   tool L7ToolCheck
     label: "L7 Tool Check"
@@ -298,8 +326,10 @@ workflow GreenfieldReview
     RemediateL6 -> L6ToolCheck   restart: true
     FidelityParallel -> FidelityValidatorSpecs
     FidelityParallel -> FidelityValidatorTestVectors
+    FidelityParallel -> FidelityValidatorAcceptanceCriteria
     FidelityValidatorSpecs -> FidelityJoin
     FidelityValidatorTestVectors -> FidelityJoin
+    FidelityValidatorAcceptanceCriteria -> FidelityJoin
     FidelityJoin -> L7ToolCheck
     L7ToolCheck -> L7AgentVerdict     when ctx.tool_stdout startswith l7-  label: l7_check
     L7ToolCheck -> L7Failed           when ctx.tool_stdout = budget-exhausted  label: l7_budget
