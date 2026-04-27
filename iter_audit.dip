@@ -77,6 +77,58 @@ workflow IterAudit
       3. Set .ai/iter-current-iteration.txt to the iteration being audited
       4. Run sentinel scenarios and capture baseline to .ai/iter-sentinel-baseline.txt before starting work
 
+  tool check_tbd_scenarios
+    label: "Check for TBD Scenarios on Done Stories"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      corpus="docs/superpowers/iterations/behavior-corpus.md"
+      roadmap="docs/superpowers/iterations/roadmap.md"
+      if [ ! -f "$corpus" ]; then
+        printf 'tbd-check-no-corpus'
+        exit 0
+      fi
+      done_stories=""
+      if [ -f "$roadmap" ]; then
+        done_stories=$(grep -B5 '^\*\*Status:\*\* done' "$roadmap" | grep -oE 'STORY-[0-9]+' | sort -u || true)
+      fi
+      if [ -z "$done_stories" ]; then
+        printf 'tbd-check-ok-no-done-stories'
+        exit 0
+      fi
+      tbd_count=0
+      tbd_list=""
+      while IFS= read -r line; do
+        case "$line" in
+          *"| TBD |"*|*"| TBD"*)
+            for story_id in $done_stories; do
+              if printf '%s' "$line" | grep -qF "$story_id"; then
+                tbd_count=$((tbd_count + 1))
+                scenario_id=$(printf '%s' "$line" | grep -oE '(SCENARIO|JOURNEY)-[0-9]+' | head -1)
+                tbd_list="${tbd_list}${scenario_id:-unknown}:${story_id} "
+              fi
+            done
+            ;;
+        esac
+      done < "$corpus"
+      if [ "$tbd_count" -gt 0 ]; then
+        printf 'tbd-check-fail-%d %s' "$tbd_count" "$tbd_list"
+        exit 0
+      fi
+      printf 'tbd-check-ok'
+
+  agent tbd_gate_fail
+    label: "TBD Gate Failed"
+    auto_status: true
+    prompt:
+      The TBD scenario gate has FAILED. There are done stories with scenarios that still have "TBD" as their test command in behavior-corpus.md.
+
+      This means the pipeline declared stories complete without actual test evidence. This is a hard stop.
+
+      Report the TBD scenarios found (from the tool output) and instruct that real test commands must be written before the audit can proceed.
+
+      STATUS: fail
+
   parallel par_tier1_dispatch -> par_tier1_auditor_a, par_tier1_auditor_b
 
   agent par_tier1_auditor_a
@@ -111,6 +163,9 @@ workflow IterAudit
       - Run `git diff HEAD~1 --name-only` to see all changed files
       - For each changed file, can you trace the change to a specific AC?
       - Flag changes that don't trace to any AC (scope creep)
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
 
       ## Report Format
 
@@ -160,6 +215,9 @@ workflow IterAudit
       - Every scenario in behavior-scenarios.md for done stories has a corpus entry
       - Every corpus entry has a non-TBD command
       - Observable behavior in code without a corpus entry
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
 
       ## Report Format
 
@@ -243,6 +301,9 @@ workflow IterAudit
          - Did the test exercise the documented preconditions or skip setup?
       5. For commands that ERROR (not FAIL): diagnose whether the error is infrastructure (flaky) vs. real breakage
 
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
+
       ## Report Format
 
       ### Tier 2A: Execution Verification
@@ -296,6 +357,9 @@ workflow IterAudit
          d. **Hidden dependency**: Did the change introduce a new dependency that the scenario doesn't account for? (e.g., new cache layer that affects behavior under cold-start)
          e. **Scope creep**: Did the change add behavior that no scenario covers? (new error paths, new edge cases)
       4. For each drift finding, cite the specific diff hunk and scenario line that conflict
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
 
       ## Report Format
 
@@ -379,6 +443,9 @@ workflow IterAudit
 
       Do NOT read the baseline file. Do NOT classify results as regression/improvement. That is Auditor B's job. You produce raw execution data only.
 
+      ### Mandatory TBD Check
+      Before running sentinels: scan the corpus for any sentinel scenario with "TBD" as its test command. Report each as a CRITICAL finding — a sentinel with no command cannot be executed and represents a gap in the regression safety net.
+
       ## Report Format
 
       ### Tier 3A: Sentinel Execution Results
@@ -438,6 +505,9 @@ workflow IterAudit
          c. Assess: is this a real functional regression or a test environment issue?
 
       If no baseline file exists, run all sentinels and classify every result as either PASS-NO-BASELINE or FAIL-NO-BASELINE. Note the absence of baseline prominently — the aggregator needs to know regression detection was not possible.
+
+      ### Mandatory TBD Check
+      Before running sentinels: scan the corpus for any sentinel scenario with "TBD" as its test command. Report each as a CRITICAL finding — a sentinel with no command cannot be executed and represents a gap in the regression safety net.
 
       ## Report Format
 
@@ -595,8 +665,12 @@ workflow IterAudit
   edges
     Start -> read_iteration_state
     read_iteration_state -> no_state_exit          when ctx.tool_stdout startswith state-missing  label: no_state
-    read_iteration_state -> par_tier1_dispatch     when ctx.tool_stdout startswith state-ready    label: ready
-    read_iteration_state -> par_tier1_dispatch
+    read_iteration_state -> check_tbd_scenarios     when ctx.tool_stdout startswith state-ready    label: ready
+    read_iteration_state -> check_tbd_scenarios
+    check_tbd_scenarios -> par_tier1_dispatch      when ctx.tool_stdout startswith tbd-check-ok   label: no_tbds
+    check_tbd_scenarios -> tbd_gate_fail           when ctx.tool_stdout startswith tbd-check-fail label: has_tbds
+    check_tbd_scenarios -> par_tier1_dispatch
+    tbd_gate_fail -> Exit
     no_state_exit -> Exit
     par_tier1_dispatch -> par_tier1_auditor_a
     par_tier1_dispatch -> par_tier1_auditor_b
