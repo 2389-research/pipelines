@@ -44,20 +44,17 @@ git mv iter_run.dip iter_audit.dip iter_dev.dip iter_scope.dip iter_extract.dip 
 - After reorg, update subgraph refs in iter_dev.dip (ref: iter_extract.dip → ref: iterative/iter_extract.dip etc.) IF iter_dev.dip uses relative paths
 - sprint_exec_yaml_v2.dip has UNCOMMITTED unrelated changes — stage carefully
 
-## Outstanding iter_* Design Issues (separate work from reorg)
-Decisions made so far:
-- #3 PAR differentiation: DONE (committed 0851cd2)
-- #10 TDD red phase: Option C — prompt-only, no structural gate
-- #11 TBD scenarios: Option C — DONE (committed 0c17ee3, structural gate + prompt reinforcement)
-- #15 Flash aggregators: Option C — keep as-is, mechanical merge is fine for Flash
-
-Still need Doctor Biz decisions:
-- #17: Loop feedback absent (restart loops lack prior-attempt context)
-  - Options: (a) tool node writes failure reason to .ai/loop-context.txt before restart, agent reads it (b) accept, max_restarts caps it
-- #19-22: Missing spec nodes (classify_chunks, build_coverage_ledger, patch_extractions loop, 4 implementer statuses)
-  - Options: (a) add missing nodes (b) update spec to match impl (c) mix
+## iter_* Design Issues — ALL RESOLVED
+- #3 PAR differentiation: DONE (0851cd2)
+- #10 TDD red phase: Option C — prompt-only
+- #11 TBD scenarios: Option C — DONE (0c17ee3, gate + prompt)
+- #15 Flash aggregators: Option C — keep as-is
+- #17 Loop feedback: Option A — DONE (7cce3db, loop context files)
+- #19-22 Missing spec nodes: Option A — DONE (ba2fce6, all 4 added)
 
 ## Recent Commits on feat/iterative-dev-pipelines
+- ba2fce6 feat: add missing spec nodes — implementer statuses, classify, coverage ledger, patch loop
+- 7cce3db feat: add loop context for restart edges in iter_dev and iter_run
 - 0c17ee3 feat(iter_audit): add TBD scenario gate and reviewer prompt reinforcement
 - 0851cd2 feat: differentiate all 16 PAR reviewer prompts and assign specialist models
 - 9c57fb8 fix: address expert panel review findings across all iterative pipelines
