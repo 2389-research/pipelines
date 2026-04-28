@@ -41,4 +41,23 @@ git mv iter_run.dip iter_audit.dip iter_dev.dip iter_scope.dip iter_extract.dip 
 ## Notes
 - docs/simmer/*.dip are iteration artifacts — leave in place
 - Branch: feat/iterative-dev-pipelines
-- Outstanding iter_* design issues #11,15,17,19-22 need decisions (separate work)
+- After reorg, update subgraph refs in iter_dev.dip (ref: iter_extract.dip → ref: iterative/iter_extract.dip etc.) IF iter_dev.dip uses relative paths
+- sprint_exec_yaml_v2.dip has UNCOMMITTED unrelated changes — stage carefully
+
+## Outstanding iter_* Design Issues (separate work from reorg)
+Decisions made so far:
+- #3 PAR differentiation: DONE (committed 0851cd2)
+- #10 TDD red phase: Option C — prompt-only, no structural gate
+- #11 TBD scenarios: Option C — DONE (committed 0c17ee3, structural gate + prompt reinforcement)
+- #15 Flash aggregators: Option C — keep as-is, mechanical merge is fine for Flash
+
+Still need Doctor Biz decisions:
+- #17: Loop feedback absent (restart loops lack prior-attempt context)
+  - Options: (a) tool node writes failure reason to .ai/loop-context.txt before restart, agent reads it (b) accept, max_restarts caps it
+- #19-22: Missing spec nodes (classify_chunks, build_coverage_ledger, patch_extractions loop, 4 implementer statuses)
+  - Options: (a) add missing nodes (b) update spec to match impl (c) mix
+
+## Recent Commits on feat/iterative-dev-pipelines
+- 0c17ee3 feat(iter_audit): add TBD scenario gate and reviewer prompt reinforcement
+- 0851cd2 feat: differentiate all 16 PAR reviewer prompts and assign specialist models
+- 9c57fb8 fix: address expert panel review findings across all iterative pipelines
