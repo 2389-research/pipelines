@@ -143,6 +143,34 @@ workflow IterExtract
         }
       ' "$spec_file"
 
+  tool classify_chunks
+    label: "Classify Chunks by Domain"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      manifest=".ai/iter-extract-temp/chunk_manifest.txt"
+      output=".ai/iter-extract-temp/chunk_domains.txt"
+      if [ ! -f "$manifest" ]; then
+        printf 'no-manifest'
+        exit 0
+      fi
+      > "$output"
+      while IFS='|' read -r _type source heading line_no; do
+        heading_trimmed=$(printf '%s' "$heading" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        domain="general"
+        case "$heading_trimmed" in
+          *[Aa]uth*|*[Ll]ogin*|*[Ss]ession*|*[Pp]ermission*) domain="auth" ;;
+          *[Aa][Pp][Ii]*|*[Ee]ndpoint*|*[Rr]oute*|*[Rr][Ee][Ss][Tt]*) domain="api" ;;
+          *[Uu][Ii]*|*[Ff]rontend*|*[Cc]omponent*|*[Pp]age*|*[Vv]iew*) domain="ui" ;;
+          *[Dd]ata*|*[Ss]chema*|*[Mm]odel*|*[Mm]igrat*|*[Dd]atabase*) domain="data" ;;
+          *[Tt]est*|*[Qq]uality*|*[Vv]alidat*) domain="testing" ;;
+          *[Dd]eploy*|*[Cc][Ii]*|*[Ii]nfra*|*[Cc]onfig*) domain="infra" ;;
+        esac
+        printf '%s|%s|%s\n' "$heading_trimmed" "$domain" "$source" >> "$output"
+      done < "$manifest"
+      domain_count=$(awk -F'|' '{print $2}' "$output" | sort -u | wc -l | tr -d ' ')
+      printf 'classified-%d-domains' "$domain_count"
+
   tool count_remaining_chunks
     label: "Count Remaining Chunks"
     timeout: 10s
@@ -528,6 +556,63 @@ workflow IterExtract
       Use STATUS: success when there are no critical omissions remaining.
       Use STATUS: fail when critical omissions were found that require re-extraction.
 
+  agent build_coverage_ledger
+    label: "Build Coverage Ledger"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    auto_status: true
+    prompt:
+      Build a coverage ledger that maps spec sections to extracted stories.
+
+      Read:
+      1. .ai/iter-extract-temp/chunk_manifest.txt — list of spec sections (headings)
+      2. .ai/iter-extract-temp/chunk_domains.txt — domain classification per chunk (if exists)
+      3. All extraction JSON files in .ai/iter-extract-temp/extraction_*.json
+      4. Any omission patch files (.ai/iter-extract-temp/omission_patches_*.json, extraction_patches.json)
+
+      For each spec section (chunk):
+      - List which stories were extracted from it
+      - Count ACs per story
+      - Flag sections with ZERO stories extracted (coverage gap)
+      - Flag sections with stories but no behavioral ACs (evidence gap)
+
+      Write the ledger to .ai/iter-extract-temp/coverage_ledger.md in this format:
+
+      | Spec Section | Domain | Stories | ACs | Behavioral ACs | Gap? |
+      |---|---|---|---|---|---|
+      | <heading> | <domain> | STORY-list | N | N | YES/NO |
+
+      Summary:
+      - Total spec sections: N
+      - Sections with coverage: N
+      - Sections with gaps: N (list them)
+
+      End with STATUS: success if no critical gaps (all sections have at least one story).
+      End with STATUS: fail if any section has zero stories.
+
+  agent patch_extractions
+    label: "Patch Extraction Gaps"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    auto_status: true
+    prompt:
+      The coverage ledger found spec sections with no extracted stories. Your job is to fill those gaps.
+
+      Read:
+      1. .ai/iter-extract-temp/coverage_ledger.md — find sections marked as gaps
+      2. The corresponding chunk files (.ai/iter-extract-temp/chunk_NNN.md) for gap sections
+      3. Existing extraction files to understand the format
+
+      For each gap section:
+      - Read the chunk content
+      - Extract stories with ACs, proof obligations, and behavioral scenarios following the same format as the extraction agents
+      - Write patches to .ai/iter-extract-temp/extraction_patches.json
+
+      If no stories can be extracted (section is purely informational with no requirements), mark it as "informational — no stories needed" in the ledger.
+
+      End with STATUS: success when all gaps are addressed (either patched or marked informational).
+      End with STATUS: fail if you cannot extract from a section that clearly contains requirements.
+
   agent aggregate_results
     label: "Aggregate Results"
     model: claude-sonnet-4-6
@@ -645,7 +730,8 @@ workflow IterExtract
     check_extract_resume -> chunk_spec
     validate_existing -> Exit                          when ctx.outcome = success   label: valid
     validate_existing -> chunk_spec                    when ctx.outcome = fail      label: invalid
-    chunk_spec -> pick_next_wave
+    chunk_spec -> classify_chunks
+    classify_chunks -> pick_next_wave
     pick_next_wave -> extract_wave                     when ctx.tool_stdout startswith wave-   label: has_wave
     pick_next_wave -> par_omission_dispatch            when ctx.tool_stdout = no-more         label: all_extracted
     extract_wave -> extract_agent_1
@@ -663,7 +749,11 @@ workflow IterExtract
     par_omission_reviewer_a -> par_omission_join
     par_omission_reviewer_b -> par_omission_join
     par_omission_join -> par_omission_aggregate
-    par_omission_aggregate -> aggregate_results
+    par_omission_aggregate -> build_coverage_ledger
+    build_coverage_ledger -> aggregate_results         when ctx.outcome = success   label: full_coverage
+    build_coverage_ledger -> patch_extractions          when ctx.outcome = fail      label: has_gaps
+    patch_extractions -> build_coverage_ledger          when ctx.outcome = success   restart: true  label: patched
+    patch_extractions -> aggregate_results              when ctx.outcome = fail      label: patch_failed
     aggregate_results -> validate_extraction           when ctx.outcome = success   label: aggregated
     aggregate_results -> Exit                          when ctx.outcome = fail      label: aggregate_failed
     validate_extraction -> commit_extraction           when ctx.tool_stdout = validation-pass    label: valid

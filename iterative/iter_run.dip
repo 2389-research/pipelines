@@ -494,11 +494,36 @@ workflow IterRun
          - Is evidence at the correct proof seam?
          - Could any abstraction I added be removed without losing coverage?
 
-      After self-review, end with exactly one of:
-        STATUS: success  (DONE — all ACs met, tests pass, evidence adequate)
-        STATUS: fail     (BLOCKED or NEEDS_CONTEXT — explain what's missing)
+      After self-review, write your status to .ai/iter-run-temp/impl_status.txt. Write EXACTLY one of these strings (nothing else):
+        DONE                 — all ACs met, tests pass, evidence adequate
+        DONE_WITH_CONCERNS   — completed but you have doubts (explain concerns in your response)
+        NEEDS_CONTEXT        — you need information not available to you (explain what's missing)
+        BLOCKED              — cannot complete this task (explain the blocker)
 
-      HARD CONSTRAINT: Implement ONLY the current task. Do NOT implement future tasks. Do NOT modify .ai/ files other than task_status.txt updates. Do NOT read generated directories (node_modules, dist, build, .next).
+      Then end with:
+        STATUS: success  (for DONE or DONE_WITH_CONCERNS)
+        STATUS: fail     (for NEEDS_CONTEXT or BLOCKED)
+
+      HARD CONSTRAINT: Implement ONLY the current task. Do NOT implement future tasks. Do NOT modify .ai/ files other than task_status.txt and impl_status.txt updates. Do NOT read generated directories (node_modules, dist, build, .next).
+
+  tool check_impl_status
+    label: "Check Implementer Status"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      status_file=".ai/iter-run-temp/impl_status.txt"
+      if [ ! -f "$status_file" ]; then
+        printf 'impl-done'
+        exit 0
+      fi
+      status=$(cat "$status_file" | tr -d '[:space:]')
+      case "$status" in
+        DONE) printf 'impl-done' ;;
+        DONE_WITH_CONCERNS) printf 'impl-concerns' ;;
+        NEEDS_CONTEXT) printf 'impl-needs-context' ;;
+        BLOCKED) printf 'impl-blocked' ;;
+        *) printf 'impl-done' ;;
+      esac
 
   agent provide_context
     label: "Provide Context"
@@ -1145,8 +1170,14 @@ workflow IterRun
     read_next_task -> mark_task_in_progress        when ctx.tool_stdout startswith task-        label: has_task
     read_next_task -> run_impacted_scenarios        when ctx.tool_stdout = all-tasks-done       label: tasks_done
     mark_task_in_progress -> implement_task
-    implement_task -> par_spec_dispatch            when ctx.outcome = success   label: implemented
-    implement_task -> provide_context              when ctx.outcome = fail      label: needs_help
+    implement_task -> check_impl_status            when ctx.outcome = success   label: implemented
+    implement_task -> check_impl_status            when ctx.outcome = fail      label: impl_issue
+    implement_task -> check_impl_status
+    check_impl_status -> par_spec_dispatch         when ctx.tool_stdout = impl-done              label: done
+    check_impl_status -> par_spec_dispatch         when ctx.tool_stdout = impl-concerns          label: done_with_concerns
+    check_impl_status -> provide_context           when ctx.tool_stdout = impl-needs-context     label: needs_context
+    check_impl_status -> escalate_task             when ctx.tool_stdout = impl-blocked            label: blocked
+    check_impl_status -> par_spec_dispatch
     provide_context -> implement_task              when ctx.outcome = success   restart: true  label: context_provided
     provide_context -> escalate_task               when ctx.outcome = fail      label: truly_blocked
     escalate_task -> read_next_task              when ctx.outcome = success   restart: true  label: skip_blocked
