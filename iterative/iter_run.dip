@@ -327,10 +327,11 @@ workflow IterRun
       You are decomposing an iteration into TDD-sized tasks.
 
       Read:
-      1. .ai/iter-run-temp/scope.md (iteration scope with committed stories)
-      2. The full story cards from docs/superpowers/iterations/requirements/
-      3. docs/superpowers/iterations/behavior-scenarios.md
-      4. docs/superpowers/iterations/behavior-corpus.md
+      1. .ai/iter-loop-context.txt (if it exists) — this contains prior attempt history. If this iteration was retried, use the failure context to avoid repeating the same mistakes. Adjust your decomposition strategy based on what failed before (e.g., split tasks smaller if prior attempt was "task too large", use different approach if prior attempt hit a specific error).
+      2. .ai/iter-run-temp/scope.md (iteration scope with committed stories)
+      3. The full story cards from docs/superpowers/iterations/requirements/
+      4. docs/superpowers/iterations/behavior-scenarios.md
+      5. docs/superpowers/iterations/behavior-corpus.md
 
       ## Decomposition Rules
 

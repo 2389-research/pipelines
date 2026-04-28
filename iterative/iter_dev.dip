@@ -137,6 +137,8 @@ workflow IterDev
     prompt:
       An iteration has failed. Your job is to assess the failure type and decide whether to retry or stop.
 
+      Read .ai/iter-loop-context.txt if it exists — it contains prior attempt history. Use it to detect repeated failures on the same iteration.
+
       Read the iteration log at docs/superpowers/iterations/iteration-log.md to understand what failed.
       Read the roadmap at docs/superpowers/iterations/roadmap.md to understand the current state.
 
@@ -148,6 +150,8 @@ workflow IterDev
       5. Repeated failures on same iteration — return fail to stop and escalate
 
       Report your assessment clearly with evidence from the logs.
+
+      IMPORTANT: Write your assessment to .ai/iter-loop-context.txt by APPENDING (do not overwrite). Include: attempt number, failure category, what was tried, what to try differently. This gives the next attempt memory of prior failures.
 
       End your response with exactly one of:
       STATUS: success
@@ -232,6 +236,25 @@ workflow IterDev
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to report the completed state.
 
+  tool write_loop_context
+    label: "Write Loop Context for Restart"
+    timeout: 10s
+    command:
+      set -euo pipefail
+      mkdir -p .ai
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      audit_result=""
+      if [ -f .ai/iter-audit-result.txt ]; then
+        audit_result=$(cat .ai/iter-audit-result.txt)
+      fi
+      iter_id=""
+      if [ -f .ai/iter-current-iteration.txt ]; then
+        iter_id=$(cat .ai/iter-current-iteration.txt | tr -d '[:space:]')
+      fi
+      printf '\n--- Restart at %s ---\nIteration: %s\nAudit result: %s\nReason: gap remediation or continued iteration\n' \
+        "$now" "$iter_id" "$audit_result" >> .ai/iter-loop-context.txt
+      printf 'context-written'
+
   edges
     Start -> check_resume
     check_resume -> bootstrap_extract          when ctx.tool_stdout = fresh                     label: fresh_start
@@ -256,12 +279,15 @@ workflow IterDev
     check_termination -> run_iteration         when ctx.tool_stdout = more-iterations          label: continue    restart: true
     check_termination -> final_audit           when ctx.tool_stdout startswith ready-for-final  label: final
     check_termination -> update_final_progress when ctx.tool_stdout = final-clean               label: all_clean
-    check_termination -> run_iteration         when ctx.tool_stdout = final-gaps                label: more_work   restart: true
+    check_termination -> write_loop_context     when ctx.tool_stdout = final-gaps                label: more_work
     check_termination -> Exit
 
     # Final audit
     final_audit -> update_final_progress       when ctx.outcome = success   label: final_clean
-    final_audit -> run_iteration               when ctx.outcome = fail      label: final_gaps  restart: true
+    final_audit -> write_loop_context          when ctx.outcome = fail      label: final_gaps
+
+    # Loop context feeds back into run_iteration
+    write_loop_context -> run_iteration        restart: true
     final_audit -> Exit
     run_iteration -> Exit
     iteration_failure_handler -> Exit
