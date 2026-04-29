@@ -1,0 +1,68 @@
+workflow DecomposeGptOnly54low
+  goal: "5.4 + reasoning_effort: low. A/B against 5.4-medium to see if reasoning effort changes sprint count and bundling discipline."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'begin'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'done'
+
+  agent decompose_gpt
+    label: "GPT Decomposition (5.4-low)"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: low
+    reads: spec_analysis
+    fallback_target: Exit
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Implementation Pragmatism
+      Focus on execution order, what can be parallelized, and build/test feasibility. Think about what a developer actually needs working first before the next piece can start.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gpt_5_4_low.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  edges
+    Start -> decompose_gpt
+    decompose_gpt -> Exit

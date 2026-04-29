@@ -1514,3 +1514,369 @@ func printUsage(w io.Writer) {
 [17:25:22] decision_edge          node=Audit                edge selected Audit->CommitSprint via condition
 [17:25:22] checkpoint_saved       checkpoint saved
 [17:25:22] stage_started          node=CommitSprint         executing node "CommitSprint"
+[17:25:22] decision_outcome       node=CommitSprint         node "CommitSprint" outcome: success
+[17:25:22] stage_completed        node=CommitSprint         node "CommitSprint" completed
+[17:25:22] decision_edge          node=CommitSprint         edge selected CommitSprint->mark_complete via weight
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=mark_complete        executing node "mark_complete"
+[17:25:22] decision_outcome       node=mark_complete        node "mark_complete" outcome: success
+[17:25:22] stage_completed        node=mark_complete        node "mark_complete" completed
+[17:25:22] decision_edge          node=mark_complete        edge selected mark_complete->report_progress via weight
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=report_progress      executing node "report_progress"
+[17:25:22] decision_outcome       node=report_progress      node "report_progress" outcome: success
+[17:25:22] stage_completed        node=report_progress      node "report_progress" completed
+[17:25:22] decision_edge          node=report_progress      edge selected report_progress->sprint_gate via weight
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=sprint_gate          executing node "sprint_gate"
+[17:25:22] decision_outcome       node=sprint_gate          node "sprint_gate" outcome: success
+[17:25:22] stage_completed        node=sprint_gate          node "sprint_gate" completed
+[17:25:22] decision_edge          node=sprint_gate          edge selected sprint_gate->skip_gate via label
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=skip_gate            executing node "skip_gate"
+[17:25:22] decision_outcome       node=skip_gate            node "skip_gate" outcome: success
+[17:25:22] stage_completed        node=skip_gate            node "skip_gate" completed
+[17:25:22] decision_edge          node=skip_gate            edge selected skip_gate->check_ledger via weight
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=check_ledger         executing node "check_ledger"
+[17:25:22] decision_outcome       node=check_ledger         node "check_ledger" outcome: success
+[17:25:22] stage_completed        node=check_ledger         node "check_ledger" completed
+[17:25:22] decision_condition     node=check_ledger         condition "ctx.tool_stdout = all_done" on edge check_ledger->Exit evaluated to true
+[17:25:22] decision_edge          node=check_ledger         edge selected check_ledger->Exit via condition
+[17:25:22] checkpoint_saved       checkpoint saved
+[17:25:22] stage_started          node=Exit                 executing node "Exit"
+[17:25:22] decision_outcome       node=Exit                 node "Exit" outcome: success
+[17:25:22] stage_completed        node=Exit                 node "Exit" completed
+[17:25:22] pipeline_completed     pipeline completed
+
+                                                           
+  ████████╗██████╗  █████╗  ██████╗██╗  ██╗███████╗██████╗ 
+  ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+     ██║   ██████╔╝███████║██║     █████╔╝ █████╗  ██████╔╝
+     ██║   ██╔══██╗██╔══██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗
+     ██║   ██║  ██║██║  ██║╚██████╗██║  ██╗███████╗██║  ██║
+     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+                        by 2389.ai                         
+
+═══ Run Complete ══════════════════════════════════════════
+  Run ID:    32aa1a4da678
+  Status:    ● success
+  Duration:  16m24s
+
+─── Totals ────────────────────────────────────────────────
+  LLM Turns:    24
+  Tool Calls:   18  (bash: 12, apply_patch: 6)
+  Tokens:       43,505 in / 9,156 out
+
+─── Node Execution ────────────────────────────────────────
+  Node                    Status      Time        Turns  Tools  Handler
+  ────                    ──────      ────        ─────  ─────  ───────
+  Start                   ✓ success   0ms             -      -  start
+  check_ledger            ✓ success   6ms             -      -  tool
+  mark_in_progress        ✓ success   10ms            -      -  tool
+  Setup                   ✓ success   7ms             -      -  tool
+  Generate                ✓ success   1m24s           -      -  tool
+  RunTests                ✓ success   116ms           -      -  tool
+  Audit                   ✓ success   826ms           -      -  tool
+  CommitSprint            ✓ success   120ms           -      -  tool
+  mark_complete           ✓ success   12ms            -      -  tool
+  report_progress         ✓ success   8ms             -      -  tool
+  sprint_gate             ✓ success   0ms             -      -  wait.human
+  skip_gate               ✓ success   7ms             -      -  tool
+  check_ledger            ✓ success   6ms             -      -  tool
+  mark_in_progress        ✓ success   10ms            -      -  tool
+  Setup                   ✓ success   35ms            -      -  tool
+  Generate                ✓ success   1m00s           -      -  tool
+  RunTests                ✓ success   649ms           -      -  tool
+  Audit                   ✓ success   854ms           -      -  tool
+  CommitSprint            ✓ success   76ms            -      -  tool
+  mark_complete           ✓ success   10ms            -      -  tool
+  report_progress         ✓ success   8ms             -      -  tool
+  sprint_gate             ✓ success   0ms             -      -  wait.human
+  skip_gate               ✓ success   6ms             -      -  tool
+  check_ledger            ✓ success   5ms             -      -  tool
+  mark_in_progress        ✓ success   9ms             -      -  tool
+  Setup                   ✓ success   52ms            -      -  tool
+  Generate                ✓ success   27.5s           -      -  tool
+  RunTests                ✓ success   425ms           -      -  tool
+  LocalFix                ✓ success   56.5s           -      -  tool
+  RunTests                ✓ success   155ms           -      -  tool
+  LocalFix                ✓ success   50.5s           -      -  tool
+  RunTests                ✓ success   169ms           -      -  tool
+  LocalFix                ✓ success   45.2s           -      -  tool
+  RunTests                ✓ success   168ms           -      -  tool
+  LocalFix                ✓ success   43.8s           -      -  tool
+  RunTests                ✓ success   166ms           -      -  tool
+  LocalFix                ✓ success   21ms            -      -  tool
+  CloudFix                ✓ success   16.4s           4      3  codergen
+  RunTests                ✓ success   492ms           -      -  tool
+  LocalFix                ✓ success   24ms            -      -  tool
+  CloudFix                ✓ success   23.3s           4      3  codergen
+  RunTests                ✓ success   753ms           -      -  tool
+  Audit                   ✓ success   383ms           -      -  tool
+  CommitSprint            ✓ success   76ms            -      -  tool
+  mark_complete           ✓ success   9ms             -      -  tool
+  report_progress         ✓ success   8ms             -      -  tool
+  sprint_gate             ✓ success   0ms             -      -  wait.human
+  skip_gate               ✓ success   6ms             -      -  tool
+  check_ledger            ✓ success   6ms             -      -  tool
+  mark_in_progress        ✓ success   9ms             -      -  tool
+  Setup                   ✓ success   52ms            -      -  tool
+  Generate                ✓ success   2m15s           -      -  tool
+  RunTests                ✓ success   461ms           -      -  tool
+  LocalFix                ✓ success   30.6s           -      -  tool
+  RunTests                ✓ success   404ms           -      -  tool
+  LocalFix                ✓ success   31.6s           -      -  tool
+  RunTests                ✓ success   404ms           -      -  tool
+  LocalFix                ✓ success   20.5s           -      -  tool
+  RunTests                ✓ success   577ms           -      -  tool
+  LocalFix                ✓ success   32.2s           -      -  tool
+  RunTests                ✓ success   434ms           -      -  tool
+  LocalFix                ✓ success   25ms            -      -  tool
+  CloudFix                ✓ success   26.7s           4      3  codergen
+  RunTests                ✓ success   425ms           -      -  tool
+  LocalFix                ✓ success   25ms            -      -  tool
+  CloudFix                ✓ success   40.6s           4      3  codergen
+  RunTests                ✓ success   489ms           -      -  tool
+  LocalFix                ✓ success   25ms            -      -  tool
+  CloudFix                ✓ success   23.4s           4      3  codergen
+  RunTests                ✓ success   418ms           -      -  tool
+  Audit                   ✓ success   863ms           -      -  tool
+  CommitSprint            ✓ success   84ms            -      -  tool
+  mark_complete           ✓ success   10ms            -      -  tool
+  report_progress         ✓ success   7ms             -      -  tool
+  sprint_gate             ✓ success   0ms             -      -  wait.human
+  skip_gate               ✓ success   6ms             -      -  tool
+  check_ledger            ✓ success   5ms             -      -  tool
+  mark_in_progress        ✓ success   10ms            -      -  tool
+  Setup                   ✓ success   56ms            -      -  tool
+  Generate                ✓ success   1m07s           -      -  tool
+  RunTests                ✓ success   554ms           -      -  tool
+  LocalFix                ✓ success   30.0s           -      -  tool
+  RunTests                ✓ success   179ms           -      -  tool
+  LocalFix                ✓ success   31.1s           -      -  tool
+  RunTests                ✓ success   178ms           -      -  tool
+  LocalFix                ✓ success   34.4s           -      -  tool
+  RunTests                ✓ success   195ms           -      -  tool
+  LocalFix                ✓ success   41.5s           -      -  tool
+  RunTests                ✓ success   179ms           -      -  tool
+  LocalFix                ✓ success   19ms            -      -  tool
+  CloudFix                ✓ success   17.9s           4      3  codergen
+  RunTests                ✓ success   189ms           -      -  tool
+  Audit                   ✓ success   741ms           -      -  tool
+  CommitSprint            ✓ success   90ms            -      -  tool
+  mark_complete           ✓ success   10ms            -      -  tool
+  report_progress         ✓ success   8ms             -      -  tool
+  sprint_gate             ✓ success   0ms             -      -  wait.human
+  skip_gate               ✓ success   6ms             -      -  tool
+  check_ledger            ✓ success   6ms             -      -  tool
+  Exit                    ✓ success   0ms             -      -  exit
+
+─── Tokens by Provider ────────────────────────────────────
+  Provider           Input      Output
+  ────────           ─────      ──────
+  openai            43,505       9,156
+  TOTAL             43,505       9,156
+
+─── Pipeline ──────────────────────────────────────────────
+  ✓ Start (0ms)
+  │
+  ✓ check_ledger (6ms)
+  │
+  ✓ mark_in_progress (10ms)
+  │
+  ✓ Setup (7ms)
+  │
+  ✓ Generate (1m24s)
+  │
+  ✓ RunTests (116ms)
+  │
+  ✓ Audit (826ms)
+  │
+  ✓ CommitSprint (120ms)
+  │
+  ✓ mark_complete (12ms)
+  │
+  ✓ report_progress (8ms)
+  │
+  ✓ sprint_gate (0ms)
+  │
+  ✓ skip_gate (7ms)
+  │
+  ✓ check_ledger (6ms)
+  │
+  ✓ mark_in_progress (10ms)
+  │
+  ✓ Setup (35ms)
+  │
+  ✓ Generate (1m00s)
+  │
+  ✓ RunTests (649ms)
+  │
+  ✓ Audit (854ms)
+  │
+  ✓ CommitSprint (76ms)
+  │
+  ✓ mark_complete (10ms)
+  │
+  ✓ report_progress (8ms)
+  │
+  ✓ sprint_gate (0ms)
+  │
+  ✓ skip_gate (6ms)
+  │
+  ✓ check_ledger (5ms)
+  │
+  ✓ mark_in_progress (9ms)
+  │
+  ✓ Setup (52ms)
+  │
+  ✓ Generate (27.5s)
+  │
+  ✓ RunTests (425ms)
+  │
+  ✓ LocalFix (56.5s)
+  │
+  ✓ RunTests (155ms)
+  │
+  ✓ LocalFix (50.5s)
+  │
+  ✓ RunTests (169ms)
+  │
+  ✓ LocalFix (45.2s)
+  │
+  ✓ RunTests (168ms)
+  │
+  ✓ LocalFix (43.8s)
+  │
+  ✓ RunTests (166ms)
+  │
+  ✓ LocalFix (21ms)
+  │
+  ✓ CloudFix (16.4s)
+  │
+  ✓ RunTests (492ms)
+  │
+  ✓ LocalFix (24ms)
+  │
+  ✓ CloudFix (23.3s)
+  │
+  ✓ RunTests (753ms)
+  │
+  ✓ Audit (383ms)
+  │
+  ✓ CommitSprint (76ms)
+  │
+  ✓ mark_complete (9ms)
+  │
+  ✓ report_progress (8ms)
+  │
+  ✓ sprint_gate (0ms)
+  │
+  ✓ skip_gate (6ms)
+  │
+  ✓ check_ledger (6ms)
+  │
+  ✓ mark_in_progress (9ms)
+  │
+  ✓ Setup (52ms)
+  │
+  ✓ Generate (2m15s)
+  │
+  ✓ RunTests (461ms)
+  │
+  ✓ LocalFix (30.6s)
+  │
+  ✓ RunTests (404ms)
+  │
+  ✓ LocalFix (31.6s)
+  │
+  ✓ RunTests (404ms)
+  │
+  ✓ LocalFix (20.5s)
+  │
+  ✓ RunTests (577ms)
+  │
+  ✓ LocalFix (32.2s)
+  │
+  ✓ RunTests (434ms)
+  │
+  ✓ LocalFix (25ms)
+  │
+  ✓ CloudFix (26.7s)
+  │
+  ✓ RunTests (425ms)
+  │
+  ✓ LocalFix (25ms)
+  │
+  ✓ CloudFix (40.6s)
+  │
+  ✓ RunTests (489ms)
+  │
+  ✓ LocalFix (25ms)
+  │
+  ✓ CloudFix (23.4s)
+  │
+  ✓ RunTests (418ms)
+  │
+  ✓ Audit (863ms)
+  │
+  ✓ CommitSprint (84ms)
+  │
+  ✓ mark_complete (10ms)
+  │
+  ✓ report_progress (7ms)
+  │
+  ✓ sprint_gate (0ms)
+  │
+  ✓ skip_gate (6ms)
+  │
+  ✓ check_ledger (5ms)
+  │
+  ✓ mark_in_progress (10ms)
+  │
+  ✓ Setup (56ms)
+  │
+  ✓ Generate (1m07s)
+  │
+  ✓ RunTests (554ms)
+  │
+  ✓ LocalFix (30.0s)
+  │
+  ✓ RunTests (179ms)
+  │
+  ✓ LocalFix (31.1s)
+  │
+  ✓ RunTests (178ms)
+  │
+  ✓ LocalFix (34.4s)
+  │
+  ✓ RunTests (195ms)
+  │
+  ✓ LocalFix (41.5s)
+  │
+  ✓ RunTests (179ms)
+  │
+  ✓ LocalFix (19ms)
+  │
+  ✓ CloudFix (17.9s)
+  │
+  ✓ RunTests (189ms)
+  │
+  ✓ Audit (741ms)
+  │
+  ✓ CommitSprint (90ms)
+  │
+  ✓ mark_complete (10ms)
+  │
+  ✓ report_progress (8ms)
+  │
+  ✓ sprint_gate (0ms)
+  │
+  ✓ skip_gate (6ms)
+  │
+  ✓ check_ledger (6ms)
+  │
+  ✓ Exit (0ms)
+═══════════════════════════════════════════════════════════
+Update available: v0.16.4-dirty → v0.24.1 (run `tracker update`)

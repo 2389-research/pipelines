@@ -1,10 +1,16 @@
 {
   "run_id": "32aa1a4da678",
-  "current_node": "CommitSprint",
+  "current_node": "Exit",
   "completed_nodes": [
     "Start",
     "RunTests",
-    "Audit"
+    "Audit",
+    "CommitSprint",
+    "mark_complete",
+    "report_progress",
+    "sprint_gate",
+    "skip_gate",
+    "check_ledger"
   ],
   "retry_counts": {},
   "context": {
@@ -18,10 +24,10 @@
     "preferred_label": "",
     "response.CloudFix": "Fixed the first error class in `cmd/agent/main.go`: corrected the broken multiline string in the default-case `fmt.Fprintf` call by replacing it with a proper escaped newline string literal.",
     "suggested_next_nodes": "",
-    "tool_stderr": "sh: line 44: [: 0\n0: integer expression expected",
-    "tool_stdout": "test count: sprint=0\n0 actual=12\naudit-pass"
+    "tool_stderr": "",
+    "tool_stdout": "all_done"
   },
-  "timestamp": "2026-04-25T17:25:22.088944-05:00",
+  "timestamp": "2026-04-25T17:25:22.2116-05:00",
   "restart_count": 22,
   "edge_selections": {
     "Audit": "CommitSprint",
@@ -32,7 +38,7 @@
     "RunTests": "Audit",
     "Setup": "Generate",
     "Start": "check_ledger",
-    "check_ledger": "mark_in_progress",
+    "check_ledger": "Exit",
     "mark_complete": "report_progress",
     "mark_in_progress": "Setup",
     "report_progress": "sprint_gate",
