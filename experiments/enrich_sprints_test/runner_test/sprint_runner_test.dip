@@ -1,0 +1,652 @@
+workflow SprintRunnerLocalGenQwen
+  goal: "Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge."
+  start: Start
+  exit: Exit
+
+  defaults
+    provider: openai
+    fidelity: summary:medium
+    max_restarts: 50
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'runner-started'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'runner-complete'
+
+  tool check_ledger
+    label: "Check Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'no_ledger'
+        exit 0
+      fi
+      target=$(awk -F '\t' 'NR>1 && $3!~/^completed$/ && $3!~/^skipped$/{print $1; exit}' .ai/ledger.tsv)
+      if [ -z "$target" ]; then
+        printf 'all_done'
+        exit 0
+      fi
+      printf '%s' "$target" > .ai/current_sprint_id.txt
+      printf 'next-%s' "$target"
+
+  tool no_ledger_exit
+    label: "No Ledger Found"
+    timeout: 5s
+    command:
+      echo "No .ai/ledger.tsv found. Run spec_to_sprints.dip or tools/init-ledger.sh first."
+      printf 'no-ledger'
+
+  tool mark_in_progress
+    label: "Mark In Progress"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="in_progress"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'in_progress-%s' "$target"
+
+  tool Setup
+    label: "Install deps + reset per-sprint counters"
+    timeout: 120s
+    command:
+      set -eu
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      if [ ! -f "$SPRINT_DOC" ]; then echo "missing $SPRINT_DOC"; exit 1; fi
+      rm -f .ai/local_fix_attempts .ai/local_exhausted
+      proj_root="."
+      for sub in backend frontend server api app; do
+        if [ -f "$sub/go.mod" ] || [ -f "$sub/package.json" ] || [ -f "$sub/pyproject.toml" ] || [ -f "$sub/requirements.txt" ]; then
+          proj_root="$sub"; break
+        fi
+      done
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+      cd "$proj_root"
+      if [ -f go.mod ]; then
+        go mod tidy 2>/dev/null || true
+      elif [ -f package.json ]; then
+        npm install 2>/dev/null || true
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        uv sync --all-extras 2>/dev/null || uv sync 2>/dev/null || true
+      fi
+      printf 'setup-done'
+
+  tool Generate
+    label: "Generate all files (qwen3.6:35b-a3b-q8_0, one Ollama call per file)"
+    timeout: 3600s
+    command:
+      set -e
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      SPRINT=$(cat "$SPRINT_DOC")
+      OLLAMA=http://localhost:11434/api/chat
+      SYS="You are a code generator. Output only the raw file content. No explanation, no markdown fences, no commentary."
+
+      gen_file() {
+        local filepath="$1"
+        local description="$2"
+        local max_tokens="${3:-4096}"
+        local user_msg="CONTRACT (full spec):\n\n${SPRINT}\n\nGENERATE THIS FILE: ${filepath}\n${description}\n\nOutput ONLY the raw file content. Nothing else."
+        echo "generating ${filepath}..."
+        mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
+        curl -sf "${OLLAMA}" \
+          -H 'Content-Type: application/json' \
+          --data "$(jq -n \
+            --arg sys "${SYS}" \
+            --arg msg "${user_msg}" \
+            --argjson tokens "${max_tokens}" \
+            '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+              messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
+              options:{temperature:1.0,top_p:0.95,top_k:64,num_ctx:32768,num_predict:$tokens}}')" \
+          | jq -r '.message.content' \
+          > "${filepath}"
+        echo "wrote ${filepath} ($(wc -c < "${filepath}") bytes)"
+        validate_and_retry "${filepath}"
+      }
+
+      patch_file() {
+        local filepath="$1"
+        local max_tokens="${2:-4096}"
+        local max_attempts=10
+
+        if [ ! -f "${filepath}" ]; then
+          echo "patch_file: missing ${filepath}; cannot patch"
+          return 1
+        fi
+
+        local pre_content pre_lines pre_symbols
+        pre_content=$(cat "${filepath}")
+        pre_lines=$(printf '%s\n' "$pre_content" | wc -l | tr -d ' ')
+        case "$filepath" in
+          *.py)      pre_symbols=$(grep -oE '^(class|def|async def) [A-Za-z_][A-Za-z0-9_]*' "${filepath}" | awk '{print $NF}' | sort -u) ;;
+          *.go)      pre_symbols=$(grep -oE '^(func|type|var|const) [A-Za-z_][A-Za-z0-9_]*' "${filepath}" | awk '{print $NF}' | sort -u) ;;
+          *.ts|*.tsx|*.js|*.jsx) pre_symbols=$(grep -oE '(export (default )?)?(function|class|const|let|var) [A-Za-z_$][A-Za-z0-9_$]*' "${filepath}" | awk '{print $NF}' | sort -u) ;;
+          *) pre_symbols="" ;;
+        esac
+
+        local feedback=""
+        local attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          attempt=$((attempt + 1))
+          printf '%s' "$pre_content" > "${filepath}"
+
+          local user_msg="CONTRACT (full spec):\n${SPRINT}\n\nEXISTING FILE CONTENT (output the COMPLETE updated version — every existing class/function/symbol must remain, plus the new additions specified):\n~~~\n${pre_content}\n~~~\n\nApply ONLY the modifications described for ${filepath} in the sprint spec under '## Modified files'. Output the complete updated file. Nothing else.${feedback}"
+
+          echo "patching ${filepath} (attempt ${attempt}/${max_attempts})..."
+          mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
+
+          local fixed
+          fixed=$(curl -sf "${OLLAMA}" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg sys "${SYS}" \
+              --arg msg "${user_msg}" \
+              --argjson tokens "${max_tokens}" \
+              '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+                messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
+                options:{temperature:0.2,top_p:0.95,top_k:64,num_ctx:32768,num_predict:$tokens}}')" \
+            | jq -r '.message.content' \
+            | sed '/^```/d')
+
+          local candidate="${filepath}.candidate"
+          printf '%s' "$fixed" > "${candidate}"
+
+          local errors=""
+          local post_lines floor
+          post_lines=$(wc -l < "${candidate}" | tr -d ' ')
+          floor=$((pre_lines * 80 / 100))
+          [ $floor -lt 1 ] && floor=1
+          if [ "$post_lines" -lt "$floor" ]; then
+            errors="${errors} LINE_COUNT_DROP(post=${post_lines} pre=${pre_lines} floor=${floor})"
+          fi
+
+          local missing=""
+          while IFS= read -r sym; do
+            [ -z "$sym" ] && continue
+            grep -qE "(^|[[:space:]])${sym}\b" "${candidate}" || missing="${missing} ${sym}"
+          done <<< "$pre_symbols"
+          if [ -n "$missing" ]; then
+            errors="${errors} MISSING_PRE_SYMBOL(${missing# })"
+          fi
+
+          case "$filepath" in
+            *.py)      python3 -m py_compile "${candidate}" 2>/dev/null || errors="${errors} SYNTAX_ERROR" ;;
+            *.go)      gofmt -e "${candidate}" >/dev/null 2>&1 || errors="${errors} SYNTAX_ERROR" ;;
+            *.ts|*.js) node --check "${candidate}" 2>/dev/null || errors="${errors} SYNTAX_ERROR" ;;
+          esac
+
+          if [ -z "$errors" ]; then
+            mv "${candidate}" "${filepath}"
+            echo "patched ${filepath} ($(wc -c < "${filepath}") bytes) [validated on attempt ${attempt}]"
+            return 0
+          fi
+
+          rm -f "${candidate}"
+          echo "patch attempt ${attempt} failed:${errors}"
+          feedback="\n\nPREVIOUS ATTEMPT FAILED VALIDATION:${errors}\nCommon causes: (1) you removed an existing class/function — every pre-edit symbol must remain; (2) you returned a partial file — output the COMPLETE file with all imports, all existing code, and the new additions; (3) markdown fences confused parsing — emit raw code only; (4) the file path on its own line is a label, not file content. Fix these issues and output the COMPLETE updated file."
+        done
+
+        printf '%s' "$pre_content" > "${filepath}"
+        echo "patch_file exhausted ${max_attempts} attempts on ${filepath}; restored pre-edit state, signaling cloud escalation"
+        touch .ai/local_exhausted
+        return 0
+      }
+
+      syntax_check() {
+        local fp="$1"
+        case "$fp" in
+          *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
+          *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
+          *.ts|*.js) node --check "$fp" 2>&1 | head -5 ;;
+        esac
+      }
+
+      validate_and_retry() {
+        local fp="$1"
+        local attempt=0
+        while [ $attempt -lt 2 ]; do
+          local err
+          err=$(syntax_check "$fp")
+          [ -z "$err" ] && return 0
+          attempt=$((attempt + 1))
+          echo "syntax error in $fp (retry $attempt/2): $err"
+          local line_num
+          line_num=$(echo "$err" | grep -oE ':[0-9]+:' | head -1 | tr -d ':')
+          local context=""
+          if [ -n "$line_num" ]; then
+            local start=$((line_num - 3))
+            [ "$start" -lt 1 ] && start=1
+            local end=$((line_num + 3))
+            context=$(awk "NR>=$start && NR<=$end {printf \"%d: %s\n\", NR, \$0}" "$fp")
+          fi
+          local current
+          current=$(cat "$fp")
+          local fixed
+          fixed=$(curl -sf "${OLLAMA}" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg file "$current" \
+              --arg err "$err" \
+              --arg ctx "$context" \
+              --arg path "$fp" \
+              '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+                messages:[
+                  {role:"system",content:"Output ONLY the corrected file content. No markdown fences. No explanation."},
+                  {role:"user",content:("File "+$path+" has a syntax error:\n\n"+$err+"\n\nContext around error:\n"+$ctx+"\n\nFull file:\n"+$file+"\n\nOutput the corrected file only.")}
+                ],
+                options:{temperature:0.1,num_ctx:32768}}')" \
+            | jq -r '.message.content' | sed '/^```/d')
+          [ -z "$fixed" ] && return 0
+          echo "$fixed" > "$fp"
+          echo "syntax-retry $attempt: rewrote $fp"
+        done
+        echo "warning: $fp may still have syntax errors after 2 retries"
+      }
+
+      # New files — generate only if file does not exist
+      NEW_FILES=$(awk '/^## New files/{f=1;next} f && /^##/{exit} f{print}' \
+        "$SPRINT_DOC" | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
+      for filepath in $NEW_FILES; do
+        if [ ! -f "${filepath}" ]; then
+          gen_file "${filepath}" \
+            'Implement exactly as specified in the sprint. Use the Interface contract, Algorithm notes, Imports per file, and Test plan sections for this file.' \
+            4096
+        else
+          echo "skipping ${filepath} (already exists)"
+        fi
+      done
+
+      # Modified files — read existing, apply targeted changes
+      MOD_FILES=$(awk '/^## Modified files/{f=1;next} f && /^##/{exit} f{print}' \
+        "$SPRINT_DOC" | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
+      for filepath in $MOD_FILES; do
+        patch_file "${filepath}" 4096
+      done
+
+      # Fallback: sprint uses old ## Expected Artifacts format (no New/Modified split)
+      if [ -z "$NEW_FILES" ] && [ -z "$MOD_FILES" ]; then
+        ARTIFACTS=$(awk '/^## Expected Artifacts/{f=1;next} f && /^##/{exit} f{print}' \
+          "$SPRINT_DOC" | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
+        for filepath in $ARTIFACTS; do
+          gen_file "${filepath}" \
+            'Implement exactly as specified in the sprint. Use the Interface contract, Algorithm notes, Imports per file, and Test plan sections for this file.' \
+            4096
+        done
+      fi
+
+      if [ -f go.mod ]; then go mod tidy 2>/dev/null || true; fi
+      printf 'gen-done'
+
+  tool RunTests
+    label: "Run Tests"
+    timeout: 600s
+    command:
+      set +e
+      mkdir -p .ai
+      proj_root="."
+      for sub in backend frontend server api app; do
+        if [ -f "$sub/go.mod" ] || [ -f "$sub/package.json" ] || [ -f "$sub/pyproject.toml" ] || [ -f "$sub/requirements.txt" ]; then
+          proj_root="$sub"; break
+        fi
+      done
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+      WORKDIR_ABS=$(pwd)
+      cd "$proj_root"
+      if [ -f go.mod ]; then
+        go test ./... > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      elif [ -f package.json ]; then
+        npm test > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        uv run pytest > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      else
+        echo "no test runner detected" > "$WORKDIR_ABS/.ai/last_test_output.txt"
+        code=1
+      fi
+      cd "$WORKDIR_ABS"
+      cat .ai/last_test_output.txt
+      if [ $code -eq 0 ]; then
+        printf 'tests-pass'
+      elif [ -f .ai/local_exhausted ]; then
+        printf 'tests-fail-cloud'
+      else
+        printf 'tests-fail'
+      fi
+
+  tool LocalFix
+    label: "Local fix (qwen3.6:35b-a3b-q8_0)"
+    timeout: 900s
+    command:
+      set +e
+      mkdir -p .ai
+      OLLAMA=http://localhost:11434/api/chat
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      SPRINT=$(cat "$SPRINT_DOC")
+      TEST_OUT=$(cat .ai/last_test_output.txt)
+
+      syntax_check() {
+        local fp="$1"
+        case "$fp" in
+          *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
+          *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
+          *.ts|*.js) node --check "$fp" 2>&1 | head -5 ;;
+        esac
+      }
+
+      validate_and_retry() {
+        local fp="$1"
+        local attempt=0
+        while [ $attempt -lt 2 ]; do
+          local err
+          err=$(syntax_check "$fp")
+          [ -z "$err" ] && return 0
+          attempt=$((attempt + 1))
+          echo "syntax error in $fp (retry $attempt/2): $err"
+          local line_num
+          line_num=$(echo "$err" | grep -oE ':[0-9]+:' | head -1 | tr -d ':')
+          local context=""
+          if [ -n "$line_num" ]; then
+            local start=$((line_num - 3))
+            [ "$start" -lt 1 ] && start=1
+            local end=$((line_num + 3))
+            context=$(awk "NR>=$start && NR<=$end {printf \"%d: %s\n\", NR, \$0}" "$fp")
+          fi
+          local current
+          current=$(cat "$fp")
+          local fixed
+          fixed=$(curl -sf "$OLLAMA" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg file "$current" \
+              --arg err "$err" \
+              --arg ctx "$context" \
+              --arg path "$fp" \
+              '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+                messages:[
+                  {role:"system",content:"Output ONLY the corrected file content. No markdown fences. No explanation."},
+                  {role:"user",content:("File "+$path+" has a syntax error:\n\n"+$err+"\n\nContext around error:\n"+$ctx+"\n\nFull file:\n"+$file+"\n\nOutput the corrected file only.")}
+                ],
+                options:{temperature:0.1,num_ctx:32768}}')" \
+            | jq -r '.message.content' | sed '/^```/d')
+          [ -z "$fixed" ] && return 0
+          echo "$fixed" > "$fp"
+          echo "syntax-retry $attempt: rewrote $fp"
+        done
+        echo "warning: $fp may still have syntax errors after 2 retries"
+      }
+
+      attempts=$(cat .ai/local_fix_attempts 2>/dev/null || echo 0)
+      attempts=$((attempts + 1))
+      echo $attempts > .ai/local_fix_attempts
+      echo "local fix attempt $attempts/4"
+
+      if [ "$attempts" -gt 4 ] || [ -f .ai/local_exhausted ]; then
+        touch .ai/local_exhausted
+        echo "local model exhausted, handing off to cloud"
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      if [ -f go.mod ]; then
+        FILE_LIST=$(find . -name "*.go" -not -path "*/vendor/*" 2>/dev/null | sort)
+      elif [ -f package.json ]; then
+        FILE_LIST=$(find . \( -name "*.ts" -o -name "*.js" \) -not -path "*/node_modules/*" 2>/dev/null | sort)
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        FILE_LIST=$(find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/.venv/*" 2>/dev/null | sort)
+      else
+        FILE_LIST=$(find . -type f -not -path "*/.git/*" -not -path "*/.ai/*" 2>/dev/null | sort)
+      fi
+
+      WHICH_FILE=$(curl -sf "$OLLAMA" \
+        -H 'Content-Type: application/json' \
+        --data "$(jq -n \
+          --arg sprint "$SPRINT" \
+          --arg test_out "$TEST_OUT" \
+          --arg files "$FILE_LIST" \
+          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+            messages:[
+              {role:"system",content:"You are a code debugger. Output ONLY the relative file path of the source file that needs to be fixed. One path only. No explanation, no punctuation."},
+              {role:"user",content:("TEST FAILURE:\n\n"+$test_out+"\n\nAVAILABLE SOURCE FILES:\n"+$files+"\n\nSPRINT SPEC:\n\n"+$sprint+"\n\nWhich source file needs to be fixed? Output only the relative file path.")}
+            ],
+            options:{temperature:0.1,num_ctx:32768}}')" \
+        | jq -r '.message.content' | tr -d ' \n')
+
+      echo "model identified: $WHICH_FILE"
+
+      if [ -z "$WHICH_FILE" ] || [ ! -f "$WHICH_FILE" ]; then
+        echo "invalid file path returned: '$WHICH_FILE', escalating"
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      FILE_CONTENT=$(cat "$WHICH_FILE")
+      FIXED=$(curl -sf "$OLLAMA" \
+        -H 'Content-Type: application/json' \
+        --data "$(jq -n \
+          --arg sprint "$SPRINT" \
+          --arg test_out "$TEST_OUT" \
+          --arg file "$FILE_CONTENT" \
+          --arg path "$WHICH_FILE" \
+          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+            messages:[
+              {role:"system",content:"You are a code fixer. Output ONLY the corrected file content. No explanation, no markdown fences, no commentary."},
+              {role:"user",content:("The file "+$path+" has a bug causing test failures:\n\n"+$test_out+"\n\n---\nSPRINT SPEC:\n\n"+$sprint+"\n\n---\nCURRENT FILE:\n\n"+$file+"\n\nOutput the corrected "+$path+" only.")}
+            ],
+            options:{temperature:0.2,num_ctx:32768}}')" \
+        | jq -r '.message.content')
+
+      if [ -z "$FIXED" ]; then
+        echo "model returned empty response, escalating"
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      echo "$FIXED" | sed '/^```/d' > "$WHICH_FILE"
+      echo "wrote fix to $WHICH_FILE ($(wc -l < "$WHICH_FILE") lines)"
+      validate_and_retry "$WHICH_FILE"
+      printf 'local-fixed'
+
+  tool Audit
+    label: "Audit Sprint DoD (shell)"
+    timeout: 30s
+    command:
+      set +e
+      mkdir -p .ai
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      sprint=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      fail=0
+
+      in_section=0
+      while IFS= read -r line; do
+        if echo "$line" | grep -qE '^## Expected Artifacts'; then
+          in_section=1; continue
+        fi
+        if [ "$in_section" -eq 1 ] && echo "$line" | grep -qE '^##'; then
+          break
+        fi
+        if [ "$in_section" -eq 1 ]; then
+          path=$(echo "$line" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
+          if [ -n "$path" ] && echo "$path" | grep -q '/'; then
+            if [ ! -f "$path" ]; then
+              echo "MISSING artifact: $path" | tee -a .ai/last_audit_output.txt
+              fail=1
+            fi
+          fi
+        fi
+      done < "$sprint"
+
+      if [ -f go.mod ]; then
+        sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
+          | grep -cE "^func Test" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^func Test" . --include="*.go" 2>/dev/null | wc -l | tr -d ' ')
+      elif [ -f package.json ]; then
+        sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
+          | grep -cE "^\s*(describe|it|test)\(" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^\s*(describe|it|test)\(" . --include="*.ts" --include="*.js" 2>/dev/null | wc -l | tr -d ' ')
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        sprint_tests=$(awk '/^## Test plan/{f=1;next} f && /^##/{exit} f{print}' "$sprint" \
+          | grep -cE "^def test_" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^def test_" . --include="*.py" 2>/dev/null | wc -l | tr -d ' ')
+      else
+        sprint_tests=0
+        actual_tests=0
+      fi
+
+      if [ -z "$actual_tests" ]; then actual_tests=0; fi
+      echo "test count: sprint=$sprint_tests actual=$actual_tests" | tee -a .ai/last_audit_output.txt
+      if [ "$actual_tests" -lt "$sprint_tests" ]; then
+        echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests" \
+          | tee -a .ai/last_audit_output.txt
+        fail=1
+      fi
+
+      if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
+
+  agent CloudFix
+    label: "Cloud fix fallback (gpt-5.4)"
+    model: gpt-5.4
+    provider: openai
+    max_turns: 5
+    reasoning_effort: high
+    retry_target: RunTests
+    max_retries: 6
+    fallback_target: Escalate
+    prompt:
+      You are working in `run.working_dir`.
+
+      A local model (qwen3.6:35b-a3b-q8_0) generated sprint files and attempted fixes but could
+      not converge. Tests are still failing or the audit found issues.
+      Make exactly ONE targeted fix this session, then stop. The pipeline re-runs tests
+      and calls you again if more fixes are needed.
+
+      Steps (3 turns max):
+      1. bash: cat .ai/last_test_output.txt
+         If tests passed, cat .ai/last_audit_output.txt instead.
+         Identify the FIRST error class and the specific file causing it.
+      2. bash: cat <that specific file>
+      3. edit — fix every instance of that error class in one edit. Stop.
+
+      Rules:
+      - Fix ONE error class per session. Do NOT run tests — the pipeline does that.
+      - When the same error appears in multiple places, fix ALL instances in one edit.
+      - Forbidden bash: NO sed -i, perl -pi, awk -i, python/node one-liners that write files.
+      - Use the edit tool for ALL file modifications.
+
+      You have ONLY these tools: bash (cat read-only), edit.
+      Do NOT use: read, glob, grep_search, write, apply_patch, generate_code.
+
+  tool CommitSprint
+    label: "Commit Sprint Work"
+    timeout: 30s
+    command:
+      set -eu
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "no git repo in $(pwd) — skipping commit for sprint ${SPRINT_ID}"
+        printf 'commit-skipped-no-git'
+        exit 0
+      fi
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      TITLE=$(grep -m1 '^#' "$SPRINT_DOC" \
+        | sed -E 's/^#+[[:space:]]*//' \
+        | sed -E "s/^SPRINT-${SPRINT_ID}:?[[:space:]]*//" \
+        | tr -d '\n' \
+        | head -c 100)
+      [ -z "$TITLE" ] && TITLE="implement sprint ${SPRINT_ID}"
+      git add -A
+      if git diff --cached --quiet; then
+        echo "no changes to commit for sprint ${SPRINT_ID}"
+        printf 'commit-skipped'
+        exit 0
+      fi
+      git commit -m "feat(sprint-${SPRINT_ID}): ${TITLE}"
+      git log --oneline -1
+      printf 'commit-done'
+
+  tool Escalate
+    label: "Escalate — could not converge"
+    timeout: 5s
+    command:
+      echo "Sprint did not converge after local and cloud fix attempts."
+      printf 'escalated'
+
+  tool mark_complete
+    label: "Complete Sprint"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="completed"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'completed-%s' "$target"
+
+  tool report_progress
+    label: "Report Progress"
+    timeout: 10s
+    command:
+      set -eu
+      total=$(awk -F '\t' 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      done=$(awk -F '\t' 'NR>1 && ($3=="completed" || $3=="skipped")' .ai/ledger.tsv | wc -l | tr -d ' ')
+      if [ "$total" -gt 0 ]; then
+        pct=$((done * 100 / total))
+      else
+        pct=0
+      fi
+      printf 'progress-%s-of-%s-%spct' "$done" "$total" "$pct"
+
+  human sprint_gate
+    label: "Continue to Next Sprint?"
+
+  tool skip_gate
+    label: "Skip Gate"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "unknown")
+      printf 'continue\t%s\t%s\n' "$target" "$now"
+
+  edges
+    Start -> check_ledger
+    check_ledger -> Exit            when ctx.tool_stdout = all_done       label: all_done
+    check_ledger -> no_ledger_exit  when ctx.tool_stdout = no_ledger      label: no_ledger
+    check_ledger -> mark_in_progress when ctx.tool_stdout != all_done     label: next_sprint
+    no_ledger_exit -> Exit
+    mark_in_progress -> Setup
+    Setup -> Generate
+    Generate -> RunTests
+    RunTests -> LocalFix            when ctx.tool_stdout contains tests-fail
+    RunTests -> CloudFix            when ctx.tool_stdout contains tests-fail-cloud
+    RunTests -> Audit               when ctx.tool_stdout contains tests-pass
+    RunTests -> Audit
+    LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
+    LocalFix -> CloudFix            when ctx.tool_stdout contains local-exhausted
+    Audit -> CommitSprint           when ctx.tool_stdout contains audit-pass
+    Audit -> CloudFix               when ctx.tool_stdout contains audit-fail        restart: true
+    CloudFix -> RunTests            when ctx.outcome = success                      restart: true
+    CloudFix -> RunTests            when ctx.outcome = fail                         restart: true
+    CloudFix -> Escalate
+    Escalate -> Exit
+    CommitSprint -> mark_complete
+    mark_complete -> report_progress
+    report_progress -> sprint_gate
+    sprint_gate -> skip_gate        label: "[S] Continue"
+    sprint_gate -> Exit             label: "[A] Pause"
+    skip_gate -> check_ledger       restart: true

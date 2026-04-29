@@ -535,61 +535,87 @@ workflow SpecToSprints
       printf 'ready'
 
   agent write_sprint_docs
-    label: "Write Sprint Docs"
+    label: "Write Sprint Docs (architect + Sonnet generator)"
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
     reads: sprint_plan, spec_analysis
+    max_turns: 50
     fallback_target: Exit
     prompt:
-      You are working in `run.working_dir`.
+      You are the architect for sprint enrichment. Same shape as the prior `write_sprint_docs` — one tool call per sprint, natural stop after the last sprint — but the writing tool delegates each sprint to a mid-tier model (Sonnet) so per-sprint output isn't capped by Opus's per-turn budget.
 
-      ## Task
-      Read .ai/sprint_plan.md and .ai/spec_analysis.md. Write a SPRINT-<id>.md file under .ai/sprints/ for each sprint in the plan.
+      Inputs:
+      - `.ai/sprint_plan.md` — merged sprint plan (decomposition output)
+      - `.ai/spec_analysis.md` — upstream spec analysis with FR-numbered requirements
 
-      ## Sprint Doc Format
-      Each file must follow this exact structure:
+      ## Step 1: Read both input files
 
-      ```
-      # Sprint NNN — Title
+      Read `.ai/sprint_plan.md` and `.ai/spec_analysis.md` in full.
 
-      ## Scope
-      What this sprint delivers (2-3 sentences).
+      ## Step 2: Author the project-wide contract → write to `.ai/contract.md`
 
-      ## Non-goals
-      - What is explicitly excluded (reference later sprints where applicable)
+      The contract is the cross-sprint architectural surface — pinned once, read by every per-sprint generation call. Required sections:
 
-      ## Requirements
-      - FR IDs covered, with one-line descriptions from spec analysis
+      ### Stack & runtime
+      - Language(s) and version
+      - Package manager and key third-party libraries (web framework, ORM, test framework, validation, auth) — each with exact import name
+      - Anything explicitly excluded
 
-      ## Dependencies
-      - Sprint numbers that must complete first (or "None" for the first sprint)
+      ### Project-wide conventions
+      - Error handling idiom (exception class hierarchy, error-wrap pattern)
+      - Naming conventions (file/module casing, test file naming)
+      - Test framework + test organization rules
+      - Async vs sync, logging conventions
 
-      ## Expected Artifacts
-      - Specific file paths, modules, configs, or test files this sprint produces
+      ### Sprint file-ownership map
+      For every sprint in the plan, list the files it owns. Note shared files with explicit ownership rules (e.g. "Sprint 001 OWNS models.py; Sprint 002+ APPENDS to it").
 
-      ## DoD
-      - [ ] Checkable item 1
-      - [ ] Checkable item 2
-      (5-10 items per sprint)
+      ### Cross-sprint type/symbol ownership map (load-bearing)
+      For every type, function, or constant that crosses sprint boundaries, declare the owning sprint AND the **exact name and shape** — exact field names with types, exact function signatures including method-vs-free-function and error/exception returns. This pins what later sprints will import. Underspecification here is the failure mode — when the generator doesn't see exact field names it invents and diverges across sprints.
 
-      ## Validation
-      - Build commands, test commands, or manual verification steps
-      ```
+      ### Cross-sprint dependency edges
+      Directed graph of which sprints depend on which.
+
+      ### Mandatory rules across all sprints
+      Project-wide rules: import conventions, no-circular-imports rules, schema conventions, test isolation.
+
+      Save the contract to `.ai/contract.md` using the write tool.
+
+      ## Step 3: For each sprint in the plan, call `write_enriched_sprint`
+
+      The tool reads `.ai/contract.md` automatically — do NOT pass `contract` in the args. Per-call args are minimal:
+      - `path`: `SPRINT-NNN.md` (zero-padded 3-digit ID)
+      - `description`: a per-sprint slice including:
+        - title, scope summary, FRs covered
+        - **File breakdown — categorize EVERY file:**
+          - `New files:` — files this sprint creates that don't exist yet (no prior sprint owns them)
+          - `Modified files:` — files that already exist from prior sprints and this sprint extends (appends models, adds dispatch entries, extends schema). Use the contract's file-ownership map ("Sprint NNN OWNS X; Sprint MMM+ APPENDS to X") to categorize correctly. Misclassifying a modified file as new will cause the local executor to overwrite the prior sprint's contribution.
+        - types/functions this sprint defines (NAMES — fields are pinned in the contract)
+        - cross-sprint dependencies it consumes
+        - exact validation commands
+        - Do NOT redefine field-by-field shape of cross-sprint types here; reference them by name and let the contract carry the truth.
+        - **Infrastructure & setup specifics (load-bearing for sprint 001 and any later sprint that introduces new build/config infrastructure):** include verbatim content for every config file the sprint creates — package manifests (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`), build-system config (`[tool.hatch.build.targets.wheel]`, `tsconfig.json`, `vite.config.ts`, `webpack.config.js`), test-runner config (`pytest.ini` sections, `vitest.config.ts`), linter configs, Dockerfiles, CI files, env templates. Do not hand-wave these — provide the exact text the generator should transcribe. The downstream local generator cannot invent build-system internals (package-discovery rules, wheel paths, dep resolver groups, path mappings); if it has to guess, it'll be wrong in subtle ways that break `uv sync` / `npm install` / `cargo build`. Take the time to nail these down once at sprint 001, and again whenever a later sprint introduces new infrastructure (e.g., a frontend `package.json`, an alembic migration setup, a Docker compose file).
+      - `output_dir`: `.ai/sprints`
+
+      Iterate over every sprint in the plan. Make exactly one `write_enriched_sprint` call per sprint listed. The natural endpoint is when every sprint in `.ai/sprint_plan.md` has a corresponding tool call. After the last sprint, output a single confirmation line and stop.
+
+      ## Tools available
+      - read (for inputs)
+      - write (for `.ai/contract.md` only)
+      - write_enriched_sprint (one call per sprint)
+
+      Do NOT write SPRINT-NNN.md files yourself — only the tool produces those.
 
       ## Rules
-      - CRITICAL: All sprint files MUST be written to .ai/sprints/ — NEVER to the project root
-      - File paths: .ai/sprints/SPRINT-001.md, .ai/sprints/SPRINT-002.md, etc.
-      - IDs MUST be zero-padded 3-digit: 001, 002, ... 016 — NOT 1, 2, ... 16
-      - Every sprint doc must have all sections above
-      - DoD items must be concrete and verifiable, not vague
-      - Expected artifacts should use realistic file paths based on the tech stack from spec analysis
-      - Write ALL sprint docs in one pass for cross-sprint consistency
-      - If .ai/sprints/ already contains files, overwrite them
-      - Do NOT write or modify .ai/ledger.tsv — a separate tool handles that
-      - Every sprint DoD MUST include at least one test item: "Write tests for X" or "Tests for X pass"
-      - DoD items must be concrete and machine-verifiable. Good: "pytest tests/test_capture.py passes". Bad: "Capture works correctly"
-      - The first DoD item for each sprint should be writing a failing test for the sprint's core deliverable
+      - CRITICAL: All sprint files MUST be written to `.ai/sprints/` — NEVER to the project root.
+      - Sprint IDs MUST be zero-padded 3-digit: 001, 002, ... 016 — NOT 1, 2, ... 16.
+      - Do NOT write or modify `.ai/ledger.tsv` — a separate tool handles that.
+      - Every per-sprint description should specify validation commands (exact pytest/build/test invocations) so the generator emits a complete `## Validation` section.
+      - First DoD item for each sprint should be writing a failing test for the sprint's core deliverable — call this out in the per-sprint description.
+
+      ## Tool prerequisites
+      The `write_enriched_sprint` tool requires the `TRACKER_SPRINT_WRITER_MODEL` env var set on the tracker process (e.g. `claude-sonnet-4-6`). If the tool is not registered, the architect cannot complete its job — escalate to the user.
 
   tool write_ledger
     label: "Write Ledger"
@@ -625,7 +651,7 @@ workflow SpecToSprints
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
         base=$(basename "$f")
-        for section in "## Scope" "## Requirements" "## Dependencies" "## Expected Artifacts" "## DoD" "## Validation"; do
+        for section in "## Scope" "## Non-goals" "## Dependencies" "## Interface contract" "## Imports per file" "## Algorithm notes" "## Test plan" "## New files" "## Modified files" "## Expected Artifacts" "## DoD" "## Validation"; do
           if ! grep -q "$section" "$f"; then
             tag=$(printf '%s' "$section" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
             errors="${errors}missing-${tag}-${base} "
