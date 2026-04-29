@@ -1,7 +1,7 @@
 sprint_id	title	status	created_at	updated_at
 001	Core Backend Foundation & Authentication	completed	2026-04-28T22:49:20Z	2026-04-29T00:32:08Z
-002	Locations, Shifts & Individual Registration	in_progress	2026-04-28T22:49:20Z	2026-04-29T00:32:08Z
-003	Groups, Waivers & Orientation	planned	2026-04-28T22:49:20Z	2026-04-28T22:49:20Z
+002	Locations, Shifts & Individual Registration	completed	2026-04-28T22:49:20Z	2026-04-29T00:49:48Z
+003	Groups, Waivers & Orientation	in_progress	2026-04-28T22:49:20Z	2026-04-29T00:49:49Z
 004	Opportunity Discovery & Preference Matching	planned	2026-04-28T22:49:20Z	2026-04-28T22:49:20Z
 005	Messaging Engine & Post-Shift Engagement	planned	2026-04-28T22:49:20Z	2026-04-28T22:49:20Z
 006	QR Check-In & Onsite Intake	skipped	2026-04-28T22:49:20Z	2026-04-28T22:49:20Z
