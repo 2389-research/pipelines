@@ -323,7 +323,9 @@ workflow GreenfieldReview
     L6AgentVerdict -> FidelityParallel  when ctx.outcome = success  label: l6_pass
     L6AgentVerdict -> RemediateL6       when ctx.outcome = fail     label: l6_retry
     L6AgentVerdict -> L6Failed
-    RemediateL6 -> L6ToolCheck   restart: true
+    RemediateL6 -> L6ToolCheck   when ctx.outcome = success  restart: true  label: l6_remediated
+    RemediateL6 -> L6Failed      when ctx.outcome = fail     label: l6_remediation_failed
+    RemediateL6 -> L6Failed
     FidelityParallel -> FidelityValidatorSpecs
     FidelityParallel -> FidelityValidatorTestVectors
     FidelityParallel -> FidelityValidatorAcceptanceCriteria
@@ -337,7 +339,9 @@ workflow GreenfieldReview
     L7AgentVerdict -> WriteReviewSummary  when ctx.outcome = success  label: l7_pass
     L7AgentVerdict -> RemediateL7         when ctx.outcome = fail     label: l7_retry
     L7AgentVerdict -> L7Failed
-    RemediateL7 -> L7ToolCheck   restart: true
+    RemediateL7 -> L7ToolCheck   when ctx.outcome = success  restart: true  label: l7_remediated
+    RemediateL7 -> L7Failed      when ctx.outcome = fail     label: l7_remediation_failed
+    RemediateL7 -> L7Failed
     WriteReviewSummary -> Exit
     L7Failed -> Exit
     L6Failed -> Exit
