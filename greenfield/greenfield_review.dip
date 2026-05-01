@@ -343,5 +343,7 @@ workflow GreenfieldReview
     RemediateL7 -> L7Failed      when ctx.outcome = fail     label: l7_remediation_failed
     RemediateL7 -> L7Failed
     WriteReviewSummary -> Exit
+    L7Failed -> Exit  when ctx.outcome = fail     label: l7_failed_terminal
     L7Failed -> Exit
+    L6Failed -> Exit  when ctx.outcome = fail     label: l6_failed_terminal
     L6Failed -> Exit

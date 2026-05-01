@@ -411,5 +411,6 @@ workflow GreenfieldDiscovery
     CoverageCheck -> L1IncompleteFailed  when ctx.tool_stdout startswith incomplete  label: fan_in_failed
     CoverageCheck -> WriteL1Summary
     CoverageAgent -> WriteL1Summary
+    L1IncompleteFailed -> Exit  when ctx.outcome = fail  label: l1_incomplete_failed_terminal
     L1IncompleteFailed -> Exit
     WriteL1Summary -> Exit

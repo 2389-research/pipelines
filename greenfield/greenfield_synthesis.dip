@@ -453,7 +453,12 @@ workflow GreenfieldSynthesis
     Gate1bAgent -> WriteL2L3Summary            when ctx.outcome = success  label: gate1b_pass
     Gate1bAgent -> JourneyContractRemediation  when ctx.outcome = fail     label: gate1b_retry
     Gate1bAgent -> Gate1Failed
-    Gate1Remediation -> Gate1ToolCheck  restart: true
-    JourneyContractRemediation -> Gate1bCompleteness  restart: true
+    Gate1Remediation -> Gate1ToolCheck  when ctx.outcome = success  restart: true  label: gate1_remediated
+    Gate1Remediation -> Gate1Failed     when ctx.outcome = fail     label: gate1_remediation_failed
+    Gate1Remediation -> Gate1Failed
+    JourneyContractRemediation -> Gate1bCompleteness  when ctx.outcome = success  restart: true  label: gate1b_remediated
+    JourneyContractRemediation -> Gate1Failed         when ctx.outcome = fail     label: gate1b_remediation_failed
+    JourneyContractRemediation -> Gate1Failed
     WriteL2L3Summary -> Exit
+    Gate1Failed -> Exit  when ctx.outcome = fail  label: gate1_failed_terminal
     Gate1Failed -> Exit

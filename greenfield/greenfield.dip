@@ -267,8 +267,13 @@ workflow Greenfield
     CheckReviewOutput -> ReviewFailed         when ctx.tool_stdout startswith review-failed  label: review_failed
     CheckReviewOutput -> ReviewFailed
     FinalReport -> Exit
+    DiscoveryFailed -> Exit   when ctx.outcome = fail  label: discovery_failed_terminal
     DiscoveryFailed -> Exit
+    L1Failed -> Exit          when ctx.outcome = fail  label: l1_failed_terminal
     L1Failed -> Exit
+    SynthesisFailed -> Exit   when ctx.outcome = fail  label: synthesis_failed_terminal
     SynthesisFailed -> Exit
+    ValidationFailed -> Exit  when ctx.outcome = fail  label: validation_failed_terminal
     ValidationFailed -> Exit
+    ReviewFailed -> Exit      when ctx.outcome = fail  label: review_failed_terminal
     ReviewFailed -> Exit

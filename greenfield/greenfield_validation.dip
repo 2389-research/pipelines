@@ -298,7 +298,9 @@ workflow GreenfieldValidation
     Gate2ToolCheck -> Gate2Failed
     Gate2AgentReview -> SanitizationParallel  when ctx.outcome = success  label: gate2_pass
     Gate2AgentReview -> Gate2Remediation       when ctx.outcome = fail     label: gate2_remediate
-    Gate2Remediation -> Gate2ToolCheck  restart: true
+    Gate2Remediation -> Gate2ToolCheck  when ctx.outcome = success  restart: true  label: gate2_remediated
+    Gate2Remediation -> Gate2Failed     when ctx.outcome = fail     label: gate2_remediation_failed
+    Gate2Remediation -> Gate2Failed
     SanitizationParallel -> SanitizerSpecs
     SanitizationParallel -> SanitizerTestVectors
     SanitizationParallel -> SanitizerAcceptanceCriteria
@@ -312,4 +314,5 @@ workflow GreenfieldValidation
     SanitizationToolCheck -> Gate2Failed       when ctx.tool_stdout startswith sanitization-incomplete  label: sanitization_failed
     SanitizationToolCheck -> Gate2Failed
     WriteL4L5Summary -> Exit
+    Gate2Failed -> Exit  when ctx.outcome = fail  label: gate2_failed_terminal
     Gate2Failed -> Exit
