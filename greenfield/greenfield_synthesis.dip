@@ -411,6 +411,7 @@ workflow GreenfieldSynthesis
   agent Gate1Failed
     label: "Gate 1 Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       Gate 1 or Gate 1b has exhausted its retry budget. Read workspace/raw/specs/gate1-findings.md and/or gate1b-findings.md.
       Report what passed and what failed. Write workspace/.synthesis-failed with the failure reason.

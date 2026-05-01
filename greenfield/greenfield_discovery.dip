@@ -342,6 +342,7 @@ workflow GreenfieldDiscovery
   agent L1IncompleteFailed
     label: "L1 Incomplete — Missing Markers"
     max_turns: 2
+    auto_status: true
     prompt:
       One or more L1 intelligence agents completed without writing a completion marker (.completed, .skipped, or .failed).
 

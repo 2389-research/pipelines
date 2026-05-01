@@ -179,6 +179,7 @@ workflow GreenfieldValidation
   agent Gate2Failed
     label: "Gate 2 Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       Gate 2 has exhausted its retry budget. Report what passed and what failed.
       Write workspace/.validation-failed with the failure reason.

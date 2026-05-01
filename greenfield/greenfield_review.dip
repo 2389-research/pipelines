@@ -170,6 +170,7 @@ workflow GreenfieldReview
   agent L6Failed
     label: "L6 Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L6 review has exhausted its retry budget. Report findings.
       Write workspace/.review-failed with the failure reason.
@@ -289,6 +290,7 @@ workflow GreenfieldReview
   agent L7Failed
     label: "L7 Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L7 fidelity validation has exhausted its retry budget. Report findings.
       Write workspace/.review-failed with the failure reason.

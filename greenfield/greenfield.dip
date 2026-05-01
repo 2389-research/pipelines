@@ -203,12 +203,14 @@ workflow Greenfield
   agent DiscoveryFailed
     label: "Discovery Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L1 discovery subgraph failed. Write workspace/.l1-failed with reason. Report.
 
   agent L1Failed
     label: "L1 Output Check Failed"
     max_turns: 2
+    auto_status: true
     prompt:
       L1 output check failed — no intelligence sources produced results.
       Write workspace/.l1-failed with the reason (e.g., "no completed sources" or "l1 output empty").
@@ -217,18 +219,21 @@ workflow Greenfield
   agent SynthesisFailed
     label: "Synthesis Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L2/L3 synthesis failed. Check workspace/.synthesis-failed for details. Report.
 
   agent ValidationFailed
     label: "Validation Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L4/L5 validation failed. Check workspace/.validation-failed for details. Report.
 
   agent ReviewFailed
     label: "Review Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L6/L7 review failed. Check workspace/.review-failed for details. Report.
 
