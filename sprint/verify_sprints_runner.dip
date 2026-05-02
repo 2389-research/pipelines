@@ -6,7 +6,7 @@ workflow VerifySprintsRunner
   exit: Exit
 
   defaults
-    max_restarts: 100
+    max_restarts: 200
     fidelity: summary:medium
 
   tool Start
@@ -14,6 +14,7 @@ workflow VerifySprintsRunner
     timeout: 5s
     command:
       set -eu
+      rm -f .ai/verification-results.txt .ai/verify-queue.txt
       printf 'verification-runner-starting'
 
   agent Exit
@@ -104,7 +105,7 @@ workflow VerifySprintsRunner
       target=$(cat .ai/current_verify_id.txt 2>/dev/null || echo "unknown")
       report=".ai/sprints/SPRINT-${target}-verification.md"
       if [ -f "$report" ]; then
-        verdict=$(grep '^**Verdict:**' "$report" | sed 's/.*\*\*Verdict:\*\* //')
+        verdict=$(grep -F '**Verdict:**' "$report" | sed 's/.*\*\*Verdict:\*\* //')
       else
         verdict="no-report-generated"
       fi
@@ -122,6 +123,7 @@ workflow VerifySprintsRunner
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the final report generator for the sprint verification sweep.
 
@@ -173,7 +175,7 @@ workflow VerifySprintsRunner
     YqMissing -> Exit
 
     FindCompletedSprints -> PickNext  when ctx.tool_stdout startswith found-  label: has_sprints
-    FindCompletedSprints -> Exit      when ctx.tool_stdout = all-verified     label: nothing_to_verify
+    FindCompletedSprints -> PickNext  when ctx.tool_stdout = all-verified     label: nothing_to_verify
     FindCompletedSprints -> Exit      when ctx.outcome = fail                 label: no_ledger
     FindCompletedSprints -> Exit
 

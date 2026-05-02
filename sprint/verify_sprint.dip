@@ -34,6 +34,17 @@ workflow VerifySprint
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
 
+  tool CheckYq
+    label: "Check yq"
+    timeout: 5s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 1
+      fi
+      printf 'yq-ok'
+
   tool ReadSprint
     label: "Read Sprint Data"
     timeout: 15s
@@ -55,7 +66,7 @@ workflow VerifySprint
       sprint_commit=$(yq ".commit // \"\"" "$sf" 2>/dev/null)
       if [ -n "$sprint_commit" ] && [ "$sprint_commit" != "null" ]; then
         printf '\n=== COMMITTED DIFF ===\n'
-        git show --stat "$sprint_commit" 2>/dev/null || printf '(commit %s not found)\n' "$sprint_commit"
+        git show "$sprint_commit" 2>/dev/null || printf '(commit %s not found)\n' "$sprint_commit"
       fi
       printf '\nread-ok'
 
@@ -169,7 +180,7 @@ workflow VerifySprint
         if [ -f go.mod ]; then build_cmd="go build ./..."
         elif [ -f package.json ]; then build_cmd="npm run build"
         elif [ -f Cargo.toml ]; then build_cmd="cargo build"
-        elif [ -f pyproject.toml ]; then build_cmd="uv run python -m py_compile"
+        elif [ -f pyproject.toml ]; then build_cmd="uv run pytest --co -q"
         else
           printf 'no-build-system-detected\nbuild-skip'
           exit 0
@@ -198,7 +209,7 @@ workflow VerifySprint
       while [ "$i" -lt "$touch_count" ]; do
         d=$(yq ".scope_fence.touch_only[$i]" "$sf")
         if [ -d "$d" ]; then
-          dirs="${dirs} ./${d}..."
+          dirs="${dirs} ./${d}/..."
         fi
         i=$((i + 1))
       done
@@ -240,6 +251,33 @@ workflow VerifySprint
             printf '\nregressions-failed'
           fi
           ;;
+        python)
+          if uv run pytest $dirs > /tmp/verify-regression.log 2>&1; then
+            printf 'regressions-ok'
+          else
+            printf 'REGRESSION FAILURES:\n'
+            cat /tmp/verify-regression.log
+            printf '\nregressions-failed'
+          fi
+          ;;
+        node|javascript|typescript)
+          if npx jest $dirs > /tmp/verify-regression.log 2>&1; then
+            printf 'regressions-ok'
+          else
+            printf 'REGRESSION FAILURES:\n'
+            cat /tmp/verify-regression.log
+            printf '\nregressions-failed'
+          fi
+          ;;
+        rust)
+          if cargo test $dirs > /tmp/verify-regression.log 2>&1; then
+            printf 'regressions-ok'
+          else
+            printf 'REGRESSION FAILURES:\n'
+            cat /tmp/verify-regression.log
+            printf '\nregressions-failed'
+          fi
+          ;;
         *)
           printf 'unsupported-lang-%s\nregressions-skip' "$lang"
           ;;
@@ -250,7 +288,6 @@ workflow VerifySprint
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
-    auto_status: true
     prompt:
       You are the semantic verifier for a completed sprint. Your job is to check whether the implementation genuinely satisfies the Definition of Done and matches the sprint narrative spec.
 
@@ -460,11 +497,16 @@ workflow VerifySprint
       End with: STATUS: success (even when creating remediation sprints — the verification pipeline itself succeeded)
 
   edges
-    Start -> ReadSprint                        when ctx.outcome = success   label: start_ok
+    Start -> CheckYq                           when ctx.outcome = success   label: start_ok
     Start -> Exit                              when ctx.outcome = fail      label: no_sprint
     Start -> Exit
 
+    CheckYq -> ReadSprint                      when ctx.outcome = success   label: yq_ok
+    CheckYq -> Exit                            when ctx.outcome = fail      label: yq_missing
+    CheckYq -> Exit
+
     ReadSprint -> CheckArtifacts
+    ReadSprint -> Exit                         when ctx.outcome = fail      label: read_failed
 
     CheckArtifacts -> RunValidation
     RunValidation -> CheckBuild
