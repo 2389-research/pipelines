@@ -59,6 +59,8 @@ workflow GreenfieldSynthesis
 
       Every claim needs provenance: <!-- cite: source=synthesis, ref=<evidence-path>, confidence=<level>, agent=feature-discoverer -->
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent ArchitectureAnalyst
     label: "Architecture Analyst"
     model: claude-opus-4-6
@@ -77,6 +79,8 @@ workflow GreenfieldSynthesis
       5. Write to workspace/raw/synthesis/architecture/
 
       Every claim needs provenance.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent ApiExtractor
     label: "API Extractor"
@@ -97,6 +101,8 @@ workflow GreenfieldSynthesis
 
       Every claim needs provenance.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent ModuleMapper
     label: "Module Mapper"
     model: claude-opus-4-6
@@ -113,6 +119,8 @@ workflow GreenfieldSynthesis
       3. Write module map to workspace/raw/synthesis/behavioral-summaries/
 
       Every claim needs provenance.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   fan_in SynthesisJoin <- FeatureDiscoverer, ArchitectureAnalyst, ApiExtractor, ModuleMapper
 
@@ -141,6 +149,8 @@ workflow GreenfieldSynthesis
       This module map is the PRIMARY input for L3 deep spec agents. It must be comprehensive.
 
       Every claim needs provenance: <!-- cite: source=synthesis, ref=<L2-evidence-path>, confidence=<level>, agent=synthesizer -->
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   parallel DeepSpecsParallel -> DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
 
@@ -171,6 +181,8 @@ workflow GreenfieldSynthesis
 
       Every claim needs provenance: <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=deep-dive-analyzer -->
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent BehaviorDocumenter
     label: "Behavior Documenter"
     model: claude-opus-4-6
@@ -194,6 +206,8 @@ workflow GreenfieldSynthesis
       ## Provenance
       Every behavioral claim MUST have a provenance citation:
       <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=behavior-documenter -->
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent UserJourneyAnalyzer
     label: "User Journey Analyzer"
@@ -221,6 +235,8 @@ workflow GreenfieldSynthesis
       Every behavioral claim MUST have a provenance citation:
       <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=user-journey-analyzer -->
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent ContractExtractor
     label: "Contract Extractor"
     model: claude-opus-4-6
@@ -247,6 +263,8 @@ workflow GreenfieldSynthesis
       Every behavioral claim MUST have a provenance citation:
       <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=contract-extractor -->
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   fan_in DeepSpecsJoin <- DeepDiveAnalyzer, BehaviorDocumenter, UserJourneyAnalyzer, ContractExtractor
 
   agent Gate1Remediation
@@ -270,6 +288,8 @@ workflow GreenfieldSynthesis
       Fix ONLY the issues identified in gate1-findings.md. Rewrite the affected spec files in workspace/raw/specs/modules/. Do NOT re-run full L3 analysis — make targeted fixes.
 
       Every claim needs provenance: <!-- cite: source=synthesis, ref=<path>, confidence=<level>, agent=gate1-remediation -->
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   tool Gate1ToolCheck
     label: "Gate 1 Tool Check"
@@ -322,6 +342,8 @@ workflow GreenfieldSynthesis
       Write findings to workspace/raw/specs/gate1-findings.md.
 
       STATUS: success if specs are sound. STATUS: fail if material issues found.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   tool Gate1bCompleteness
     label: "Gate 1b Completeness Check"
@@ -381,6 +403,8 @@ workflow GreenfieldSynthesis
 
       STATUS: success if coverage is adequate. STATUS: fail if material gaps exist.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent JourneyContractRemediation
     label: "Journey/Contract Remediation"
     model: claude-opus-4-6
@@ -395,6 +419,8 @@ workflow GreenfieldSynthesis
       Write the missing journey/contract specs to fill the gaps. Do NOT re-run all L3 analysis — only fill the specific gaps identified.
 
       Write new specs to workspace/raw/specs/journeys/ or workspace/raw/specs/contracts/ as appropriate.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   tool WriteL2L3Summary
     label: "Write L2/L3 Summary"

@@ -97,6 +97,8 @@ workflow GreenfieldDiscovery
       On success: write workspace/raw/source/.completed with: "files: N, chunks: M"
       On failure: write workspace/raw/source/.failed with the error description
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent DocResearcher
     label: "Documentation Researcher"
     model: gemini-3-flash-preview
@@ -122,6 +124,8 @@ workflow GreenfieldDiscovery
       ## Completion
       On success: write workspace/public/docs/.completed with file count
       On failure: write workspace/public/docs/.failed with error
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent SdkAnalyzer
     label: "SDK Analyzer"
@@ -149,6 +153,8 @@ workflow GreenfieldDiscovery
       On success: write workspace/public/ecosystem/.completed
       On failure: write workspace/public/ecosystem/.failed
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent CommunityAnalyst
     label: "Community Intelligence Analyst"
     model: gemini-3-flash-preview
@@ -174,6 +180,8 @@ workflow GreenfieldDiscovery
       ## Completion
       On success: write workspace/public/community/.completed
       On failure: write workspace/public/community/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent RuntimeObserver
     label: "Runtime Observer"
@@ -205,6 +213,8 @@ workflow GreenfieldDiscovery
       On success: write workspace/raw/runtime/.completed
       On failure: write workspace/raw/runtime/.failed
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent BinaryAnalyzer
     label: "Binary Analyzer"
     model: gemini-3-flash-preview
@@ -230,6 +240,8 @@ workflow GreenfieldDiscovery
       ## Completion
       On success: write workspace/raw/binary/.completed
       On failure: write workspace/raw/binary/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent GitArchaeologist
     label: "Git Archaeologist"
@@ -258,6 +270,8 @@ workflow GreenfieldDiscovery
       On success: write workspace/raw/project-history/.completed
       On failure: write workspace/raw/project-history/.failed
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent TestSuiteAnalyzer
     label: "Test Suite Analyzer"
     model: gemini-3-flash-preview
@@ -284,6 +298,8 @@ workflow GreenfieldDiscovery
       ## Completion
       On success: write workspace/raw/test-evidence/.completed
       On failure: write workspace/raw/test-evidence/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   fan_in IntelligenceJoin <- SourceAnalyzer, DocResearcher, SdkAnalyzer, CommunityAnalyst, RuntimeObserver, BinaryAnalyzer, GitArchaeologist, TestSuiteAnalyzer
 
@@ -338,6 +354,8 @@ workflow GreenfieldDiscovery
       4. Write a coverage assessment to workspace/raw/coverage-assessment.md
 
       HARD CONSTRAINT: If evidence is truly insufficient (binary-only with no decompiler, no docs, no community presence), report this clearly. Do not fabricate evidence.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent L1IncompleteFailed
     label: "L1 Incomplete — Missing Markers"

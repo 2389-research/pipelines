@@ -38,6 +38,14 @@ workflow Greenfield
       mkdir -p workspace/raw/specs/modules workspace/raw/specs/journeys workspace/raw/specs/contracts workspace/raw/specs/test-vectors workspace/raw/specs/validation
       mkdir -p workspace/output/specs workspace/output/test-vectors workspace/output/validation/acceptance-criteria workspace/output/contracts
       mkdir -p workspace/provenance/sessions workspace/review
+      # Ensure pipeline artifacts are gitignored
+      for entry in workspace .tracker; do
+        if [ -f .gitignore ]; then
+          grep -qxF "$entry" .gitignore || printf '%s\n' "$entry" >> .gitignore
+        else
+          printf '%s\n' "$entry" >> .gitignore
+        fi
+      done
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       printf '{"target": ".", "started_at": "%s", "excluded_sources": [], "pipeline_version": "1.0"}\n' "$now" > workspace/workspace.json
       printf 'workspace-ready'

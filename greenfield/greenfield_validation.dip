@@ -66,6 +66,8 @@ workflow GreenfieldValidation
 
       Write to workspace/raw/specs/test-vectors/
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent TestGenerator
     label: "Test Spec Generator"
     model: gpt-5.4
@@ -79,6 +81,8 @@ workflow GreenfieldValidation
       Generate runnable test spec outlines organized by module. These are skeleton test files an implementation team can flesh out.
 
       Write to workspace/raw/specs/test-vectors/test-specs/
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent AcceptanceCriteriaWriter
     label: "Acceptance Criteria Writer"
@@ -102,6 +106,8 @@ workflow GreenfieldValidation
 
       Write to workspace/raw/specs/validation/
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   fan_in ValidationJoin <- TestVectorGenerator, TestGenerator, AcceptanceCriteriaWriter
 
   agent Gate2Remediation
@@ -118,6 +124,8 @@ workflow GreenfieldValidation
       Read the behavioral specs in workspace/raw/specs/modules/ and workspace/raw/specs/journeys/ for context.
 
       Fix ONLY the issues identified in gate2-findings.md. Rewrite affected files in workspace/raw/specs/test-vectors/ and workspace/raw/specs/validation/. Do NOT re-run full L4 generation — make targeted fixes.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   tool Gate2ToolCheck
     label: "Gate 2 Tool Check"
@@ -176,6 +184,8 @@ workflow GreenfieldValidation
 
       STATUS: success if quality is adequate. STATUS: fail if material issues found.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent Gate2Failed
     label: "Gate 2 Failed"
     max_turns: 1
@@ -205,6 +215,8 @@ workflow GreenfieldValidation
 
       You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent SanitizerTestVectors
     label: "Sanitizer — Test Vectors"
     model: claude-opus-4-6
@@ -218,6 +230,8 @@ workflow GreenfieldValidation
 
       Same PRESERVE/REMOVE rules as spec sanitization (including removal of internal data structure names). Test vectors should describe behavior (Given/When/Then) without referencing internal code.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent SanitizerAcceptanceCriteria
     label: "Sanitizer — Acceptance Criteria"
     model: claude-opus-4-6
@@ -230,6 +244,8 @@ workflow GreenfieldValidation
       Write sanitized versions to workspace/output/validation/acceptance-criteria/.
 
       Same PRESERVE/REMOVE rules (including removal of internal data structure names). AC IDs and spec links must be preserved.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent SanitizerContracts
     label: "Sanitizer — Contracts"
@@ -248,6 +264,8 @@ workflow GreenfieldValidation
       Provenance citations survive — but replace raw source paths with workspace-relative refs.
 
       You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   fan_in SanitizationJoin <- SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria, SanitizerContracts
 

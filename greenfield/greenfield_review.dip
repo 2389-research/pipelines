@@ -66,6 +66,8 @@ workflow GreenfieldReview
 
       SCOPE BOUNDARY: Focus on structural/organizational leakage ONLY. Do NOT flag individual identifiers or variable names — that's the Content Contamination Reviewer's job. Do NOT assess coverage gaps — that's the Behavioral Completeness Reviewer's job.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent ContentContaminationReviewer
     label: "Content Contamination Reviewer"
     model: gpt-5.4
@@ -77,6 +79,8 @@ workflow GreenfieldReview
       Write findings to workspace/review/l6-content-contamination.md using the same format.
 
       SCOPE BOUNDARY: Focus on individual identifiers, paths, and symbols ONLY. Do NOT flag structural/organizational patterns — that's the Structural Leakage Reviewer's job. Do NOT assess coverage gaps — that's the Behavioral Completeness Reviewer's job.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent BehavioralCompletenessReviewer
     label: "Behavioral Completeness Reviewer"
@@ -92,6 +96,8 @@ workflow GreenfieldReview
 
       SCOPE BOUNDARY: Focus on coverage and completeness ONLY. Do NOT flag contamination — that's the job of the Structural Leakage and Content Contamination Reviewers.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent DeepReadAuditor
     label: "Deep Read Auditor"
     model: gpt-5.4
@@ -105,6 +111,8 @@ workflow GreenfieldReview
       Do NOT duplicate findings from the other three L6 reviewers. If their output files exist (workspace/review/l6-structural-leakage.md, l6-content-contamination.md, l6-behavioral-completeness.md), read them and skip anything already flagged. These files may not yet exist if you run concurrently — in that case, focus on your own scope (subtle/implicit leakage) and accept that some overlap may occur.
 
       Write findings to workspace/review/l6-deep-read-audit.md.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   fan_in ReviewJoin <- StructuralLeakageReviewer, ContentContaminationReviewer, BehavioralCompletenessReviewer, DeepReadAuditor
 
@@ -153,6 +161,8 @@ workflow GreenfieldReview
       If only medium/low findings, use judgment — medium findings may be acceptable with notes.
       If no findings, STATUS: success.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent RemediateL6
     label: "Remediate L6 Findings"
     model: claude-opus-4-6
@@ -166,6 +176,8 @@ workflow GreenfieldReview
       Do not reintroduce contamination while fixing.
 
       After fixing all issues, rewrite each workspace/review/l6-*.md file to remove the findings you resolved. Keep only unresolved findings (if any). This ensures the L6 tool re-check sees accurate counts on retry.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent L6Failed
     label: "L6 Failed"
@@ -196,6 +208,8 @@ workflow GreenfieldReview
       **Severity:** critical | notable | minor
       **Recommendation:** <how to restore without reintroducing contamination>
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent FidelityValidatorTestVectors
     label: "Fidelity Validator — Test Vectors"
     model: claude-opus-4-6
@@ -207,6 +221,8 @@ workflow GreenfieldReview
       Flag where test assertions were weakened or test scenarios were lost.
 
       Write findings to workspace/review/l7-fidelity-test-vectors.md using the same format.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent FidelityValidatorAcceptanceCriteria
     label: "Fidelity Validator — Acceptance Criteria"
@@ -225,6 +241,8 @@ workflow GreenfieldReview
       **Lost detail:** <description>
       **Severity:** critical | notable | minor
       **Recommendation:** <how to restore without reintroducing contamination>
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   fan_in FidelityJoin <- FidelityValidatorSpecs, FidelityValidatorTestVectors, FidelityValidatorAcceptanceCriteria
 
@@ -273,6 +291,8 @@ workflow GreenfieldReview
       If only notable/minor flags, use judgment.
       If no flags, STATUS: success.
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent RemediateL7
     label: "Remediate L7 Findings"
     model: claude-opus-4-6
@@ -286,6 +306,8 @@ workflow GreenfieldReview
       This is the hardest job in the pipeline — balance fidelity against cleanliness.
 
       After fixing all issues, rewrite each workspace/review/l7-*.md file to remove the fidelity flags you resolved. Keep only unresolved flags (if any). This ensures the L7 tool re-check sees accurate counts on retry.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent L7Failed
     label: "L7 Failed"
