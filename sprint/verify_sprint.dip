@@ -1,0 +1,246 @@
+# ABOUTME: Single-sprint verification pipeline — checks a completed sprint still satisfies its contract.
+# ABOUTME: Runs mechanical checks (artifacts, validation, build, regressions) then Opus semantic review, generates remediation sprints on failure.
+workflow VerifySprint
+  goal: "Verify a completed sprint's implementation still matches its YAML contract and markdown spec. Produce a verification report. Generate remediation sprints if problems are found."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 5
+    fidelity: summary:medium
+
+  tool Start
+    label: "Start Verification"
+    timeout: 5s
+    command:
+      set -eu
+      if [ ! -f .ai/current_verify_id.txt ]; then
+        printf 'no-verify-id'
+        exit 1
+      fi
+      target=$(cat .ai/current_verify_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sf" ]; then
+        printf 'sprint-not-found-%s' "$target"
+        exit 1
+      fi
+      printf 'verify-%s' "$target"
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      Sprint verification pipeline complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+
+  tool ReadSprint
+    label: "Read Sprint Data"
+    timeout: 15s
+    command:
+      set -eu
+      target=$(cat .ai/current_verify_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      md=".ai/sprints/SPRINT-${target}.md"
+      printf '=== SPRINT YAML ===\n'
+      cat "$sf"
+      printf '\n=== SPRINT NARRATIVE ===\n'
+      if [ -f "$md" ]; then
+        cat "$md"
+      else
+        printf '(no narrative file found)\n'
+      fi
+      # Find the commit hash for this sprint
+      commit=$(yq '.history.attempts[] | select(.outcome == "success") | .run_id' "$sf" 2>/dev/null | tail -1)
+      sprint_commit=$(yq ".commit // \"\"" "$sf" 2>/dev/null)
+      if [ -n "$sprint_commit" ] && [ "$sprint_commit" != "null" ]; then
+        printf '\n=== COMMITTED DIFF ===\n'
+        git show --stat "$sprint_commit" 2>/dev/null || printf '(commit %s not found)\n' "$sprint_commit"
+      fi
+      printf '\nread-ok'
+
+  tool CheckArtifacts
+    label: "Check Artifacts Exist"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_verify_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      creates_count=$(yq '.artifacts.creates | length' "$sf" 2>/dev/null || echo 0)
+      missing=""
+      present=""
+      i=0
+      while [ "$i" -lt "$creates_count" ]; do
+        path=$(yq ".artifacts.creates[$i].path" "$sf")
+        if [ -f "$path" ]; then
+          present="${present}\nPRESENT: ${path}"
+        else
+          missing="${missing}\nMISSING: ${path}"
+        fi
+        i=$((i + 1))
+      done
+      printf 'ARTIFACT_CHECK_TOTAL: %s' "$creates_count"
+      if [ -n "$present" ]; then
+        printf '%b' "$present"
+      fi
+      if [ -n "$missing" ]; then
+        printf '%b' "$missing"
+        printf '\nartifacts-missing'
+        exit 0
+      fi
+      printf '\nartifacts-ok'
+
+  tool RunValidation
+    label: "Run Validation Commands"
+    timeout: 300s
+    command:
+      set -eu
+      target=$(cat .ai/current_verify_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if ! yq -e '.validation.commands' "$sf" >/dev/null 2>&1; then
+        printf 'no-validation-commands\nvalidation-skip'
+        exit 0
+      fi
+      count=$(yq '.validation.commands | length' "$sf")
+      failures=0
+      i=0
+      while [ "$i" -lt "$count" ]; do
+        cmd_field=$(yq ".validation.commands[$i].cmd // \"\"" "$sf" 2>/dev/null)
+        if [ -n "$cmd_field" ] && [ "$cmd_field" != "null" ]; then
+          cmd="$cmd_field"
+          expect=$(yq ".validation.commands[$i].expect // \"exit_0\"" "$sf")
+        else
+          cmd=$(yq ".validation.commands[$i]" "$sf")
+          expect="exit_0"
+        fi
+        printf '=== Validation %s/%s ===\n' "$((i+1))" "$count"
+        printf 'cmd: %s\n' "$cmd"
+        if [ "$expect" = "exit_0" ]; then
+          if sh -c "$cmd" > /tmp/verify-validate.log 2>&1; then
+            printf 'RESULT: PASS\n'
+          else
+            printf 'RESULT: FAIL\n'
+            cat /tmp/verify-validate.log
+            failures=$((failures + 1))
+          fi
+        elif printf '%s' "$expect" | grep -qE '^coverage >= [0-9]+%$'; then
+          threshold=$(printf '%s' "$expect" | sed 's/coverage >= //;s/%//')
+          sh -c "$cmd" > /tmp/verify-validate.log 2>&1 || true
+          actual=$(grep -oE 'coverage: [0-9]+\.[0-9]+%' /tmp/verify-validate.log | tail -1 | sed 's/coverage: //;s/%//')
+          if [ -z "$actual" ]; then
+            printf 'RESULT: FAIL (could not parse coverage)\n'
+            failures=$((failures + 1))
+          else
+            passes=$(awk "BEGIN {print ($actual >= $threshold) ? 1 : 0}")
+            if [ "$passes" -eq 1 ]; then
+              printf 'RESULT: PASS (coverage %s%% >= %s%%)\n' "$actual" "$threshold"
+            else
+              printf 'RESULT: FAIL (coverage %s%% < %s%%)\n' "$actual" "$threshold"
+              failures=$((failures + 1))
+            fi
+          fi
+        else
+          sh -c "$cmd" > /tmp/verify-validate.log 2>&1 || true
+          if grep -q "$expect" /tmp/verify-validate.log; then
+            printf 'RESULT: PASS\n'
+          else
+            printf 'RESULT: FAIL (expected output containing: %s)\n' "$expect"
+            cat /tmp/verify-validate.log
+            failures=$((failures + 1))
+          fi
+        fi
+        i=$((i + 1))
+      done
+      if [ "$failures" -gt 0 ]; then
+        printf 'validation-failed-%s-of-%s' "$failures" "$count"
+      else
+        printf 'validation-ok'
+      fi
+
+  tool CheckBuild
+    label: "Check Build"
+    timeout: 120s
+    command:
+      set -eu
+      target=$(cat .ai/current_verify_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      build_cmd=$(yq '.stack.build // ""' "$sf" 2>/dev/null)
+      if [ -z "$build_cmd" ] || [ "$build_cmd" = "null" ]; then
+        if [ -f go.mod ]; then build_cmd="go build ./..."
+        elif [ -f package.json ]; then build_cmd="npm run build"
+        elif [ -f Cargo.toml ]; then build_cmd="cargo build"
+        elif [ -f pyproject.toml ]; then build_cmd="uv run python -m py_compile"
+        else
+          printf 'no-build-system-detected\nbuild-skip'
+          exit 0
+        fi
+      fi
+      printf 'build-cmd: %s\n' "$build_cmd"
+      if sh -c "$build_cmd" > /tmp/verify-build.log 2>&1; then
+        printf 'build-ok'
+      else
+        printf 'BUILD FAILED:\n'
+        cat /tmp/verify-build.log
+        printf '\nbuild-failed'
+      fi
+
+  tool RunRegressions
+    label: "Run Regression Tests"
+    timeout: 300s
+    command:
+      set -eu
+      target=$(cat .ai/current_verify_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      # Collect directories to test from touch_only and artifact paths
+      dirs=""
+      touch_count=$(yq '.scope_fence.touch_only | length' "$sf" 2>/dev/null || echo 0)
+      i=0
+      while [ "$i" -lt "$touch_count" ]; do
+        d=$(yq ".scope_fence.touch_only[$i]" "$sf")
+        if [ -d "$d" ]; then
+          dirs="${dirs} ./${d}..."
+        fi
+        i=$((i + 1))
+      done
+      creates_count=$(yq '.artifacts.creates | length' "$sf" 2>/dev/null || echo 0)
+      i=0
+      while [ "$i" -lt "$creates_count" ]; do
+        p=$(yq ".artifacts.creates[$i].path" "$sf")
+        d=$(dirname "$p")
+        if [ -d "$d" ]; then
+          dirs="${dirs} ./${d}/..."
+        fi
+        i=$((i + 1))
+      done
+      modifies_count=$(yq '.artifacts.modifies | length' "$sf" 2>/dev/null || echo 0)
+      i=0
+      while [ "$i" -lt "$modifies_count" ]; do
+        p=$(yq ".artifacts.modifies[$i].path" "$sf")
+        d=$(dirname "$p")
+        if [ -d "$d" ]; then
+          dirs="${dirs} ./${d}/..."
+        fi
+        i=$((i + 1))
+      done
+      if [ -z "$dirs" ]; then
+        printf 'no-regression-scope\nregressions-skip'
+        exit 0
+      fi
+      # Deduplicate
+      dirs=$(printf '%s\n' $dirs | sort -u | tr '\n' ' ')
+      printf 'regression-scope: %s\n' "$dirs"
+      lang=$(yq '.stack.lang // ""' "$sf" 2>/dev/null)
+      case "$lang" in
+        go)
+          if go test $dirs > /tmp/verify-regression.log 2>&1; then
+            printf 'regressions-ok'
+          else
+            printf 'REGRESSION FAILURES:\n'
+            cat /tmp/verify-regression.log
+            printf '\nregressions-failed'
+          fi
+          ;;
+        *)
+          printf 'unsupported-lang-%s\nregressions-skip' "$lang"
+          ;;
+      esac
