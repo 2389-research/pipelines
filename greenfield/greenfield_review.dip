@@ -51,6 +51,7 @@ workflow GreenfieldReview
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Structural Leakage Reviewer. Look for code structure bleeding through in workspace/output/.
 
@@ -73,6 +74,7 @@ workflow GreenfieldReview
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Content Contamination Reviewer. Look for variable names, file paths, identifiers, and minified symbols in workspace/output/.
 
@@ -87,6 +89,7 @@ workflow GreenfieldReview
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Behavioral Completeness Reviewer. Compare workspace/output/ spec count and coverage against workspace/raw/specs/.
 
@@ -103,6 +106,7 @@ workflow GreenfieldReview
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Deep Read Auditor. Line-by-line audit of workspace/output/specs/ for subtle contamination that pattern-based reviewers miss.
 
@@ -195,6 +199,7 @@ workflow GreenfieldReview
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Fidelity Validator for specs. Compare workspace/raw/specs/ against workspace/output/specs/.
 
@@ -215,6 +220,7 @@ workflow GreenfieldReview
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Fidelity Validator for test vectors. Compare workspace/raw/specs/test-vectors/ against workspace/output/test-vectors/.
 
@@ -229,6 +235,7 @@ workflow GreenfieldReview
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Fidelity Validator for acceptance criteria. Compare workspace/raw/specs/validation/ against workspace/output/validation/acceptance-criteria/.
 

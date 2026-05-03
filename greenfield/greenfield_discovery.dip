@@ -73,6 +73,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Source Code Analyzer for Greenfield reverse engineering.
 
@@ -104,6 +105,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Documentation Researcher for Greenfield reverse engineering.
 
@@ -132,6 +134,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the SDK Analyzer for Greenfield reverse engineering.
 
@@ -160,6 +163,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Community Intelligence Analyst for Greenfield reverse engineering.
 
@@ -188,6 +192,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Runtime Observer for Greenfield reverse engineering.
 
@@ -220,6 +225,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Binary Analyzer for Greenfield reverse engineering.
 
@@ -248,6 +254,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Git Archaeologist for Greenfield reverse engineering.
 
@@ -277,6 +284,7 @@ workflow GreenfieldDiscovery
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Test Suite Analyzer for Greenfield reverse engineering.
 
@@ -341,6 +349,7 @@ workflow GreenfieldDiscovery
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Coverage Review Agent. You are invoked because fewer than 2 non-community intelligence sources produced results.
 

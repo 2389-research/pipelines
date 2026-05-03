@@ -46,6 +46,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Feature Discoverer for Greenfield reverse engineering.
 
@@ -66,6 +67,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Architecture Analyst for Greenfield reverse engineering.
 
@@ -87,6 +89,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the API Extractor for Greenfield reverse engineering.
 
@@ -108,6 +111,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Module Mapper for Greenfield reverse engineering.
 
@@ -129,6 +133,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Synthesizer for Greenfield reverse engineering.
 
@@ -159,6 +164,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Deep Dive Analyzer for Greenfield reverse engineering.
 
@@ -188,6 +194,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Behavior Documenter for Greenfield reverse engineering.
 
@@ -214,6 +221,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the User Journey Analyzer for Greenfield reverse engineering.
 
@@ -242,6 +250,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Contract Extractor for Greenfield reverse engineering.
 

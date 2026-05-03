@@ -50,6 +50,7 @@ workflow GreenfieldValidation
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Test Vector Generator for Greenfield reverse engineering.
 
@@ -73,6 +74,7 @@ workflow GreenfieldValidation
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Test Spec Generator for Greenfield reverse engineering.
 
@@ -89,6 +91,7 @@ workflow GreenfieldValidation
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Acceptance Criteria Writer for Greenfield reverse engineering.
 
@@ -115,6 +118,7 @@ workflow GreenfieldValidation
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Gate 2 Remediation agent. Gate 2 found quality issues with test vectors and acceptance criteria.
 
@@ -202,6 +206,7 @@ workflow GreenfieldValidation
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are a Sanitizer worker for Greenfield. Rewrite raw behavioral specs to output form.
 
@@ -222,6 +227,7 @@ workflow GreenfieldValidation
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are a Sanitizer worker for Greenfield. Sanitize test vectors.
 
@@ -237,6 +243,7 @@ workflow GreenfieldValidation
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are a Sanitizer worker for Greenfield. Sanitize acceptance criteria.
 
@@ -252,6 +259,7 @@ workflow GreenfieldValidation
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are a Sanitizer worker for Greenfield. Sanitize dependency contracts and protocol specs.
 

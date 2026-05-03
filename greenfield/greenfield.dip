@@ -93,6 +93,7 @@ workflow Greenfield
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    auto_status: true
     prompt:
       You are the Discovery Review agent. The automated target discovery found fewer than 2 non-community source types.
 
@@ -195,6 +196,7 @@ workflow Greenfield
     provider: anthropic
     reasoning_effort: high
     max_turns: 3
+    auto_status: true
     prompt:
       You are the Final Report agent. The Greenfield pipeline has completed all 7 layers.
 
@@ -279,6 +281,8 @@ workflow Greenfield
     CheckReviewOutput -> FinalReport          when ctx.tool_stdout startswith review-ok      label: review_ok
     CheckReviewOutput -> ReviewFailed         when ctx.tool_stdout startswith review-failed  label: review_failed
     CheckReviewOutput -> ReviewFailed
+    FinalReport -> Exit  when ctx.outcome = success  label: report_done
+    FinalReport -> Exit  when ctx.outcome = fail     label: report_failed
     FinalReport -> Exit
     DiscoveryFailed -> Exit   when ctx.outcome = fail  label: discovery_failed_terminal
     DiscoveryFailed -> Exit
