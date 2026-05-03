@@ -38,8 +38,38 @@ workflow Greenfield
       mkdir -p workspace/raw/specs/modules workspace/raw/specs/journeys workspace/raw/specs/contracts workspace/raw/specs/test-vectors workspace/raw/specs/validation
       mkdir -p workspace/output/specs workspace/output/test-vectors workspace/output/validation/acceptance-criteria workspace/output/contracts
       mkdir -p workspace/provenance/sessions workspace/review
-      # Ensure pipeline artifacts are gitignored
-      for entry in workspace .tracker; do
+      # Ensure pipeline artifacts are gitignored — workspace, tracker state,
+      # and all per-node directories that tracker creates at repo root.
+      for entry in workspace .tracker \
+        Start Exit SetupWorkspace DiscoverTarget DiscoverTargetReview FinalReport \
+        DiscoveryFailed L1Failed SynthesisFailed ValidationFailed ReviewFailed \
+        CheckL1Output CheckSynthesisOutput CheckValidationOutput CheckReviewOutput \
+        L1_Discovery L2L3_Synthesis L4L5_Validation L6L7_Review \
+        ReadManifest WriteSkipMarkers IntelligenceParallel IntelligenceJoin \
+        SourceAnalyzer DocResearcher SdkAnalyzer CommunityAnalyst \
+        RuntimeObserver BinaryAnalyzer GitArchaeologist TestSuiteAnalyzer \
+        CoverageCheck CoverageAgent L1IncompleteFailed WriteL1Summary \
+        ReadL1Summary SynthesisParallel SynthesisJoin \
+        FeatureDiscoverer ArchitectureAnalyst ApiExtractor ModuleMapper \
+        Synthesizer DeepSpecsParallel DeepSpecsJoin \
+        DeepDiveAnalyzer BehaviorDocumenter UserJourneyAnalyzer ContractExtractor \
+        Gate1ToolCheck Gate1AgentReview Gate1Remediation \
+        Gate1bCompleteness Gate1bAgent JourneyContractRemediation \
+        WriteL2L3Summary Gate1Failed \
+        ReadSpecs ValidationParallel ValidationJoin \
+        TestVectorGenerator TestGenerator AcceptanceCriteriaWriter \
+        Gate2ToolCheck Gate2AgentReview Gate2Remediation Gate2Failed \
+        SanitizationParallel SanitizationJoin SanitizationToolCheck \
+        SanitizerSpecs SanitizerTestVectors SanitizerAcceptanceCriteria SanitizerContracts \
+        WriteL4L5Summary \
+        ReadSanitizedOutput ReviewParallel ReviewJoin \
+        StructuralLeakageReviewer ContentContaminationReviewer \
+        BehavioralCompletenessReviewer DeepReadAuditor \
+        L6ToolCheck L6AgentVerdict RemediateL6 L6Failed \
+        FidelityParallel FidelityJoin \
+        FidelityValidatorSpecs FidelityValidatorTestVectors FidelityValidatorAcceptanceCriteria \
+        L7ToolCheck L7AgentVerdict RemediateL7 L7Failed \
+        WriteReviewSummary; do
         if [ -f .gitignore ]; then
           grep -qxF "$entry" .gitignore || printf '%s\n' "$entry" >> .gitignore
         else
