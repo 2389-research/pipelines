@@ -172,9 +172,14 @@ workflow Greenfield
         printf 'synthesis-failed-%s' "$(cat workspace/.synthesis-failed)"
         exit 0
       fi
+      # Check canonical path first, then known LLM drift path
       if [ ! -f "workspace/raw/synthesis/module-map.md" ]; then
-        printf 'synthesis-empty'
-        exit 0
+        if [ -f "workspace/raw/synthesis/behavioral-summaries/module-map.md" ]; then
+          mv "workspace/raw/synthesis/behavioral-summaries/module-map.md" "workspace/raw/synthesis/module-map.md"
+        else
+          printf 'synthesis-empty'
+          exit 0
+        fi
       fi
       specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
       if [ "$specs" -eq 0 ]; then

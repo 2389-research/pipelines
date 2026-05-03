@@ -147,7 +147,7 @@ workflow GreenfieldSynthesis
       1. Reconcile overlapping findings from the 4 L2 agents
       2. Resolve any contradictions (cite which evidence is stronger)
       3. Produce a single coherent module map with behavioral domains, interfaces, and dependencies
-      4. Write to workspace/raw/synthesis/module-map.md
+      4. Write to workspace/raw/synthesis/module-map.md (EXACT path — not a subdirectory, not behavioral-summaries/)
 
       FORMAT CONSTRAINT: Use exactly one `## ModuleName` heading per behavioral module. Do not use ## for non-module sections. Downstream gates count ## headings to verify spec completeness.
 
