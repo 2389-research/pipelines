@@ -28,14 +28,24 @@ workflow Greenfield
     timeout: 30s
     command:
       set -eu
+      rm -f workspace/.l1-failed workspace/.synthesis-failed workspace/.validation-failed workspace/.review-failed
+      rm -f workspace/.gate1-retries workspace/.gate1b-retries workspace/.gate2-retries workspace/.l6-retries workspace/.l7-retries
       mkdir -p workspace/public/docs workspace/public/ecosystem workspace/public/community
       mkdir -p workspace/raw/source/chunks workspace/raw/source/analysis workspace/raw/source/functions workspace/raw/source/manifests workspace/raw/source/exploration
       mkdir -p workspace/raw/runtime/cli workspace/raw/runtime/web workspace/raw/runtime/behaviors workspace/raw/runtime/ux-flows workspace/raw/runtime/visual
       mkdir -p workspace/raw/binary workspace/raw/project-history workspace/raw/test-evidence
       mkdir -p workspace/raw/synthesis/features workspace/raw/synthesis/architecture workspace/raw/synthesis/api workspace/raw/synthesis/behavioral-summaries
       mkdir -p workspace/raw/specs/modules workspace/raw/specs/journeys workspace/raw/specs/contracts workspace/raw/specs/test-vectors workspace/raw/specs/validation
-      mkdir -p workspace/output/specs workspace/output/test-vectors workspace/output/validation/acceptance-criteria
+      mkdir -p workspace/output/specs workspace/output/test-vectors workspace/output/validation/acceptance-criteria workspace/output/contracts
       mkdir -p workspace/provenance/sessions workspace/review
+      # Ensure pipeline artifacts are gitignored
+      for entry in workspace .tracker; do
+        if [ -f .gitignore ]; then
+          grep -qxF "$entry" .gitignore || printf '%s\n' "$entry" >> .gitignore
+        else
+          printf '%s\n' "$entry" >> .gitignore
+        fi
+      done
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       printf '{"target": ".", "started_at": "%s", "excluded_sources": [], "pipeline_version": "1.0"}\n' "$now" > workspace/workspace.json
       printf 'workspace-ready'
@@ -47,10 +57,10 @@ workflow Greenfield
       set -eu
       src=false; docs=false; sdk=false; runtime=false; binary=false; git=false; tests=false; visual=false; contracts=false
       count=1
-      if find . -maxdepth 3 -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.c" -o -name "*.cpp" -o -name "*.rb" 2>/dev/null | head -1 | grep -q .; then
+      if find . -path ./workspace -prune -o -maxdepth 3 \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.c" -o -name "*.cpp" -o -name "*.rb" \) -print 2>/dev/null | head -1 | grep -q .; then
         src=true; count=$((count + 1))
       fi
-      if [ -d docs ] || [ -d doc ] || find . -maxdepth 2 -name "README*" 2>/dev/null | head -1 | grep -q .; then
+      if [ -d docs ] || [ -d doc ] || find . -path ./workspace -prune -o -maxdepth 2 -name "README*" -print 2>/dev/null | head -1 | grep -q .; then
         docs=true; count=$((count + 1))
       fi
       if [ -f package.json ] || [ -f go.mod ] || [ -f Cargo.toml ] || [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f Gemfile ]; then
@@ -59,19 +69,19 @@ workflow Greenfield
       if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
         runtime=true; count=$((count + 1))
       fi
-      if find . -maxdepth 2 -name "*.exe" -o -name "*.so" -o -name "*.dylib" -o -name "*.dll" 2>/dev/null | head -1 | grep -q .; then
+      if find . -path ./workspace -prune -o -maxdepth 2 \( -name "*.exe" -o -name "*.so" -o -name "*.dylib" -o -name "*.dll" \) -print 2>/dev/null | head -1 | grep -q .; then
         binary=true; count=$((count + 1))
       fi
       if [ -d .git ]; then
         git=true; count=$((count + 1))
       fi
-      if find . -maxdepth 3 -name "*test*" -o -name "*spec*" 2>/dev/null | head -1 | grep -q .; then
+      if find . -path ./workspace -prune -o -maxdepth 3 \( -name "*test*" -o -name "*spec*" \) -print 2>/dev/null | head -1 | grep -q .; then
         tests=true; count=$((count + 1))
       fi
-      if find . -maxdepth 3 -name "*.html" -o -name "*.jsx" -o -name "*.tsx" -o -name "*.vue" -o -name "*.svelte" 2>/dev/null | head -1 | grep -q .; then
+      if find . -path ./workspace -prune -o -maxdepth 3 \( -name "*.html" -o -name "*.jsx" -o -name "*.tsx" -o -name "*.vue" -o -name "*.svelte" \) -print 2>/dev/null | head -1 | grep -q .; then
         visual=true; count=$((count + 1))
       fi
-      if find . -maxdepth 3 -name "*.proto" -o -name "openapi*" -o -name "swagger*" -o -name "*.graphql" 2>/dev/null | head -1 | grep -q .; then
+      if find . -path ./workspace -prune -o -maxdepth 3 \( -name "*.proto" -o -name "openapi*" -o -name "swagger*" -o -name "*.graphql" \) -print 2>/dev/null | head -1 | grep -q .; then
         contracts=true; count=$((count + 1))
       fi
       noncommunity=$((count - 1))
@@ -131,6 +141,10 @@ workflow Greenfield
         printf 'synthesis-failed-%s' "$(cat workspace/.synthesis-failed)"
         exit 0
       fi
+      if [ ! -f "workspace/raw/synthesis/module-map.md" ]; then
+        printf 'synthesis-empty'
+        exit 0
+      fi
       specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
       if [ "$specs" -eq 0 ]; then
         printf 'synthesis-empty'
@@ -162,6 +176,19 @@ workflow Greenfield
   subgraph L6L7_Review
     ref: greenfield_review.dip
 
+  tool CheckReviewOutput
+    label: "Check Review Output"
+    timeout: 15s
+    command:
+      set -eu
+      if [ -f "workspace/.review-failed" ]; then
+        printf 'review-failed-%s' "$(cat workspace/.review-failed)"
+        exit 0
+      fi
+      l6_findings=$(find "workspace/review/" -name "l6-*.md" -print0 2>/dev/null | xargs -0 grep -c "## Finding" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      l7_flags=$(find "workspace/review/" -name "l7-*.md" -print0 2>/dev/null | xargs -0 grep -c "## Fidelity Flag" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+      printf 'review-ok-l6-%s-l7-%s' "$l6_findings" "$l7_flags"
+
   agent FinalReport
     label: "Final Report"
     model: claude-opus-4-6
@@ -177,72 +204,89 @@ workflow Greenfield
       1. Target analyzed and sources discovered
       2. Number of behavioral specs produced
       3. Number of test vectors and acceptance criteria
-      4. Gate results (all passed)
-      5. Overall confidence assessment
+      4. Gate results — read workspace/review/ for L6/L7 findings. Report the actual gate outcome, do not assume all passed.
+      5. Overall confidence assessment (read workspace/raw/l1-summary.yaml for provider_fallback status)
       6. Output location: workspace/output/
 
   agent DiscoveryFailed
     label: "Discovery Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L1 discovery subgraph failed. Write workspace/.l1-failed with reason. Report.
 
   agent L1Failed
     label: "L1 Output Check Failed"
-    max_turns: 1
+    max_turns: 2
+    auto_status: true
     prompt:
-      L1 output check failed — no intelligence sources produced results. Report.
+      L1 output check failed — no intelligence sources produced results.
+      Write workspace/.l1-failed with the reason (e.g., "no completed sources" or "l1 output empty").
+      Then report the failure status.
 
   agent SynthesisFailed
     label: "Synthesis Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L2/L3 synthesis failed. Check workspace/.synthesis-failed for details. Report.
 
   agent ValidationFailed
     label: "Validation Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L4/L5 validation failed. Check workspace/.validation-failed for details. Report.
 
   agent ReviewFailed
     label: "Review Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       L6/L7 review failed. Check workspace/.review-failed for details. Report.
 
   edges
     Start -> SetupWorkspace
     SetupWorkspace -> DiscoverTarget
-    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-0  label: very_low_coverage
-    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith noncommunity-1  label: low_coverage
-    DiscoverTarget -> L1_Discovery          when ctx.tool_stdout startswith discovered     label: sufficient
+    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith -noncommunity-0  label: very_low_coverage
+    DiscoverTarget -> DiscoverTargetReview  when ctx.tool_stdout endswith -noncommunity-1  label: low_coverage
     DiscoverTarget -> L1_Discovery
     DiscoverTargetReview -> L1_Discovery
     L1_Discovery -> CheckL1Output           when ctx.outcome = success  label: l1_done
     L1_Discovery -> DiscoveryFailed         when ctx.outcome = fail     label: l1_subgraph_failed
     L1_Discovery -> DiscoveryFailed
-    CheckL1Output -> L2L3_Synthesis         when ctx.tool_stdout startswith l1-ok  label: l1_ok
-    CheckL1Output -> L1Failed               when ctx.tool_stdout startswith l1-    label: l1_problem
+    CheckL1Output -> L2L3_Synthesis         when ctx.tool_stdout startswith l1-ok      label: l1_ok
+    CheckL1Output -> L1Failed               when ctx.tool_stdout startswith l1-failed  label: l1_failed
+    CheckL1Output -> L1Failed               when ctx.tool_stdout = l1-empty            label: l1_empty
     CheckL1Output -> L1Failed
     L2L3_Synthesis -> CheckSynthesisOutput   when ctx.outcome = success  label: synthesis_done
     L2L3_Synthesis -> SynthesisFailed        when ctx.outcome = fail     label: synthesis_subgraph_failed
     L2L3_Synthesis -> SynthesisFailed
-    CheckSynthesisOutput -> L4L5_Validation  when ctx.tool_stdout startswith synthesis-ok  label: synthesis_ok
-    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout startswith synthesis-    label: synthesis_problem
+    CheckSynthesisOutput -> L4L5_Validation  when ctx.tool_stdout startswith synthesis-ok      label: synthesis_ok
+    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout startswith synthesis-failed  label: synthesis_failed
+    CheckSynthesisOutput -> SynthesisFailed  when ctx.tool_stdout = synthesis-empty             label: synthesis_empty
     CheckSynthesisOutput -> SynthesisFailed
     L4L5_Validation -> CheckValidationOutput  when ctx.outcome = success  label: validation_done
     L4L5_Validation -> ValidationFailed       when ctx.outcome = fail     label: validation_subgraph_failed
     L4L5_Validation -> ValidationFailed
-    CheckValidationOutput -> L6L7_Review      when ctx.tool_stdout = validation-ok  label: validation_ok
-    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-  label: validation_problem
+    CheckValidationOutput -> L6L7_Review      when ctx.tool_stdout = validation-ok                  label: validation_ok
+    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-failed      label: validation_failed
+    CheckValidationOutput -> ValidationFailed when ctx.tool_stdout startswith validation-incomplete  label: validation_incomplete
     CheckValidationOutput -> ValidationFailed
-    L6L7_Review -> FinalReport                when ctx.outcome = success  label: review_done
+    L6L7_Review -> CheckReviewOutput          when ctx.outcome = success  label: review_done
     L6L7_Review -> ReviewFailed               when ctx.outcome = fail     label: review_subgraph_failed
     L6L7_Review -> ReviewFailed
+    CheckReviewOutput -> FinalReport          when ctx.tool_stdout startswith review-ok      label: review_ok
+    CheckReviewOutput -> ReviewFailed         when ctx.tool_stdout startswith review-failed  label: review_failed
+    CheckReviewOutput -> ReviewFailed
     FinalReport -> Exit
+    DiscoveryFailed -> Exit   when ctx.outcome = fail  label: discovery_failed_terminal
     DiscoveryFailed -> Exit
+    L1Failed -> Exit          when ctx.outcome = fail  label: l1_failed_terminal
     L1Failed -> Exit
+    SynthesisFailed -> Exit   when ctx.outcome = fail  label: synthesis_failed_terminal
     SynthesisFailed -> Exit
+    ValidationFailed -> Exit  when ctx.outcome = fail  label: validation_failed_terminal
     ValidationFailed -> Exit
+    ReviewFailed -> Exit      when ctx.outcome = fail  label: review_failed_terminal
     ReviewFailed -> Exit

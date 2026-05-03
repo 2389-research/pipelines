@@ -66,6 +66,8 @@ workflow GreenfieldValidation
 
       Write to workspace/raw/specs/test-vectors/
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   agent TestGenerator
     label: "Test Spec Generator"
     model: gpt-5.4
@@ -79,6 +81,8 @@ workflow GreenfieldValidation
       Generate runnable test spec outlines organized by module. These are skeleton test files an implementation team can flesh out.
 
       Write to workspace/raw/specs/test-vectors/test-specs/
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent AcceptanceCriteriaWriter
     label: "Acceptance Criteria Writer"
@@ -102,7 +106,26 @@ workflow GreenfieldValidation
 
       Write to workspace/raw/specs/validation/
 
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
   fan_in ValidationJoin <- TestVectorGenerator, TestGenerator, AcceptanceCriteriaWriter
+
+  agent Gate2Remediation
+    label: "Gate 2 Remediation"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      You are the Gate 2 Remediation agent. Gate 2 found quality issues with test vectors and acceptance criteria.
+
+      Read workspace/raw/specs/gate2-findings.md for the specific issues found. For each finding, the file specifies the file path, the issue, and what the fix should look like.
+      Before rewriting any file, remove the old version first. Delete orphaned files from workspace/raw/specs/test-vectors/ and workspace/raw/specs/validation/ that gate2-findings.md identifies as needing replacement.
+
+      Read the behavioral specs in workspace/raw/specs/modules/ and workspace/raw/specs/journeys/ for context.
+
+      Fix ONLY the issues identified in gate2-findings.md. Rewrite affected files in workspace/raw/specs/test-vectors/ and workspace/raw/specs/validation/. Do NOT re-run full L4 generation — make targeted fixes.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   tool Gate2ToolCheck
     label: "Gate 2 Tool Check"
@@ -124,10 +147,10 @@ workflow GreenfieldValidation
       if [ "$tv_count" -eq 0 ]; then errors="${errors}no-test-vectors "; fi
       ac_count=$(find "workspace/raw/specs/validation/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
       if [ "$ac_count" -eq 0 ]; then errors="${errors}no-acceptance-criteria "; fi
-      leak_pyjs=$(find "workspace/raw/specs/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "function \|def \|class \|import \|require(" 2>/dev/null | wc -l)
-      leak_go=$(find "workspace/raw/specs/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^func \|^package \|^import (" 2>/dev/null | wc -l)
-      leak_rust=$(find "workspace/raw/specs/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^fn \|^pub struct \|^impl \|^use " 2>/dev/null | wc -l)
-      leak_c=$(find "workspace/raw/specs/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^void \|^int \|^#include " 2>/dev/null | wc -l)
+      leak_pyjs=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "function \|def \|class \|import \|require(" 2>/dev/null | wc -l)
+      leak_go=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^func \|^package \|^import (" 2>/dev/null | wc -l)
+      leak_rust=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^fn \|^pub struct \|^impl \|^use " 2>/dev/null | wc -l)
+      leak_c=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^void \|^int \|^#include " 2>/dev/null | wc -l)
       leak_count=$((leak_pyjs + leak_go + leak_rust + leak_c))
       if [ "$leak_count" -gt 0 ]; then errors="${errors}leakage-${leak_count}-files "; fi
       ac_leak=$(find "workspace/raw/specs/validation/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "function \|def \|class \|^func \|^fn \|^void \|^int \|^#include " 2>/dev/null | wc -l)
@@ -146,7 +169,7 @@ workflow GreenfieldValidation
     reasoning_effort: high
     auto_status: true
     max_retries: 3
-    retry_target: TestVectorGenerator
+    retry_target: Gate2Remediation
     fallback_target: Gate2Failed
     prompt:
       You are the Gate 2 quality reviewer. Review test vectors and acceptance criteria in workspace/raw/specs/.
@@ -157,19 +180,22 @@ workflow GreenfieldValidation
       3. No implementation leakage in behavioral prose (code in examples is OK)
       4. Test vectors cover edge cases and error conditions
 
-      Write findings to workspace/raw/specs/gate2-findings.md.
+      Write findings to workspace/raw/specs/gate2-findings.md. For each finding, specify the file path, the issue, and what the fix should look like. This file is read by the remediation agent on retry — make findings actionable.
 
       STATUS: success if quality is adequate. STATUS: fail if material issues found.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent Gate2Failed
     label: "Gate 2 Failed"
     max_turns: 1
+    auto_status: true
     prompt:
       Gate 2 has exhausted its retry budget. Report what passed and what failed.
       Write workspace/.validation-failed with the failure reason.
       HARD CONSTRAINT: Do NOT fix anything. Report only.
 
-  parallel SanitizationParallel -> SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria
+  parallel SanitizationParallel -> SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria, SanitizerContracts
 
   agent SanitizerSpecs
     label: "Sanitizer — Specs"
@@ -183,11 +209,13 @@ workflow GreenfieldValidation
       Write sanitized versions to workspace/output/specs/.
 
       PRESERVE: environment variables, CLI flags, config keys, API fields, protocol names, error messages, user-facing paths.
-      REMOVE: function names, variable names, minified identifiers, line numbers, source file paths, code structure descriptions.
+      REMOVE: function names, variable names, minified identifiers, line numbers, source file paths, code structure descriptions, internal data structure names.
 
       Provenance citations survive — but replace raw source paths with workspace-relative refs.
 
       You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent SanitizerTestVectors
     label: "Sanitizer — Test Vectors"
@@ -200,7 +228,9 @@ workflow GreenfieldValidation
       Read workspace/raw/specs/test-vectors/.
       Write sanitized versions to workspace/output/test-vectors/.
 
-      Same PRESERVE/REMOVE rules as spec sanitization. Test vectors should describe behavior (Given/When/Then) without referencing internal code.
+      Same PRESERVE/REMOVE rules as spec sanitization (including removal of internal data structure names). Test vectors should describe behavior (Given/When/Then) without referencing internal code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
 
   agent SanitizerAcceptanceCriteria
     label: "Sanitizer — Acceptance Criteria"
@@ -213,9 +243,31 @@ workflow GreenfieldValidation
       Read workspace/raw/specs/validation/.
       Write sanitized versions to workspace/output/validation/acceptance-criteria/.
 
-      Same PRESERVE/REMOVE rules. AC IDs and spec links must be preserved.
+      Same PRESERVE/REMOVE rules (including removal of internal data structure names). AC IDs and spec links must be preserved.
 
-  fan_in SanitizationJoin <- SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent SanitizerContracts
+    label: "Sanitizer — Contracts"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      You are a Sanitizer worker for Greenfield. Sanitize dependency contracts and protocol specs.
+
+      Read workspace/raw/specs/contracts/.
+      Write sanitized versions to workspace/output/contracts/.
+
+      PRESERVE: environment variables, CLI flags, config keys, API fields, wire protocol names, error messages, user-facing paths.
+      REMOVE: function names, variable names, minified identifiers, line numbers, source file paths, code structure descriptions, internal data structure names.
+
+      Provenance citations survive — but replace raw source paths with workspace-relative refs.
+
+      You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  fan_in SanitizationJoin <- SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria, SanitizerContracts
 
   tool SanitizationToolCheck
     label: "Sanitization Check"
@@ -233,7 +285,8 @@ workflow GreenfieldValidation
         printf 'sanitization-incomplete-%s' "$errors"
         exit 0
       fi
-      printf 'sanitization-ok-specs-%s-tv-%s-ac-%s' "$spec_count" "$tv_count" "$ac_count"
+      contract_count=$(find "workspace/output/contracts/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      printf 'sanitization-ok-specs-%s-tv-%s-ac-%s-contracts-%s' "$spec_count" "$tv_count" "$ac_count" "$contract_count"
 
   tool WriteL4L5Summary
     label: "Write L4/L5 Summary"
@@ -263,17 +316,22 @@ workflow GreenfieldValidation
     Gate2ToolCheck -> Gate2Failed          when ctx.tool_stdout = budget-exhausted  label: gate2_budget
     Gate2ToolCheck -> Gate2Failed
     Gate2AgentReview -> SanitizationParallel  when ctx.outcome = success  label: gate2_pass
-    Gate2AgentReview -> Gate2Failed            when ctx.outcome = fail     label: gate2_fail
-    Gate2AgentReview -> Gate2Failed
+    Gate2AgentReview -> Gate2Remediation       when ctx.outcome = fail     label: gate2_remediate
+    Gate2Remediation -> Gate2ToolCheck  when ctx.outcome = success  restart: true  label: gate2_remediated
+    Gate2Remediation -> Gate2Failed     when ctx.outcome = fail     label: gate2_remediation_failed
+    Gate2Remediation -> Gate2Failed
     SanitizationParallel -> SanitizerSpecs
     SanitizationParallel -> SanitizerTestVectors
     SanitizationParallel -> SanitizerAcceptanceCriteria
+    SanitizationParallel -> SanitizerContracts
     SanitizerSpecs -> SanitizationJoin
     SanitizerTestVectors -> SanitizationJoin
     SanitizerAcceptanceCriteria -> SanitizationJoin
+    SanitizerContracts -> SanitizationJoin
     SanitizationJoin -> SanitizationToolCheck
     SanitizationToolCheck -> WriteL4L5Summary  when ctx.tool_stdout startswith sanitization-ok  label: sanitization_ok
     SanitizationToolCheck -> Gate2Failed       when ctx.tool_stdout startswith sanitization-incomplete  label: sanitization_failed
-    SanitizationToolCheck -> WriteL4L5Summary
+    SanitizationToolCheck -> Gate2Failed
     WriteL4L5Summary -> Exit
+    Gate2Failed -> Exit  when ctx.outcome = fail  label: gate2_failed_terminal
     Gate2Failed -> Exit

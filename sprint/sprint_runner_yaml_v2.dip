@@ -168,14 +168,14 @@ workflow SprintRunnerYamlV2
         now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         yq -i "(.sprints[] | select(.id == \"$target\")).status = \"failed\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
         rm -f .ai/runner-last-failed-sprint.txt
-        if [ "$total_failures" -ge 3 ]; then
+        if [ "$total_failures" -ge 10 ]; then
           printf 'budget-exhausted-%s-total-failures' "$total_failures"
         else
           printf 'skipped-%s-moving-on' "$target"
         fi
       else
         printf '%s' "$target" > .ai/runner-last-failed-sprint.txt
-        if [ "$total_failures" -ge 3 ]; then
+        if [ "$total_failures" -ge 10 ]; then
           printf 'budget-exhausted-%s-total-failures' "$total_failures"
         else
           printf 'retry-%s-attempt-2' "$target"

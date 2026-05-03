@@ -1,0 +1,1225 @@
+# ABOUTME: Iteration execution pipeline — sentinel baseline, PAR scope review, TDD task decomposition, per-task implementation with two-stage PAR review (spec-compliance then code-quality).
+# ABOUTME: Drives the full TDD implementation loop for one iteration: setup → pre-iteration → PAR scope → decompose → per-task loop → post-iteration → wrap-up.
+workflow IterRun
+  goal: "Execute one iteration from the roadmap: sentinel baseline, PAR scope review, TDD task decomposition, per-task implementation with two-stage PAR review (spec-compliance then code-quality), post-iteration scenario runs, and artifact wrap-up"
+  start: Start
+  exit: Exit
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 50
+    fidelity: summary:medium
+
+  # ── PHASE: Setup ────────────────────────────────────────────────────────────
+
+  agent Start
+    label: Start
+    prompt:
+      Begin iteration execution pipeline. Acknowledging pipeline start — do not read or write any files.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Iteration execution pipeline complete. Report final status.
+
+  tool find_next_iteration
+    label: "Find Next Iteration"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      # Clear stale temp files from prior iteration (tasks/scope are overwritten but reviews may linger)
+      rm -f .ai/iter-run-temp/spec_review.md .ai/iter-run-temp/quality_review.md \
+            .ai/iter-run-temp/context_brief.txt .ai/iter-run-temp/escalation_notes.txt \
+            .ai/iter-run-temp/scope.md
+      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+        printf 'no-roadmap'
+        exit 0
+      fi
+      # Find the first iteration section containing Status: pending
+      iter_id=$(awk '
+        /^### ITER-/ {
+          match($0, /ITER-[0-9]+/)
+          if (RSTART > 0) { cur = substr($0, RSTART, RLENGTH) }
+        }
+        /\*\*Status:\*\* pending/ && cur != "" {
+          print cur
+          cur = ""
+          exit
+        }
+      ' docs/superpowers/iterations/roadmap.md)
+      if [ -z "$iter_id" ]; then
+        printf 'all-done'
+        exit 0
+      fi
+      printf '%s' "$iter_id" > .ai/iter-current-iteration.txt
+      printf 'next-%s' "$iter_id"
+
+  agent all_done_exit
+    label: "All Iterations Complete"
+    prompt:
+      All iterations in the roadmap have been completed. There are no pending iterations remaining.
+
+      Report this status to the user. The iteration execution pipeline exits successfully — there is nothing left to do.
+
+  # ── PHASE: Pre-Iteration ─────────────────────────────────────────────────────
+
+  agent load_scope
+    label: "Load Scope"
+    model: gemini-3-flash-preview
+    provider: gemini
+    prompt:
+      Read the current iteration from docs/superpowers/iterations/roadmap.md.
+
+      Read .ai/iter-current-iteration.txt to get the current iteration ID.
+
+      Then load:
+      1. The current iteration section from roadmap.md (all committed stories and their IDs)
+      2. The relevant story cards from docs/superpowers/iterations/requirements/ for each story in this iteration
+      3. docs/superpowers/iterations/behavior-scenarios.md
+      4. docs/superpowers/iterations/behavior-corpus.md
+
+      Write a scope summary to .ai/iter-run-temp/scope.md with:
+      - Iteration ID and title
+      - List of committed story IDs and titles
+      - Acceptance criteria summary per story
+      - Relevant scenario IDs
+      - Total AC count and behavioral AC count
+
+      HARD CONSTRAINT: Read-only. Do not modify any artifacts. Do not modify any files outside of .ai/iter-run-temp/.
+
+  tool run_sentinel_baseline
+    label: "Run Sentinel Baseline"
+    timeout: 300s
+    command:
+      set -euo pipefail
+      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+        printf 'baseline-0-of-0-sentinels'
+        exit 0
+      fi
+      total=0
+      passed=0
+      # Truncate baseline from prior iteration before writing fresh results
+      : > .ai/iter-sentinel-baseline.txt
+      # Extract sentinel rows from corpus table (pipe delimited, leading | handled)
+      while IFS='|' read -r _leading col1 col2 col3 col4 col5 rest; do
+        # Strip leading/trailing whitespace only (preserve internal spaces in commands)
+        cadence=$(printf '%s' "$col4" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cmd=$(printf '%s' "$col5" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        scenario_name=$(printf '%s' "$col1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [ "$cadence" = "sentinel" ] && [ "$cmd" != "TBD" ] && [ -n "$cmd" ]; then
+          total=$((total + 1))
+          if sh -c "$cmd" >/dev/null 2>&1; then
+            passed=$((passed + 1))
+            printf 'PASS %s\n' "$cmd" >> .ai/iter-sentinel-baseline.txt
+          else
+            printf 'FAIL %s\n' "$cmd" >> .ai/iter-sentinel-baseline.txt
+          fi
+        elif [ "$cadence" = "sentinel" ] && [ "$cmd" = "TBD" ]; then
+          total=$((total + 1))
+          printf 'TBD %s\n' "$scenario_name" >> .ai/iter-sentinel-baseline.txt
+        fi
+      done < docs/superpowers/iterations/behavior-corpus.md
+      printf 'baseline-%d-of-%d-sentinels' "$passed" "$total"
+
+  tool consistency_audit
+    label: "Consistency Audit"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      if [ -z "$iter_id" ]; then
+        printf 'inconsistent-no-iteration-id'
+        exit 0
+      fi
+      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+        printf 'inconsistent-no-roadmap'
+        exit 0
+      fi
+      # Extract STORY- IDs from the current iteration section
+      story_ids=$(awk -v iter="$iter_id" '
+        $0 ~ ("^### " iter) { in_section=1; next }
+        in_section && /^### ITER-/ { exit }
+        in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
+      ' docs/superpowers/iterations/roadmap.md | sort -u)
+      if [ -z "$story_ids" ]; then
+        printf 'inconsistent-no-stories-found-for-%s' "$iter_id"
+        exit 0
+      fi
+      issues=""
+      for story_id in $story_ids; do
+        # Check story exists in requirements/
+        if ! grep -rq "$story_id" docs/superpowers/iterations/requirements/ 2>/dev/null; then
+          issues="${issues} ${story_id}-not-in-requirements"
+          continue
+        fi
+        # Check not already marked done for a DIFFERENT iteration
+        done_iter=$(grep -r "Status.*done:" docs/superpowers/iterations/requirements/ 2>/dev/null | grep "$story_id" | grep -oE 'done:ITER-[0-9]+' | head -1 || true)
+        if [ -n "$done_iter" ] && [ "$done_iter" != "done:${iter_id}" ]; then
+          # Only flag if code doesn't actually exist (not checking code here, flag for review)
+          issues="${issues} ${story_id}-already-${done_iter}"
+        fi
+      done
+      if [ -n "$issues" ]; then
+        printf 'inconsistent-%s' "$issues"
+      else
+        printf 'consistent'
+      fi
+
+  agent reconcile_state
+    label: "Reconcile State"
+    auto_status: true
+    prompt:
+      The consistency audit found inconsistencies in the iteration state. Read the consistency_audit output to understand what was found.
+
+      Read:
+      1. .ai/iter-current-iteration.txt for the current iteration ID
+      2. docs/superpowers/iterations/roadmap.md for the current iteration section
+      3. docs/superpowers/iterations/requirements/ for the story files mentioned in the inconsistency report
+
+      Fix the inconsistencies:
+      - If a STORY-NNNN referenced in roadmap.md does not exist in requirements/, add a minimal placeholder story card to the appropriate epic file so the pipeline can proceed. Note this as a gap to be filled during implementation.
+      - If a story is marked done for a different iteration but the inconsistency is a false positive (code does exist), update the roadmap note to reflect the actual state.
+      - If stories need to be removed from the iteration scope because they belong to a different iteration, update the roadmap accordingly.
+
+      After making corrections, end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when inconsistencies are resolved.
+      Use STATUS: fail when the inconsistencies cannot be automatically resolved and require human intervention.
+
+      HARD CONSTRAINT: Only modify files in docs/superpowers/iterations/. Do not modify source code.
+
+  # ── PHASE: PAR Scope Review ──────────────────────────────────────────────────
+
+  parallel par_run_scope_dispatch -> par_run_scope_reviewer_a, par_run_scope_reviewer_b
+
+  agent par_run_scope_reviewer_a
+    label: "PAR Scope Reviewer A — Pre-Flight Readiness"
+    model: claude-opus-4-7
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A (Pre-Flight Readiness). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Can implementation START right now?
+
+      You are a pre-flight checklist. You verify that every artifact the implementer needs EXISTS, RESOLVES, and is INTERNALLY CONSISTENT.
+
+      Read:
+      1. .ai/iter-run-temp/scope.md for the iteration scope summary
+      2. .ai/iter-current-iteration.txt for the current iteration ID
+      3. docs/superpowers/iterations/roadmap.md for the full iteration definition
+      4. The relevant story cards from docs/superpowers/iterations/requirements/
+      5. docs/superpowers/iterations/behavior-scenarios.md
+
+      ### Checks
+
+      1. **Story resolution**: Every STORY-NNNN in this iteration's roadmap section exists in requirements/. Every story has at least 1 AC with behavioral_impact and proof_seam.
+
+      2. **Scenario resolution**: Every AC with behavioral_impact != "none" has a matching scenario in behavior-scenarios.md. Every scenario has preconditions, steps, and final_observables.
+
+      3. **Internal consistency**: Story IDs in roadmap match story IDs in epic files. Scenario owning_stories back-reference the correct story IDs.
+
+      4. **No dangling references**: No story references a dependency (requires_story, depends_on) that doesn't exist or isn't in an earlier/same iteration.
+
+      ## Report Format
+
+      For each check: PASS or FAIL with specific broken references.
+
+      Overall: ✅ Ready for implementation | ❌ Blocked: [specific missing/broken artifacts]
+
+  agent par_run_scope_reviewer_b
+    label: "PAR Scope Reviewer B — Implementation Feasibility"
+    model: claude-opus-4-7
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B (Implementation Feasibility). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Can these stories actually be BUILT via TDD in this iteration?
+
+      You think like the implementer who's about to sit down and write code. You look for practical blockers.
+
+      Read:
+      1. .ai/iter-run-temp/scope.md for the iteration scope summary
+      2. .ai/iter-current-iteration.txt for the current iteration ID
+      3. docs/superpowers/iterations/roadmap.md — this iteration AND the next 2-3 iterations
+      4. The relevant story cards from docs/superpowers/iterations/requirements/
+
+      ### Checks
+
+      1. **TDD feasibility**: Can each AC be expressed as a failing test BEFORE writing implementation? Are proof seams testable (e.g., "app-level" seam requires a running server — is that available)?
+
+      2. **Scope sizing**: How many TDD cycles will this iteration need? Flag if >8 stories or if any story has >5 ACs. Each TDD cycle is ~15 minutes — is this iteration reasonably sized?
+
+      3. **Boxing-in**: Does implementing these stories lock in architectural decisions that would need undoing in iterations 2-3 ahead? Read future iteration stories to check.
+
+      4. **Dependency ordering**: Can the stories be implemented in ANY order, or is there an implicit dependency chain? If so, is the chain feasible?
+
+      5. **Story granularity**: Are any stories too large for a single TDD task? Are any so small they should be merged?
+
+      ## Report Format
+
+      For each check: PASS or FAIL with specific implementation concerns.
+
+      Overall: ✅ Scope approved | ❌ Revisions needed: [specific changes]
+
+  fan_in par_run_scope_join <- par_run_scope_reviewer_a, par_run_scope_reviewer_b
+
+  agent par_run_scope_aggregate
+    label: "PAR Scope Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    auto_status: true
+    prompt:
+      Read both PAR scope reviewer outputs from par_run_scope_reviewer_a and par_run_scope_reviewer_b.
+
+      Aggregate the findings:
+      - Same finding from both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      Summarize the consolidated findings and determine whether the iteration scope is ready for implementation.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when scope is approved (no blocking issues).
+      Use STATUS: fail when revisions are needed before implementation can begin.
+
+  agent adjust_run_scope
+    label: "Adjust Run Scope"
+    prompt:
+      The PAR scope review found issues with the iteration scope. Read the aggregated findings from par_run_scope_aggregate.
+
+      Address the scope review findings:
+      - Fix citation integrity issues: ensure all referenced story IDs exist in requirements/
+      - Adjust iteration scope in roadmap.md if stories need to be moved to a later iteration
+      - Add missing scenarios to behavior-scenarios.md for behavioral ACs that lack them
+      - Add missing proof seams to story ACs
+      - Split oversized stories if recommended
+
+      Update the scope summary in .ai/iter-run-temp/scope.md to reflect corrections.
+
+      HARD CONSTRAINT: Only modify files in docs/superpowers/iterations/ and .ai/iter-run-temp/. Do not modify source code.
+
+  # ── PHASE: Task Decomposition ────────────────────────────────────────────────
+
+  agent decompose_tasks
+    label: "Decompose Tasks"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    prompt:
+      You are decomposing an iteration into TDD-sized tasks.
+
+      Read:
+      1. .ai/iter-loop-context.txt (if it exists) — this contains prior attempt history. If this iteration was retried, use the failure context to avoid repeating the same mistakes. Adjust your decomposition strategy based on what failed before (e.g., split tasks smaller if prior attempt was "task too large", use different approach if prior attempt hit a specific error).
+      2. .ai/iter-run-temp/scope.md (iteration scope with committed stories)
+      3. The full story cards from docs/superpowers/iterations/requirements/
+      4. docs/superpowers/iterations/behavior-scenarios.md
+      5. docs/superpowers/iterations/behavior-corpus.md
+
+      ## Decomposition Rules
+
+      Break the iteration into tasks. Each task = one TDD cycle: failing test → implementation → passing test → commit.
+
+      INTERLEAVE evidence tasks with code tasks: after implementing a feature, the next task should extend or add the scenario that proves it.
+
+      For cross-iteration dependencies: implement the thinnest abstraction boundary that satisfies the story's ACs without coupling to the future implementation. Add a TODO(ITER-NNNN) comment citing the future iteration.
+
+      ## Output
+
+      Write the task list to .ai/iter-run-temp/tasks.md:
+
+      ### TASK-01: <name>
+      **Story:** STORY-NNNN
+      **Type:** code | evidence
+      **ACs covered:** AC-1, AC-2
+      **Proof obligations:**
+      - AC-1: seam=<seam>, scenario=<SCENARIO-NNNN|new>
+      **Files to create/modify:** <list>
+      **TDD cycle:**
+      1. Write failing test: <what to test>
+      2. Implement: <what to build>
+      3. Verify: <command>
+      4. Scenario update: <what to add/change in behavior-scenarios.md>
+
+      Also write a task status tracker to .ai/iter-run-temp/task_status.txt with one line per task:
+      TASK-NN|pending
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when task decomposition is complete and tasks.md and task_status.txt are written.
+      Use STATUS: fail when decomposition cannot proceed (missing story cards, ambiguous scope, etc.).
+
+  tool mark_iteration_in_progress
+    label: "Mark Iteration In Progress"
+    timeout: 10s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      if [ -z "$iter_id" ]; then
+        printf 'error-no-iteration-id'
+        exit 1
+      fi
+      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+        printf 'error-no-roadmap'
+        exit 1
+      fi
+      # Only update the FIRST pending iteration's status (the current one)
+      awk -v target="$iter_id" '
+        /^### / { in_target = ($0 ~ target) }
+        in_target && /\*\*Status:\*\* pending/ {
+          sub(/\*\*Status:\*\* pending/, "**Status:** in_progress")
+          in_target = 0
+        }
+        { print }
+      ' docs/superpowers/iterations/roadmap.md > docs/superpowers/iterations/roadmap.md.tmp
+      mv docs/superpowers/iterations/roadmap.md.tmp docs/superpowers/iterations/roadmap.md
+      printf 'iteration-in-progress-%s' "$iter_id"
+
+  tool update_progress
+    label: "Update Progress"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      task_total=0
+      task_done=0
+      if [ -f .ai/iter-run-temp/task_status.txt ]; then
+        task_total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
+        task_done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
+      fi
+      mkdir -p docs/superpowers/iterations
+      printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** task-decomposition\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
+        "$iter_id" "$task_done" "$task_total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > docs/superpowers/iterations/progress.md
+      printf 'progress-updated'
+
+  # ── PHASE: Per-Task Loop ─────────────────────────────────────────────────────
+
+  tool read_next_task
+    label: "Read Next Task"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      if [ ! -f .ai/iter-run-temp/task_status.txt ]; then
+        printf 'all-tasks-done'
+        exit 0
+      fi
+      next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
+      if [ -z "$next" ]; then
+        printf 'all-tasks-done'
+      else
+        printf 'task-%s' "$next"
+      fi
+
+  tool mark_task_in_progress
+    label: "Mark Task In Progress"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
+      if [ -z "$next" ]; then
+        printf 'no-pending-task'
+        exit 1
+      fi
+      awk -v id="$next" 'BEGIN{FS=OFS="|"} $1==id && $2=="pending" {$2="in_progress"} {print}' \
+        .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
+      mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
+      printf 'in-progress-%s' "$next"
+
+  agent implement_task
+    label: "Implement Task"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    fidelity: summary:high
+    auto_status: true
+    prompt:
+      You are implementing a single task as part of an iterative development sprint.
+
+      Read .ai/iter-run-temp/task_status.txt to find the current in_progress task number.
+      Then read .ai/iter-run-temp/tasks.md and find that task's full description.
+      Also read the relevant story cards from docs/superpowers/iterations/requirements/.
+
+      ## Engineering Principles
+
+      - Earn every abstraction. No wrappers just for testability.
+      - Work with the platform. Use native idioms.
+      - Navigability matters. Organize by domain.
+      - Decompose coordination. No god objects.
+
+      ## Before You Begin — Pre-Flight Mapping
+
+      State:
+      1. Which ACs affect externally observable behavior
+      2. What proof seam each observable AC requires
+      3. Which existing scenario you will extend, OR what new scenario you will add
+      4. What test command will prove the behavior
+
+      If the task changes observable behavior and you cannot identify a scenario, STOP and report NEEDS_CONTEXT.
+
+      ## Your Job
+
+      1. State pre-flight mapping
+      2. Follow TDD red-green-refactor:
+         - NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST
+         - Write the failing test. Run it. Verify it fails for the RIGHT reason.
+         - Write minimal code to pass. Run tests. All green.
+         - Refactor while green.
+      3. If observable behavior changed: update behavior-scenarios.md and behavior-corpus.md
+      4. Commit with a clear message
+      5. Self-review:
+         - Did I implement exactly what was specified?
+         - Did I follow TDD? (test before implementation)
+         - Do tests verify real behavior, not mock behavior?
+         - Did I update the behavior corpus for every observable AC?
+         - Is evidence at the correct proof seam?
+         - Could any abstraction I added be removed without losing coverage?
+
+      After self-review, write your status to .ai/iter-run-temp/impl_status.txt. Write EXACTLY one of these strings (nothing else):
+        DONE                 — all ACs met, tests pass, evidence adequate
+        DONE_WITH_CONCERNS   — completed but you have doubts (explain concerns in your response)
+        NEEDS_CONTEXT        — you need information not available to you (explain what's missing)
+        BLOCKED              — cannot complete this task (explain the blocker)
+
+      Then end with:
+        STATUS: success  (for DONE or DONE_WITH_CONCERNS)
+        STATUS: fail     (for NEEDS_CONTEXT or BLOCKED)
+
+      HARD CONSTRAINT: Implement ONLY the current task. Do NOT implement future tasks. Do NOT modify .ai/ files other than task_status.txt and impl_status.txt updates. Do NOT read generated directories (node_modules, dist, build, .next).
+
+  tool check_impl_status
+    label: "Check Implementer Status"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      status_file=".ai/iter-run-temp/impl_status.txt"
+      if [ ! -f "$status_file" ]; then
+        printf 'impl-done'
+        exit 0
+      fi
+      status=$(cat "$status_file" | tr -d '[:space:]')
+      case "$status" in
+        DONE) printf 'impl-done' ;;
+        DONE_WITH_CONCERNS) printf 'impl-concerns' ;;
+        NEEDS_CONTEXT) printf 'impl-needs-context' ;;
+        BLOCKED) printf 'impl-blocked' ;;
+        *) printf 'impl-done' ;;
+      esac
+
+  agent provide_context
+    label: "Provide Context"
+    auto_status: true
+    prompt:
+      The implementer reported NEEDS_CONTEXT or is blocked.
+
+      Read:
+      1. .ai/iter-run-temp/task_status.txt to find the current in_progress task
+      2. .ai/iter-run-temp/tasks.md for the task description
+      3. The relevant story cards from docs/superpowers/iterations/requirements/
+      4. docs/superpowers/iterations/behavior-scenarios.md
+      5. The relevant parts of the codebase mentioned in the task
+
+      Identify what information the implementer is missing. Gather it and provide a clear context brief:
+      - The specific information needed (API contracts, data shapes, interface definitions, etc.)
+      - Where to find it in the codebase
+      - Any clarifications on the task requirements
+      - Suggestions for the correct approach given the codebase patterns
+
+      Write the context brief to .ai/iter-run-temp/context_brief.txt.
+
+      If the implementer is truly BLOCKED (not just missing context — blocked means the task cannot be completed as specified), report STATUS: fail so the task can be escalated.
+
+      If you found the missing context and wrote it to the brief, report STATUS: success so the implementer can retry.
+
+      HARD CONSTRAINT: Do not write code. Do not modify source files. Only read files and write to .ai/iter-run-temp/.
+
+  agent escalate_task
+    label: "Escalate Task"
+    auto_status: true
+    prompt:
+      The task implementation has failed repeatedly or is stuck. Assess the situation and determine how to unblock it.
+
+      Read:
+      1. .ai/iter-run-temp/task_status.txt to find the current task
+      2. .ai/iter-run-temp/tasks.md for the task description
+      3. The relevant story cards from docs/superpowers/iterations/requirements/
+
+      Assess:
+      - Is the task too large? Should it be split into two smaller tasks?
+      - Is there a dependency on something not yet implemented?
+      - Is the story AC ambiguous or contradictory?
+
+      If splitting the task would help:
+      - Rewrite the task in tasks.md as two tasks (TASK-NN-a and TASK-NN-b)
+      - Update task_status.txt to mark the original task done and add the two sub-tasks as pending
+      - Ensure the first sub-task is immediately actionable
+
+      If the task cannot proceed at all:
+      - Mark the task as blocked in task_status.txt (change status to blocked)
+      - Write a note to .ai/iter-run-temp/escalation_notes.txt explaining what human intervention is needed
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when the task has been split or re-queued and the loop can continue.
+      Use STATUS: fail when human intervention is required and the pipeline should not continue.
+
+  # ── PHASE: PAR Spec-Compliance Review (Stage 1) ──────────────────────────────
+
+  parallel par_spec_dispatch -> par_spec_reviewer_a, par_spec_reviewer_b
+
+  agent par_spec_reviewer_a
+    label: "PAR Spec Reviewer A — Top-Down Trace"
+    model: claude-opus-4-7
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A (Top-Down Spec Tracer). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Spec → Code (Do the requirements have implementations?)
+
+      You start from the SPEC and trace DOWNWARD into code. Your question: "For each requirement, does the code deliver it?"
+
+      Read .ai/iter-run-temp/task_status.txt to find the current in_progress task. Read .ai/iter-run-temp/tasks.md for task details. Read the relevant story cards from docs/superpowers/iterations/requirements/.
+
+      ### Method
+
+      1. For EACH AC in the current task's story:
+         - Find the implementing code (search by function name, class name, or grep for the AC's key terms)
+         - Read the actual implementation file:line
+         - Verify the code does what the AC says, not just something similar
+         - Flag: AC implemented but semantics differ from spec intent
+         - Flag: AC not implemented at all (code doesn't exist)
+
+      2. For each AC with behavioral_impact != "none":
+         - Find the scenario in behavior-scenarios.md
+         - Find the test that proves the scenario
+         - Read the test: does it actually test the AC's observable behavior?
+         - REJECT: unit test that only tests internal logic for an app-level AC
+         - Verify proof seam matches declaration (not weaker)
+
+      3. Check for MISSING implementations:
+         - ACs where the implementer wrote no code at all
+         - ACs where the implementer wrote a stub or TODO
+
+      ## Report Format
+
+      **Per-AC Trace:**
+      - AC-N: IMPLEMENTED | MISSING | WRONG — [code file:line] — [explanation]
+      - Evidence: ADEQUATE | WEAK | MISSING — [test file:line]
+
+      Overall: ✅ Spec compliant | ❌ Issues found: [list]
+
+  agent par_spec_reviewer_b
+    label: "PAR Spec Reviewer B — Bottom-Up Diff Audit"
+    model: claude-opus-4-7
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B (Bottom-Up Diff Auditor). A parallel reviewer with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Code → Spec (Does every code change trace to a requirement?)
+
+      You start from the GIT DIFF and trace UPWARD into the spec. Your question: "For each change, is it authorized by a requirement?"
+
+      Run `git diff HEAD~1` to see all changes made by the implementer. Read .ai/iter-run-temp/tasks.md and the relevant story cards from docs/superpowers/iterations/requirements/.
+
+      ### Method
+
+      1. For EACH changed file in the diff:
+         - What was added, modified, or deleted?
+         - Which AC authorized this change? (Trace the change to a specific AC)
+         - Flag: code change with NO authorizing AC (unrequested feature / scope creep)
+         - Flag: code change that contradicts an AC's stated behavior
+         - Flag: deleted code that was required by a different AC
+
+      2. For EACH new test file or test function in the diff:
+         - What behavior does it test?
+         - Does it actually prove an AC's observable behavior?
+         - REJECT: test that passes trivially (e.g., testing mock responses)
+         - REJECT: test at wrong seam (unit test for app-level AC)
+         - Flag: AC with behavioral_impact but no new test in the diff
+
+      3. Check for UNAUTHORIZED changes:
+         - Files modified that are outside the current task's scope
+         - Configuration changes not specified in any AC
+         - Dependency additions not justified by requirements
+
+      ## Report Format
+
+      **Per-File Audit:**
+      - [file:line range] → authorized by AC-N of STORY-NNNN | UNAUTHORIZED
+
+      **Unrequested Changes:** [list or "none"]
+      **Missing Evidence:** [ACs with behavioral_impact but no new test]
+
+      Overall: ✅ All changes authorized | ❌ Issues found: [list]
+
+  fan_in par_spec_join <- par_spec_reviewer_a, par_spec_reviewer_b
+
+  agent par_spec_aggregate
+    label: "PAR Spec Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    auto_status: true
+    prompt:
+      Read both PAR spec reviewer outputs from par_spec_reviewer_a and par_spec_reviewer_b.
+
+      Aggregate the findings:
+      - Same finding from both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      Write the aggregated findings to .ai/iter-run-temp/spec_review.md. Include:
+      - Per-AC spec compliance verdict
+      - Evidence quality assessment per AC with behavioral impact
+      - Consolidated list of issues to fix
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when the implementation is spec-compliant with adequate evidence.
+      Use STATUS: fail when spec violations or weak evidence were found.
+
+  agent fix_spec_issues
+    label: "Fix Spec Issues"
+    model: gpt-5.5
+    provider: openai
+    auto_status: true
+    prompt:
+      Read the aggregated spec review findings from .ai/iter-run-temp/spec_review.md.
+
+      For each issue found:
+      - Missing implementation: write the missing code following TDD (test first, then implementation)
+      - Missing scenario: add the required scenario to docs/superpowers/iterations/behavior-scenarios.md
+      - Missing corpus entry: add the entry to docs/superpowers/iterations/behavior-corpus.md
+      - Evidence at wrong seam: replace with evidence at the correct seam
+
+      After fixing all issues:
+      - Run the affected test commands to verify they pass
+      - Commit the fixes with a clear message
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when all spec issues are fixed and tests pass.
+      Use STATUS: fail when issues cannot be resolved without more context or the fixes are insufficient.
+
+  # ── PHASE: PAR Code-Quality Review (Stage 2) ─────────────────────────────────
+
+  parallel par_quality_dispatch -> par_quality_reviewer_a, par_quality_reviewer_b
+
+  agent par_quality_reviewer_a
+    label: "PAR Quality Reviewer A — Code Health"
+    model: claude-opus-4-7
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A (Code Health Specialist). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Internal Code Quality and Engineering Health
+
+      You evaluate the code AS IT IS RIGHT NOW. You don't think about future iterations.
+
+      Read the current task from .ai/iter-run-temp/tasks.md. Run `git diff HEAD~1` to see changes.
+
+      ### Code Quality (your PRIMARY focus)
+      - Read EVERY changed file. Is each function doing one thing? Clear names?
+      - Dead code or unused imports introduced by this change?
+      - Tests testing real observable behavior or just implementation details?
+      - Error handling: appropriate or paranoid? Missing where needed?
+
+      ### Engineering Health
+      - Abstraction justification: Does every new abstraction (class, interface, helper) have 2+ callers? SERIOUS if unjustified abstraction.
+      - Platform fit: Using native idioms or fighting them? SERIOUS if fighting the framework.
+      - File responsibility: Each new/modified file has one clear job? SERIOUS if a file is becoming a God object.
+      - Duplication: Any copy-paste code that should be extracted? (Only flag if 3+ copies)
+
+      ### Corpus Contribution
+      If scenarios were added/updated: do they test OBSERVABLE behavior (not internal state)? Could they survive a refactor without changing? Is the proof seam correct?
+
+      ## Report Format
+
+      **Strengths:** [brief list]
+      **Issues:** Critical / Serious / Minor with file:line refs
+      **Corpus Quality:** GOOD | WEAK with specific issues
+
+      Overall: ✅ Approved | ❌ Changes needed: [specific refactoring required]
+
+  agent par_quality_reviewer_b
+    label: "PAR Quality Reviewer B — Future-Proofing"
+    model: claude-opus-4-7
+    provider: anthropic
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B (Future-Proofing Specialist). A parallel reviewer with a DIFFERENT lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Does This Code Set Up Future Iterations for Success?
+
+      You evaluate code RELATIVE TO WHAT COMES NEXT. You think 3 iterations ahead.
+
+      Read the current task from .ai/iter-run-temp/tasks.md. Run `git diff HEAD~1` to see changes. Read the next 3 pending iterations from docs/superpowers/iterations/roadmap.md.
+
+      ### Boxing-In Analysis (your PRIMARY focus)
+      For EACH changed file, ask: "What future iteration would need to modify this?"
+      - Hard coupling: does this code import/depend on something that a future iteration would replace?
+      - Interface lock-in: does this define a public API/schema/protocol that future iterations would need to break?
+      - Data model: does this create storage structure that future iterations would need to migrate?
+      - Configuration: are there hardcoded values that future iterations would parameterize?
+      - CRITICAL if a specific downstream iteration (name it!) would be blocked
+
+      ### Navigability
+      - Can someone unfamiliar with the codebase find this code by domain concept?
+      - Is the file/directory structure building toward a coherent architecture?
+      - Would the next implementer know where to add their iteration's code?
+
+      ### Coordination Creep
+      - Is any single file accumulating knowledge of multiple subsystems?
+      - Are there cross-cutting concerns that should be separated before they grow?
+      - SERIOUS if a file touches 3+ domains
+
+      ## Report Format
+
+      **Boxing-In:** CLEAR | RISK — [specific downstream iterations affected and why]
+      **Navigability:** GOOD | POOR — [specific confusion points]
+      **Coordination Creep:** NONE | [files becoming God objects]
+
+      Overall: ✅ Approved | ❌ Changes needed: [specific architectural changes]
+
+  fan_in par_quality_join <- par_quality_reviewer_a, par_quality_reviewer_b
+
+  agent par_quality_aggregate
+    label: "PAR Quality Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    auto_status: true
+    prompt:
+      Read both PAR quality reviewer outputs from par_quality_reviewer_a and par_quality_reviewer_b.
+
+      Aggregate the findings:
+      - Same finding from both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      Write the aggregated findings to .ai/iter-run-temp/quality_review.md. Include:
+      - Code quality assessment with specific issues
+      - Engineering health issues (abstraction, platform fit, navigability, coordination)
+      - Boxing-in assessment for downstream iterations
+      - Corpus contribution quality
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when the code meets quality standards (no Critical or Serious issues).
+      Use STATUS: fail when Critical or Serious issues were found that must be addressed.
+
+  agent fix_quality_issues
+    label: "Fix Quality Issues"
+    model: gpt-5.5
+    provider: openai
+    auto_status: true
+    prompt:
+      Read the aggregated quality review findings from .ai/iter-run-temp/quality_review.md.
+
+      For each Critical or Serious issue found:
+      - Refactor for naming clarity or responsibility separation
+      - Remove unjustified abstractions
+      - Fix platform-fighting code to use native idioms
+      - Decompose coordination-heavy files
+      - Remove or loosen hard couplings that would block downstream iterations
+      - Improve corpus entry clarity or reusability
+
+      After refactoring:
+      - Run the test suite to verify tests still pass after refactoring
+      - Commit the refactoring with a clear message
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when all Critical and Serious quality issues are resolved.
+      Use STATUS: fail when issues cannot be resolved without structural changes that are beyond this task's scope.
+
+  # ── PHASE: Task Completion ───────────────────────────────────────────────────
+
+  tool mark_task_done
+    label: "Mark Task Done"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      task_id=$(grep '|in_progress' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
+      if [ -z "$task_id" ]; then
+        printf 'no-in-progress-task'
+        exit 1
+      fi
+      awk -v id="$task_id" 'BEGIN{FS=OFS="|"} $1==id && $2=="in_progress" {$2="done"} {print}' \
+        .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
+      mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
+      printf 'task-done'
+
+  tool update_task_progress
+    label: "Update Task Progress"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
+      done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
+      printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** per-task-loop\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
+        "$iter_id" "$done" "$total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > docs/superpowers/iterations/progress.md
+      printf 'progress-%d-of-%d' "$done" "$total"
+
+  # ── PHASE: Post-Iteration ────────────────────────────────────────────────────
+
+  tool run_impacted_scenarios
+    label: "Run Impacted Scenarios"
+    timeout: 300s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+        printf 'impacted-all-tbd'
+        exit 0
+      fi
+      total=0
+      passed=0
+      tbd=0
+      # Get stories in this iteration
+      story_ids=$(awk -v iter="$iter_id" '
+        $0 ~ ("^### " iter) { in_section=1; next }
+        in_section && /^### ITER-/ { exit }
+        in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
+      ' docs/superpowers/iterations/roadmap.md | sort -u)
+      if [ -z "$story_ids" ]; then
+        printf 'impacted-all-tbd'
+        exit 0
+      fi
+      # Run iteration-cadence scenarios whose owning stories are in this iteration
+      # Corpus columns: | id | title | seam | cadence | command | (leading pipe from markdown)
+      while IFS='|' read -r _leading scenario_id title seam_col cadence_col cmd_col rest; do
+        scenario_id=$(printf '%s' "$scenario_id" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cadence=$(printf '%s' "$cadence_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cmd=$(printf '%s' "$cmd_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ "$cadence" = "iteration" ] || continue
+        # Check if this scenario is owned by a story in this iteration
+        is_impacted=false
+        for sid in $story_ids; do
+          if grep -q "$scenario_id" docs/superpowers/iterations/behavior-scenarios.md 2>/dev/null; then
+            if grep -A5 "$scenario_id" docs/superpowers/iterations/behavior-scenarios.md 2>/dev/null | grep -q "$sid"; then
+              is_impacted=true
+              break
+            fi
+          fi
+        done
+        [ "$is_impacted" = "true" ] || continue
+        total=$((total + 1))
+        if [ "$cmd" = "TBD" ] || [ -z "$cmd" ]; then
+          tbd=$((tbd + 1))
+        elif sh -c "$cmd" >/dev/null 2>&1; then
+          passed=$((passed + 1))
+        fi
+      done < docs/superpowers/iterations/behavior-corpus.md
+      if [ "$total" -eq 0 ] || [ "$total" -eq "$tbd" ]; then
+        printf 'impacted-all-tbd'
+      else
+        printf 'impacted-%d-of-%d' "$passed" "$((total - tbd))"
+      fi
+
+  tool run_sentinel_scenarios
+    label: "Run Sentinel Scenarios"
+    timeout: 300s
+    command:
+      set -euo pipefail
+      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+        printf 'sentinel-pass'
+        exit 0
+      fi
+      regressions=""
+      # Corpus columns: | id | title | seam | cadence | command | (leading pipe from markdown)
+      while IFS='|' read -r _leading scenario_id title seam_col cadence_col cmd_col rest; do
+        scenario_id=$(printf '%s' "$scenario_id" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cadence=$(printf '%s' "$cadence_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cmd=$(printf '%s' "$cmd_col" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ "$cadence" = "sentinel" ] || continue
+        [ "$cmd" != "TBD" ] && [ -n "$cmd" ] || continue
+        # Check baseline (use fixed-string grep to avoid regex interpretation)
+        baseline_result=""
+        if [ -f .ai/iter-sentinel-baseline.txt ]; then
+          baseline_result=$(grep -F "$cmd" .ai/iter-sentinel-baseline.txt | head -1 | cut -d' ' -f1 || true)
+        fi
+        if sh -c "$cmd" >/dev/null 2>&1; then
+          : # passed
+        else
+          # Failed now — check if it passed in baseline (regression)
+          if [ "$baseline_result" = "PASS" ]; then
+            regressions="${regressions} ${scenario_id}"
+          fi
+        fi
+      done < docs/superpowers/iterations/behavior-corpus.md
+      if [ -n "$regressions" ]; then
+        printf 'sentinel-regression-%s' "$(printf '%s' "$regressions" | tr ' ' ',')"
+      else
+        printf 'sentinel-pass'
+      fi
+
+  agent create_fix_task
+    label: "Create Fix Task"
+    model: gpt-5.5
+    provider: openai
+    auto_status: true
+    prompt:
+      A regression or unresolved TODO was detected after the task loop completed.
+
+      Read the pipeline context to understand what regression or issue was found.
+
+      Create a new fix task in .ai/iter-run-temp/tasks.md:
+      - If a sentinel regression was found: create a task to diagnose and fix the regression, citing the failing scenario IDs
+      - If unresolved TODOs exist for this iteration: create a task to resolve each TODO
+
+      Append the new task to .ai/iter-run-temp/tasks.md in the standard TASK-NN format.
+
+      Append the new task to .ai/iter-run-temp/task_status.txt as pending:
+      TASK-NN|pending
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when the fix task has been created and the loop can continue.
+      Use STATUS: fail when the regression cannot be addressed within this iteration.
+
+  tool resolve_todos
+    label: "Resolve TODOs"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      if [ -z "$iter_id" ]; then
+        printf 'todos-clean'
+        exit 0
+      fi
+      count=$(grep -rn "TODO(${iter_id})" --include='*.py' --include='*.ts' --include='*.go' --include='*.rs' --include='*.swift' --include='*.js' . 2>/dev/null | grep -v node_modules | grep -v '\.ai/' | wc -l | tr -d ' ')
+      if [ "$count" -eq 0 ]; then
+        printf 'todos-clean'
+      else
+        printf 'todos-unresolved-%d' "$count"
+      fi
+
+  # ── PHASE: Wrap-Up ───────────────────────────────────────────────────────────
+
+  agent wrap_up
+    label: "Wrap Up"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    goal_gate: true
+    auto_status: true
+    prompt:
+      The iteration implementation loop is complete. Wrap up all artifacts.
+
+      Read:
+      1. .ai/iter-current-iteration.txt for the current iteration ID
+      2. .ai/iter-run-temp/tasks.md for the full task list and outcomes
+      3. .ai/iter-run-temp/task_status.txt for final task statuses
+      4. docs/superpowers/iterations/roadmap.md for the current iteration's story list
+
+      ## Your Job
+
+      1. Mark completed stories in requirements/ epic files:
+         - For each story in this iteration that was implemented, update its Status from pending/in_progress to done:ITER-<current>
+
+      2. Update scenario status and test commands in behavior-scenarios.md:
+         - For scenarios updated or added during this iteration, ensure their definitions are current
+         - Update any scenarios whose step definitions changed
+
+      3. Update behavior-corpus.md execution commands:
+         - Replace TBD commands with the actual test commands discovered during implementation
+         - Ensure corpus entries exist for every scenario added this iteration
+
+      4. Update iteration status to done in roadmap.md:
+         - Change **Status:** in_progress to **Status:** done for this iteration
+
+      5. Append an entry to docs/superpowers/iterations/iteration-log.md:
+         ## ITER-<current> — Completed <date>
+         - Stories delivered: [list of STORY-NNNN IDs]
+         - Tasks completed: N/N
+         - Key decisions: [brief notes]
+         - Regressions encountered: [list or none]
+
+      6. Write final progress.md snapshot with phase: completed
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when all wrap-up tasks are complete.
+      Use STATUS: fail when wrap-up cannot be completed (e.g., uncommitted changes, missing story IDs).
+
+      HARD CONSTRAINT: Only modify files in docs/superpowers/iterations/. Do not modify source code.
+
+  tool validate_wrap_up
+    label: "Validate Wrap-Up"
+    timeout: 10s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      if [ -z "$iter_id" ]; then
+        printf 'wrapup-invalid-no-iteration-id'
+        exit 0
+      fi
+      # Check iteration status is done in roadmap
+      # Verify THIS iteration (not just any) is marked done
+      if ! grep -A3 "$iter_id" docs/superpowers/iterations/roadmap.md 2>/dev/null | grep -q "Status.*done"; then
+        printf 'wrapup-invalid-iteration-not-marked-done'
+        exit 0
+      fi
+      # Check iteration-log.md has an entry for this iteration
+      if [ ! -f docs/superpowers/iterations/iteration-log.md ]; then
+        printf 'wrapup-invalid-no-iteration-log'
+        exit 0
+      fi
+      if ! grep -q "$iter_id" docs/superpowers/iterations/iteration-log.md; then
+        printf 'wrapup-invalid-iteration-not-in-log'
+        exit 0
+      fi
+      printf 'wrapup-valid'
+
+  tool commit_iteration
+    label: "Commit Iteration"
+    timeout: 30s
+    command:
+      set -euo pipefail
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      git add docs/superpowers/iterations/
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+      else
+        git commit -m "docs: complete ${iter_id} — update artifacts and iteration log"
+        printf 'committed'
+      fi
+
+  edges
+    # Setup
+    Start -> find_next_iteration
+    find_next_iteration -> all_done_exit          when ctx.tool_stdout = all-done              label: all_done
+    find_next_iteration -> Exit                   when ctx.tool_stdout = no-roadmap            label: no_roadmap
+    find_next_iteration -> load_scope             when ctx.tool_stdout startswith next-         label: found
+    find_next_iteration -> load_scope
+    all_done_exit -> Exit
+
+    # Pre-iteration
+    load_scope -> run_sentinel_baseline
+    run_sentinel_baseline -> consistency_audit
+    consistency_audit -> par_run_scope_dispatch    when ctx.tool_stdout = consistent            label: consistent
+    consistency_audit -> reconcile_state           when ctx.tool_stdout startswith inconsistent  label: inconsistent
+    reconcile_state -> consistency_audit         when ctx.outcome = success   restart: true  label: reconciled
+    reconcile_state -> Exit                       when ctx.outcome = fail      label: irreconcilable
+
+    # PAR scope review
+    par_run_scope_dispatch -> par_run_scope_reviewer_a
+    par_run_scope_dispatch -> par_run_scope_reviewer_b
+    par_run_scope_reviewer_a -> par_run_scope_join
+    par_run_scope_reviewer_b -> par_run_scope_join
+    par_run_scope_join -> par_run_scope_aggregate
+    par_run_scope_aggregate -> decompose_tasks     when ctx.outcome = success   label: scope_approved
+    par_run_scope_aggregate -> adjust_run_scope    when ctx.outcome = fail      label: scope_revise
+    adjust_run_scope -> par_run_scope_dispatch     restart: true
+
+    # Task decomposition
+    decompose_tasks -> mark_iteration_in_progress  when ctx.outcome = success   label: decomposed
+    decompose_tasks -> Exit                        when ctx.outcome = fail      label: decompose_failed
+    mark_iteration_in_progress -> update_progress
+    update_progress -> read_next_task
+
+    # Per-task loop
+    read_next_task -> mark_task_in_progress        when ctx.tool_stdout startswith task-        label: has_task
+    read_next_task -> run_impacted_scenarios        when ctx.tool_stdout = all-tasks-done       label: tasks_done
+    mark_task_in_progress -> implement_task
+    implement_task -> check_impl_status            when ctx.outcome = success   label: implemented
+    implement_task -> check_impl_status            when ctx.outcome = fail      label: impl_issue
+    implement_task -> check_impl_status
+    check_impl_status -> par_spec_dispatch         when ctx.tool_stdout = impl-done              label: done
+    check_impl_status -> par_spec_dispatch         when ctx.tool_stdout = impl-concerns          label: done_with_concerns
+    check_impl_status -> provide_context           when ctx.tool_stdout = impl-needs-context     label: needs_context
+    check_impl_status -> escalate_task             when ctx.tool_stdout = impl-blocked            label: blocked
+    check_impl_status -> par_spec_dispatch
+    provide_context -> implement_task              when ctx.outcome = success   restart: true  label: context_provided
+    provide_context -> escalate_task               when ctx.outcome = fail      label: truly_blocked
+    escalate_task -> read_next_task              when ctx.outcome = success   restart: true  label: skip_blocked
+    escalate_task -> Exit                        when ctx.outcome = fail      label: needs_human
+
+    # PAR spec-compliance (Stage 1)
+    par_spec_dispatch -> par_spec_reviewer_a
+    par_spec_dispatch -> par_spec_reviewer_b
+    par_spec_reviewer_a -> par_spec_join
+    par_spec_reviewer_b -> par_spec_join
+    par_spec_join -> par_spec_aggregate
+    par_spec_aggregate -> par_quality_dispatch     when ctx.outcome = success   label: spec_pass
+    par_spec_aggregate -> fix_spec_issues          when ctx.outcome = fail      label: spec_fail
+    fix_spec_issues -> par_spec_dispatch           when ctx.outcome = success   restart: true  label: spec_fixed
+    fix_spec_issues -> escalate_task               when ctx.outcome = fail      label: spec_stuck
+
+    # PAR code-quality (Stage 2)
+    par_quality_dispatch -> par_quality_reviewer_a
+    par_quality_dispatch -> par_quality_reviewer_b
+    par_quality_reviewer_a -> par_quality_join
+    par_quality_reviewer_b -> par_quality_join
+    par_quality_join -> par_quality_aggregate
+    par_quality_aggregate -> mark_task_done        when ctx.outcome = success   label: quality_pass
+    par_quality_aggregate -> fix_quality_issues    when ctx.outcome = fail      label: quality_fail
+    fix_quality_issues -> par_quality_dispatch     when ctx.outcome = success   restart: true  label: quality_fixed
+    fix_quality_issues -> escalate_task            when ctx.outcome = fail      label: quality_stuck
+
+    # Task completion → loop
+    mark_task_done -> update_task_progress
+    update_task_progress -> read_next_task         restart: true
+
+    # Post-iteration
+    run_impacted_scenarios -> run_sentinel_scenarios
+    run_sentinel_scenarios -> resolve_todos        when ctx.tool_stdout = sentinel-pass         label: sentinel_ok
+    run_sentinel_scenarios -> create_fix_task      when ctx.tool_stdout startswith sentinel-regression  label: regression
+    create_fix_task -> read_next_task              restart: true
+    resolve_todos -> wrap_up                       when ctx.tool_stdout = todos-clean           label: todos_ok
+    resolve_todos -> create_fix_task               when ctx.tool_stdout startswith todos-unresolved  label: todos_remain
+
+    # Wrap-up
+    wrap_up -> validate_wrap_up                    when ctx.outcome = success   label: wrapped
+    wrap_up -> Exit                                when ctx.outcome = fail      label: wrapup_failed
+    validate_wrap_up -> commit_iteration           when ctx.tool_stdout = wrapup-valid          label: valid
+    validate_wrap_up -> wrap_up                    when ctx.tool_stdout startswith wrapup-invalid  label: invalid  restart: true
+    commit_iteration -> Exit
