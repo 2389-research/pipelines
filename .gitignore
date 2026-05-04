@@ -13,3 +13,12 @@ experiments/enrich_sprints_test/runner_test_sr*/
 experiments/enrich_sprints_test/runner_test_v*/
 experiments/enrich_sprints_test/qwen_probe/
 experiments/enrich_sprints_test/SESSION_HANDOFF_*.md
+
+# Nested-repo experiment workdirs that were accidentally tracked as orphaned
+# gitlinks (mode 160000 with no .gitmodules) by an earlier commit. They're
+# treated as throwaway test artifacts now — the canonical NIFB inputs live
+# inline in the docs (local_code_gen/principles/synthetic_fixtures/) or are
+# user-provided per run.
+experiments/NIFB/
+experiments/NIFB_baseline/
+experiments/remix-os-go-3/

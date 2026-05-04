@@ -780,12 +780,27 @@ workflow SpecToSprintsForLocalCodegen
       if [ "$ledger_ids" != "$file_ids" ]; then
         errors="${errors}ledger-file-mismatch "
       fi
+      # Validate the speedrun-shape required sections (see
+      # local_code_gen/principles/SPEEDRUN-SPEC-FORMAT.md). The minimal floor
+      # is Scope/Non-goals/DoD/Validation — every sprint must have these.
+      # Dependencies/Conventions/Rules and the data/api/algorithm/test sections
+      # are checked loosely: their *header* must be present (additive sprints
+      # use redirect notes like "## Data contract (no new types — referenced
+      # from sprint NNN)" so we grep for the section prefix, not the literal).
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
         base=$(basename "$f")
-        for section in "## Scope" "## Requirements" "## Dependencies" "## Expected Artifacts" "## DoD" "## Validation"; do
-          if ! grep -q "$section" "$f"; then
+        # Hard-required (exact match): every sprint MUST have these
+        for section in "## Scope" "## Non-goals" "## DoD" "## Validation"; do
+          if ! grep -q "^${section}" "$f"; then
             tag=$(printf '%s' "$section" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+            errors="${errors}missing-${tag}-${base} "
+          fi
+        done
+        # Speedrun-shape (prefix match — additive sprints append parenthetical notes)
+        for prefix in "## Dependencies" "## Conventions" "## Rules"; do
+          if ! grep -qE "^${prefix}( |$)" "$f"; then
+            tag=$(printf '%s' "$prefix" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
             errors="${errors}missing-${tag}-${base} "
           fi
         done
