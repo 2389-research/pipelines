@@ -1091,7 +1091,11 @@ workflow SpecToSprintsYamlV2
     skip_approval -> write_sprint_docs
     yq_install_gate -> setup_workspace  label: "[S] Retry"  restart: true
     yq_install_gate -> Exit             label: "[A] Abort"
+    write_sprint_docs -> write_ledger   when ctx.outcome = success  label: docs_written
+    write_sprint_docs -> write_ledger   when ctx.outcome = fail     label: docs_partial
     write_sprint_docs -> write_ledger
+    write_ledger -> validate_output   when ctx.outcome = success  label: ledger_written
+    write_ledger -> commit_output    when ctx.outcome = fail     label: ledger_failed
     write_ledger -> validate_output
     validate_output -> commit_output       when ctx.tool_stdout = valid     label: valid
     validate_output -> write_sprint_docs   when ctx.tool_stdout != valid    label: fix_validation  restart: true
