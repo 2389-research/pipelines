@@ -279,8 +279,8 @@ workflow SprintRunnerYamlV2
     check_ledger -> Exit
     no_ledger_exit -> Exit
     deps_blocked_exit -> Exit
-    execute_sprint -> report_progress  when ctx.outcome = success           label: sprint_done
-    execute_sprint -> handle_failure   when ctx.outcome = fail              label: sprint_failed
+    execute_sprint -> handle_failure   when ctx.tool_stdout startswith failed-  label: sprint_failed
+    execute_sprint -> report_progress  when ctx.outcome = success               label: sprint_done
     execute_sprint -> handle_failure
     report_progress -> check_ledger    restart: true
     handle_failure -> check_ledger          when ctx.tool_stdout startswith retry-        label: retry_sprint    restart: true
