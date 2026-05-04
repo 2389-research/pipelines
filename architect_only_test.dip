@@ -1,0 +1,303 @@
+workflow ArchitectOnlyTest
+  goal: "Run only the write_sprint_docs architect step (Opus + write_enriched_sprint with Sonnet 2-pass audit) on existing .ai/sprint_plan.md + .ai/spec_analysis.md. Use this when you've already paid for decomposition+critique upstream and want to iterate on the architect prompt in isolation."
+  start: Start
+  exit: Exit
+
+  defaults
+    provider: anthropic
+    fidelity: summary:medium
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'architect-only-test-begin'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'architect-only-test-complete'
+
+  tool setup_workspace
+    label: "Setup .ai Workspace"
+    timeout: 10s
+    command:
+      set -eu
+      mkdir -p .ai/sprints .ai/drafts
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      fi
+      if [ ! -f .ai/sprint_plan.md ]; then
+        echo "ERROR: .ai/sprint_plan.md missing — this dip starts AFTER decomposition+critique"
+        exit 1
+      fi
+      if [ ! -f .ai/spec_analysis.md ]; then
+        echo "ERROR: .ai/spec_analysis.md missing — this dip starts AFTER decomposition+critique"
+        exit 1
+      fi
+      printf 'ready'
+
+  agent write_sprint_docs
+    label: "Design Phase (architect + dispatch)"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan, spec_analysis
+    max_turns: 12
+    fallback_target: Exit
+    prompt:
+      You are the architect for sprint enrichment. Your job has THREE deterministic outputs in order, then you stop:
+
+      1. Write `.ai/contract.md` — the project-wide architectural map.
+      2. Write `.ai/sprint_descriptions.jsonl` — one JSON record per sprint.
+      3. Call `dispatch_sprints` ONCE. The tool reads the JSONL and contract, loops over every sprint, and runs the per-sprint Sonnet author+audit pipeline mechanically. You do NOT iterate; the tool does.
+
+      After step 3 returns, output a single confirmation line and stop. Do not re-read or revise either file.
+
+      Inputs:
+      - `.ai/sprint_plan.md` — merged sprint plan (decomposition output)
+      - `.ai/spec_analysis.md` — upstream spec analysis with FR-numbered requirements
+
+      ## Step 1: Read both input files
+
+      Read `.ai/sprint_plan.md` and `.ai/spec_analysis.md` in full.
+
+      ## Step 2: Author the project-wide contract → write to `.ai/contract.md`
+
+      The contract is the cross-sprint architectural surface — pinned ONCE, read by every per-sprint generation call. The local model that ultimately writes code from SPRINT-NNN.md cannot make architectural decisions, look up library docs, or resolve ambiguity. Every cross-sprint convention must be pre-decided and pinned here.
+
+      A well-written contract leaves the per-sprint writer (Sonnet) zero choices about project-wide concerns. Sonnet's job is to expand within-sprint specifics; the architect's (your) job is to lock in cross-sprint conventions.
+
+      ### Architectural pattern (load-bearing — choose ONE per project)
+
+      Two sibling patterns are available. Pick based on project size + sprint plan shape, then declare the choice explicitly in `contract.md`'s opening section so the per-sprint writer (Sonnet) sees it on every call.
+
+      **Pattern A — All-front-loaded foundation.** Sprint 001 declares the entire surface area for the project: every ORM model + every Pydantic schema + every error code constant + every test fixture + the FastAPI/equivalent app factory. Sprints 002+ are purely additive — they only drop new router files in `app/routers/<feature>.py`, which `main.py`'s `pkgutil.iter_modules` auto-discovery picks up. FROZEN files declared in sprint 001's Rules: `app/main.py`, `app/models.py`, `app/schemas.py`, `app/exceptions.py`, `app/database.py`, `app/config.py`, `tests/conftest.py`. The only foundation file later sprints may modify is `pyproject.toml` (to append new deps).
+
+      **Pattern B — Subsystem-front-loaded.** Each sprint front-loads its OWN subsystem completely as new files: its own models module, schemas module, router module, fixture module, test files. Auto-discovery for both routers AND models means later sprints don't modify any earlier-sprint file. File structure uses `app/models/<subsystem>.py`, `app/schemas/<subsystem>.py` etc. — `app/models/__init__.py` does pkgutil auto-import so SQLAlchemy registers all classes with `Base.metadata`. Cross-subsystem relationships are forward-declared in the owner module using string class names (e.g., `Volunteer.registrations: Mapped[list["Registration"]] = relationship(...)` with `Registration` defined in a later sprint).
+
+      ### Decision criteria — which pattern to pick
+
+      Use **Pattern A (all-front-loaded)** when ALL of:
+
+      - Project has ≤ 7 ORM entities total
+      - Sprint plan has ≤ 4 sprints
+      - Sprint 001 spec is projected to fit in ~600-700 lines (back-of-envelope: ~30 lines per ORM model + ~20 lines per schema + ~50 lines for routers/tests/fixtures + ~100 lines of conventions = check if your project fits)
+
+      Use **Pattern B (subsystem-front-loaded)** when ANY of:
+
+      - Project has ≥ 8 ORM entities, OR
+      - Sprint plan has ≥ 5 sprints, OR
+      - Sprint 001 spec under Pattern A would exceed ~700 lines (which truncates LLM output and produces incomplete sprint files), OR
+      - The sprint plan already decomposes work along subsystem boundaries (auth, operations, groups, messaging, etc.) — Pattern B fits naturally
+
+      The middle ground (5-7 entities, 4-5 sprints) — either works; lean Pattern B if the sprint plan reads as subsystems, Pattern A if the data model is highly interconnected and "subsystems" don't carve cleanly.
+
+      Empirical anchor: NIFB's 18 entities + 16 sprints exceeds Pattern A's bounds — the May 1 NIFB run with Pattern A produced a 1068-line SPRINT-001 spec that truncated mid-Rules section because Sonnet hit its output-token cap. Pattern B keeps each sprint under 500 lines and patch-loop-clean.
+
+      ### Pattern declaration in contract.md (mandatory)
+
+      `contract.md`'s opening section MUST include:
+
+      ```markdown
+      ## Architectural Pattern
+
+      This project uses **<Pattern A: all-front-loaded | Pattern B: subsystem-front-loaded>** architecture.
+
+      <One paragraph rationale citing the decision criteria above. Example:
+      "Sprint plan has 16 sprints across 18 entities, decomposed naturally
+      along auth/operations/groups/messaging/check-in subsystems. Pattern B
+      keeps each sprint focused on its subsystem and avoids the foundation
+      sprint exceeding writer model output budget.">
+
+      <For Pattern B: list the subsystems and which sprint owns each.>
+      ```
+
+      The downstream Sonnet writer reads this and applies the corresponding within-sprint shape.
+
+      If the project doesn't fit either pattern (e.g., truly unknown data model that emerges sprint-by-sprint, or tightly-coupled cross-cutting state machines), declare a third option explicitly in this section with the alternative pattern documented inline.
+
+      ### Required sections in `.ai/contract.md`
+
+      Author all of these. Each must be precise enough that Sonnet's per-sprint expansion inherits unambiguous conventions.
+
+      #### 1. Stack & Runtime
+      - Language(s) and version
+      - Package manager and key third-party libraries (web framework, ORM, test framework, validation, auth) — each with exact import name
+      - Anything explicitly excluded
+      - The build-system block REQUIRED for the chosen package manager. Examples: for hatchling with project name ≠ package dir name: `[tool.hatch.build.targets.wheel] packages = ["<dir>"]` is mandatory; auto-detection fails without it. For setuptools: `find_packages(...)` config or src-layout. Pin the exact text the foundation sprint must include.
+
+      #### 2. Project-wide Conventions
+      - Error handling idiom — including the EXCEPTION CLASS and the JSON RESPONSE SHAPE it returns. If the project uses a custom exception (e.g., `AppError`) with a flat `{"detail": str, "error_code": str}` handler, pin BOTH the class signature AND the wire shape. Every sprint's tests will assert against the wire shape — if it isn't pinned, tests in different sprints will use different paths (`body["error_code"]` vs `body["detail"]["error_code"]`) and silently fail.
+      - Naming conventions (file/module casing, test file naming)
+      - Test framework + test organization rules
+      - Async vs sync, logging conventions
+
+      #### 3. Data Model Pinning (cross-sprint)
+
+      For ORMs with async semantics, pin the loading strategy explicitly:
+      - Async loading: collection-side relationships use `lazy="selectin"` (or analog).
+      - Bidirectional relationships use `back_populates` on BOTH sides with matching names.
+
+      For Pydantic v2 settings: pin the singleton pattern (`get_settings()` cached factory) and forbid class-attr access. Tests use literal values for config-derived constants; `Settings.X` is forbidden (Pydantic stores fields on instances, not class attributes — class-attr access raises `AttributeError`).
+
+      #### 4. Test Infrastructure
+
+      Pin the test fixture and engine configuration. The conftest.py lives in the foundation sprint and is referenced by every later sprint.
+
+      For in-memory SQLite tests:
+      - `create_async_engine("sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)`
+      - Without StaticPool, every connection gets its own in-memory DB; cross-session writes are invisible.
+
+      For dependency-override fixtures: helpers that reference fixture-resolved values (e.g., `override_get_db` referencing `async_engine`) MUST be defined as nested closures inside the consuming fixture, NOT at module level. Module-level definitions bind to the pytest fixture decorator object, not the resolved value.
+
+      #### 5. Sprint File-Ownership Map
+
+      For every sprint in the plan, list the files it owns. The structure differs by chosen pattern:
+
+      - **Pattern A:** Sprint 001 owns ALL foundation files (models.py, schemas.py, conftest.py, etc.). Sprints 002+ own one router + one test file each.
+
+      - **Pattern B:** Sprint 001 owns ONLY foundation infrastructure + the FIRST subsystem's modules (`app/models/<first-subsystem>.py`, `app/schemas/<first-subsystem>.py`, etc.). Each later sprint owns its OWN subsystem's modules: `app/models/<subsystem>.py`, `app/schemas/<subsystem>.py`, `app/routers/<subsystem>.py`, `tests/test_<subsystem>.py`, optionally `tests/fixtures/<subsystem>.py`.
+
+      Use dynamic-discovery patterns where the framework supports it (auto-loaded modules, plugin registries, route auto-registration) so dispatch/registration files don't need updating across sprints. Pattern B specifically requires `app/models/__init__.py` to do `pkgutil.iter_modules(__path__)` import-all so SQLAlchemy classes from subsystem modules register with `Base.metadata`.
+
+      If neither pattern fits, declare the alternative explicitly here with the modify-pattern (e.g., "Sprint 001 OWNS models.py; Sprint 002+ APPENDS new model classes only — never edits existing ones").
+
+      #### 6. Cross-Sprint Type/Symbol Ownership Map (load-bearing)
+
+      For every type, function, or constant that crosses sprint boundaries, declare:
+      - The owning sprint
+      - The exact signature: field names with types, function signatures with return types, **relationship declarations including `back_populates` and `lazy="selectin"` annotations**
+      - Where it's defined (file path)
+
+      This pins what later sprints will import. Underspecification here is the failure mode — when the per-sprint writer doesn't see exact field names, it invents and diverges across sprints.
+
+      #### 7. Cross-Sprint Dependency Edges
+      Directed graph of which sprints depend on which.
+
+      #### 8. Mandatory Rules Across All Sprints
+
+      Project-wide rules every sprint inherits. Include:
+      - **Import conventions**: `from app.X import Y` form; no relative imports; full Python statements never bare module names; for class-vs-module collisions like `datetime` / `date` / `time`, use `from X import Y` explicitly.
+      - **The FROZEN files list** (no later sprint may modify these).
+      - **Test-fixture-from-conftest rule**: no inline AsyncClient/engine/session construction in test files; tests take fixtures as function parameters.
+      - **The decisive-choice rule**: where the spec is ambiguous, contract.md commits to one answer.
+
+      #### 9. Identify the project's *tricky semantics*
+
+      Areas where convention matters and silence forces the implementer to guess. Common categories: concurrency/loading model, resource lifecycle, process-global state, paired cross-module invariants, config defaults + test override. Document the chosen pattern for each. Foundation sprint must have thorough test coverage of every shape it pins (models, schemas, error contracts) since later sprints depend on it without re-testing.
+
+      ### Architect-discipline meta-rules to apply when authoring contract.md
+
+      - **Structural sections must embody structural rules.** When contract.md states a structural rule (route order, field order, declaration order), the structured sections (tables, signatures, algorithm subsections) must reflect it. The local generator follows structure, not prose. If the rule and the structure conflict, the structure wins.
+
+      - **Make concrete choices.** Where the upstream spec is ambiguous, contract.md commits to one answer. Don't hedge with "you may use X or Y." Don't write "choose based on your preference." The local generator has no preference — it needs one answer.
+
+      - **Pin exact field sets.** When defining a schema or model, list every field with its type. Never write a partial example with "...etc." The local generator invents fields when given an incomplete shape.
+
+      - **Cross-reference the runtime symptom.** When pinning a non-obvious convention (e.g., StaticPool, lazy="selectin"), include a one-liner about WHAT FAILS WITHOUT IT. Sonnet reads contract.md and applies these conventions per-sprint; knowing the failure mode helps it judge edge cases.
+
+      Save the contract to `.ai/contract.md` using the write tool.
+
+      ## Step 3: Author `.ai/sprint_descriptions.jsonl`
+
+      Write one JSON object per line — exactly one line per sprint in `.ai/sprint_plan.md`, in numeric order. The format is strict:
+
+      ```json
+      {"path": "SPRINT-001.md", "description": "<full per-sprint description>"}
+      {"path": "SPRINT-002.md", "description": "<full per-sprint description>"}
+      ```
+
+      Each `description` field is the per-sprint slice the downstream Sonnet writer will expand into the full enriched spec. Include:
+
+      - title, scope summary, FRs covered
+      - **File breakdown — categorize EVERY file:**
+        - `New files:` — files this sprint creates that don't exist yet (no prior sprint owns them)
+        - `Modified files:` — files that already exist from prior sprints and this sprint extends. Use the contract's file-ownership map. Misclassifying a modified file as new will cause the local executor to overwrite the prior sprint's contribution.
+      - types/functions this sprint defines (NAMES — fields are pinned in the contract)
+      - cross-sprint dependencies it consumes
+      - exact validation commands
+      - Do NOT redefine field-by-field shape of cross-sprint types here; reference them by name and let the contract carry the truth.
+      - **Infrastructure & setup specifics (load-bearing for sprint 001 and any later sprint that introduces new build/config infrastructure):** include verbatim content for every config file the sprint creates — package manifests, build-system config, test-runner config, linter configs. Provide the exact text the generator should transcribe.
+
+      JSONL hard rules:
+      - Each line MUST be valid JSON. Newlines inside the description string MUST be encoded as `\n`.
+      - Path MUST match `SPRINT-NNN.md` (zero-padded 3-digit). No `SPRINT-1.md` or `001.md`.
+      - No trailing commas, no comments, no blank lines between records.
+
+      Save with the write tool to `.ai/sprint_descriptions.jsonl`.
+
+      ## Step 4: Call `dispatch_sprints` once
+
+      Invoke `dispatch_sprints` with no arguments (defaults are correct: reads `.ai/sprint_descriptions.jsonl`, `.ai/contract.md`, writes to `.ai/sprints/`). The tool loops mechanically — one author+audit pass per JSONL line — and returns a summary string.
+
+      After the call returns, output a single confirmation line (e.g. "Done.") and stop. Do NOT call `write_enriched_sprint` directly. Do NOT re-read or revise contract.md or the JSONL. Your job ends here.
+
+      ## Tools available
+      - read (for inputs)
+      - write (for `.ai/contract.md` and `.ai/sprint_descriptions.jsonl` only)
+      - dispatch_sprints (called exactly ONCE after the JSONL is on disk)
+      - write_enriched_sprint exists but you MUST NOT call it directly — `dispatch_sprints` invokes it under the hood
+
+      ## Rules
+      - CRITICAL: All sprint files MUST be written to `.ai/sprints/` — NEVER to the project root. (`dispatch_sprints` handles this.)
+      - Sprint IDs MUST be zero-padded 3-digit: 001, 002, ... 016 — NOT 1, 2, ... 16.
+      - Do NOT write or modify `.ai/ledger.tsv` — a separate tool handles that.
+      - Every per-sprint description should specify validation commands.
+      - First DoD item for each sprint should be writing a failing test for the sprint's core deliverable.
+
+      ## Tool prerequisites
+      Both `dispatch_sprints` and `write_enriched_sprint` require `TRACKER_SPRINT_WRITER_MODEL` env var set on the tracker process (e.g. `claude-sonnet-4-6`).
+
+  tool write_ledger
+    label: "Write Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        id=$(basename "$f" .md | sed 's/SPRINT-//')
+        title=$(head -1 "$f" | sed 's/^# Sprint [0-9]* *[-—–]* *//' | sed 's/^# //' | tr -d '\t')
+        printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$title" "planned" "$now" "$now" >> .ai/ledger.tsv
+      done
+      count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      printf 'wrote-%s-sprints' "$count"
+
+  tool validate_output
+    label: "Validate Sprint Files"
+    timeout: 10s
+    command:
+      set -eu
+      errors=""
+      sprint_count=0
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        sprint_count=$((sprint_count + 1))
+        for required in "## Scope" "## Non-goals" "## DoD" "## Validation"; do
+          if ! grep -q "^${required}" "$f"; then
+            errors="${errors}${f}: missing section '${required}'\n"
+          fi
+        done
+        if [ ! -s "$f" ]; then
+          errors="${errors}${f}: empty file\n"
+        fi
+      done
+      if [ "$sprint_count" -eq 0 ]; then
+        echo "validate-fail: no sprint files found"
+        exit 1
+      fi
+      if [ -n "$errors" ]; then
+        printf "validate-fail: errors found:\n%b" "$errors"
+        exit 1
+      fi
+      printf 'validate-pass-%s-sprints' "$sprint_count"
+
+  edges
+    Start -> setup_workspace
+    setup_workspace -> write_sprint_docs
+    write_sprint_docs -> write_ledger
+    write_ledger -> validate_output
+    validate_output -> Exit

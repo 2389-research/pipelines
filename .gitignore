@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Throwaway experiment workdirs — generated artifacts (sprint specs, contracts,
+# ledgers, runner outputs) live here during iteration. The reproducible
+# inputs are checked into experiments/<project>/.ai/ on the source branches;
+# the *_v{N}/ workdirs are generated test runs, not source.
+experiments/notebook_smoke_v*/
+experiments/notebook_full_run_v*/
+experiments/nifb_full_run_v*/
+experiments/architect_pipeline_test_v*/
+experiments/enrich_sprints_test/runner_test_sr*/
+experiments/enrich_sprints_test/runner_test_v*/
+experiments/enrich_sprints_test/qwen_probe/
+experiments/enrich_sprints_test/SESSION_HANDOFF_*.md
