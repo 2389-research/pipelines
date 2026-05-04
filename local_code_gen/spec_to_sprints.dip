@@ -530,12 +530,24 @@ workflow SpecToSprintsForLocalCodegen
     timeout: 10s
     command:
       set -eu
+      # Preflight: TRACKER_SPRINT_WRITER_MODEL is mandatory because the
+      # write_sprint_docs agent calls dispatch_sprints, which requires the
+      # tool to be registered (gated on this env var by tracker's
+      # backend_native handler). Without the var the agent will appear to
+      # run but fail to dispatch and silently fall through to Exit.
+      : "${TRACKER_SPRINT_WRITER_MODEL:?TRACKER_SPRINT_WRITER_MODEL must be set so dispatch_sprints registers (e.g. claude-sonnet-4-6)}"
       mkdir -p .ai/sprints .ai/drafts
       if [ ! -f .ai/ledger.tsv ]; then
         printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
       fi
       printf 'ready'
 
+  # write_sprint_docs is the load-bearing architect step. With the deterministic
+  # dispatch_sprints flow, agent failure means NO sprints generated — falling
+  # through to Exit on failure would mask that as a successful run. We omit
+  # `fallback_target` so failures halt the pipeline with a real error rather
+  # than a silent green Exit. The validate_output→write_sprint_docs restart
+  # edge below handles the soft-failure case (validation found issues to fix).
   agent write_sprint_docs
     label: "Design Phase (architect + dispatch)"
     model: claude-opus-4-6
@@ -543,7 +555,6 @@ workflow SpecToSprintsForLocalCodegen
     reasoning_effort: high
     reads: sprint_plan, spec_analysis
     max_turns: 12
-    fallback_target: Exit
     prompt:
       You are the architect for sprint enrichment. Your job has THREE deterministic outputs in order, then you stop:
 
