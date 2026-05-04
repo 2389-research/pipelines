@@ -1,5 +1,5 @@
 workflow SpecToSprintsForLocalCodegen
-  goal: "Decompose a specification into .ai/ledger.tsv and SPRINT-*.md files tuned for downstream LOCAL CODE GENERATION (qwen + sprint_runner_local_gen_qwen_sr.dip). Uses Harper's multi-model tournament decomposition + critique + merge upstream, then applies the architect/Sonnet-writer/dispatch_sprints flow to produce speedrun-shape sprint specs that the local model can transcribe deterministically. For pipelines targeting cloud-only code generation, use the original spec_to_sprints.dip instead."
+  goal: "Decompose a specification into .ai/ledger.tsv and SPRINT-*.md files tuned for downstream LOCAL CODE GENERATION (qwen + local_code_gen/sprint_runner.dip). Uses Harper's multi-model tournament decomposition + critique + merge upstream, then applies the architect/Sonnet-writer/dispatch_sprints flow to produce speedrun-shape sprint specs that the local model can transcribe deterministically. For pipelines targeting cloud-only code generation, use the original spec_to_sprints.dip at the repo root instead."
   start: Start
   exit: Exit
 

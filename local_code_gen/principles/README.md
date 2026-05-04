@@ -110,7 +110,7 @@ The natural test: regenerate a known project's sprint specs through the updated 
 
    Compare to [`exemplars/SPRINT-001.md`](exemplars/SPRINT-001.md), [`exemplars/SPRINT-002.md`](exemplars/SPRINT-002.md), [`exemplars/SPRINT-003.md`](exemplars/SPRINT-003.md) for shape.
 
-6. End-to-end: run the generated sprint 001 through `pipelines/sprint_runner_local_gen_qwen_sr.dip`. If the architect prompts are correct, sprint 001 generates 20+ files and pytest passes 21+ tests on the first try (or with at most one LocalFix round).
+6. End-to-end: run the generated sprint 001 through `local_code_gen/sprint_runner.dip`. If the architect prompts are correct, sprint 001 generates 20+ files and pytest passes 21+ tests on the first try (or with at most one LocalFix round).
 
 ### Test 2: Spot-check the cross-sprint contract
 

@@ -1,6 +1,8 @@
 # Structural fix: test plan
 
-How we'll validate the [structural fix](STRUCTURAL-FIX-PROPOSAL.md) (Opus designs, tracker tool dispatches) before shipping it. Each piece tested in isolation; integration tests use a small synthetic project so we can verify outputs by hand without paying NIFB-scale cost.
+**Status: TEST PLAN (historical, May 1 2026).** How we validated the [structural fix](STRUCTURAL-FIX-PROPOSAL.md) (Opus designs, tracker tool dispatches) before shipping it. Each piece tested in isolation; integration tests use a small synthetic project so we can verify outputs by hand without paying NIFB-scale cost.
+
+> **Note on paths in this document:** this plan was written before the May 4 reorganization that moved the dips into `local_code_gen/`. References to `architect_only_test.dip`, `experiments/sprint_authoring_principles/` etc. are accurate to the layout at writing time. Current paths: `local_code_gen/architect_only.dip`, `local_code_gen/principles/synthetic_fixtures/`. The test outcomes themselves are documented in [`STRUCTURAL-FIX-RESULTS.md`](STRUCTURAL-FIX-RESULTS.md).
 
 ## Why a synthetic test fixture
 

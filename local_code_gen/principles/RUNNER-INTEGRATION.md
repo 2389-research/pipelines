@@ -22,7 +22,7 @@ How the architect-side outputs (post-[STRUCTURAL-FIX-RESULTS.md](STRUCTURAL-FIX-
 │                                                                  │
 │  .ai/ledger.tsv populated with all sprints `planned`             │
 │                                                                  │
-│  Pipeline: architect_only_test.dip                               │
+│  Pipeline: local_code_gen/architect_only.dip                     │
 │  Cost: ~$2 / 9 min                                               │
 │                                                                  │
 └────────────────────────────┬─────────────────────────────────────┘
@@ -42,7 +42,7 @@ How the architect-side outputs (post-[STRUCTURAL-FIX-RESULTS.md](STRUCTURAL-FIX-
 │    Audit:              artifact + test-count gates              │
 │    Commit:             git commit per sprint                    │
 │                                                                  │
-│  Pipeline: sprint_runner_local_gen_qwen_sr.dip                   │
+│  Pipeline: local_code_gen/sprint_runner.dip                      │
 │  Cost (this run): ~$0.30 cloud + $0 local                        │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
@@ -63,7 +63,7 @@ Net effect on a v4 spec running through the SR runner *before* the fix:
 - **Audit's artifact-presence check silently does nothing** on v4 specs — the awk loop never enters the in-section branch.
 - **Audit's test-count check returns 0 for sprint_tests** — counts `def test_` in a section that doesn't exist; passes the "actual >= sprint" gate vacuously.
 
-## Fix: section-name alignment in `sprint_runner_local_gen_qwen_sr.dip`
+## Fix: section-name alignment in `local_code_gen/sprint_runner.dip`
 
 Three small edits to the runner dip:
 
@@ -73,7 +73,7 @@ Three small edits to the runner dip:
 
 3. **Generate gen_file/patch_file user-prompt hint** — point qwen at "Data contract (types/schemas), API contract (route table), Algorithm (per-route prose), Test contract (per-file tables), and Verbatim files (tiny configs)" instead of the v1 section names. Keep v1 names as a documented fallback so older specs still work.
 
-The dip validates clean post-fix (`tracker validate sprint_runner_local_gen_qwen_sr.dip` → 19 pre-existing harmless warnings, 0 errors).
+The dip validates clean post-fix (`tracker validate local_code_gen/sprint_runner.dip` → 19 pre-existing harmless warnings, 0 errors).
 
 ## Fix: 4-strategy SR-block matcher in the auditor
 
@@ -96,7 +96,7 @@ The Levenshtein-distance implementation uses a rolling two-row DP, O(la × lb) t
 
 ## End-to-end run on Notebook fixtures (2026-05-01 11:12)
 
-Workdir: `experiments/notebook_smoke_v4/`. Architect already produced specs (3-sprint Notebook API). Runner executed `sprint_runner_local_gen_qwen_sr.dip` cold on those specs.
+Workdir: `experiments/notebook_smoke_v4/`. Architect already produced specs (3-sprint Notebook API). Runner executed `local_code_gen/sprint_runner.dip` cold on those specs.
 
 ### Per-sprint timeline
 
@@ -224,8 +224,8 @@ For asynchronous runs (kick off, come back later), the local-first model is the 
 | `tracker/agent/tools/dispatch_sprints.go` | `IsTerminal() bool { return true }` + `runOneWithRetry` with bounded backoff for retryable provider errors |
 | `tracker/agent/tools/write_enriched_sprint.go` | Replaced exact-match-only `applySRBlocks` with 4-strategy matcher (exact / indent / whitespace / fuzzy); added supporting helpers (`commonLeadingIndent`, `dedentLines`, `indentLines`, `similarityRatio`, `levenshteinDistance`, `splitKeepNewlines`, `collapseWhitespace`) |
 | `tracker/agent/tools/write_enriched_sprint_test.go` | 12 unit tests covering all four match strategies + similarity ratio + parser |
-| `pipelines/sprint_runner_local_gen_qwen_sr.dip` | Audit gate scans `## New files` + `## Modified files` (with legacy fallback); test-count uses `## Test contract` (with v1 fallback); Generate prompt hint mentions both v4 and v1 section names |
-| `pipelines/architect_only_test.dip` | Replaced `agent Start` and `agent Exit` with `tool` nodes (zero-LLM markers) |
-| `pipelines/experiments/sprint_authoring_principles/synthetic_fixtures/notebook_*.md` | Notebook API synthetic fixtures (spec_analysis + sprint_plan, ~150 lines combined) |
-| `pipelines/experiments/sprint_authoring_principles/STRUCTURAL-FIX-RESULTS.md` | Updated to track v1→v4 progression |
-| `pipelines/experiments/sprint_authoring_principles/RUNNER-INTEGRATION.md` | (this doc) — runner-side integration outcomes + cost analysis |
+| `pipelines/local_code_gen/sprint_runner.dip` | Audit gate scans `## New files` + `## Modified files` (with legacy fallback); test-count uses `## Test contract` (with v1 fallback); Generate prompt hint mentions both v4 and v1 section names |
+| `local_code_gen/architect_only.dip` | Replaced `agent Start` and `agent Exit` with `tool` nodes (zero-LLM markers) |
+| `local_code_gen/principles/synthetic_fixtures/notebook_*.md` | Notebook API synthetic fixtures (spec_analysis + sprint_plan, ~150 lines combined) |
+| `local_code_gen/principles/STRUCTURAL-FIX-RESULTS.md` | Updated to track v1→v4 progression |
+| `local_code_gen/principles/RUNNER-INTEGRATION.md` | (this doc) — runner-side integration outcomes + cost analysis |

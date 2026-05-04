@@ -14,8 +14,8 @@ The architect side is now fully wired: Opus writes contract.md + sprint_descript
 | Embedded few-shot example (NIFB SPRINT-001 + SPRINT-002) | landed | `tracker/agent/tools/write_enriched_sprint_example.md` |
 | TerminalTool runtime primitive | landed | `tracker/agent/tools/registry.go`, `tracker/agent/session.go` |
 | 4-strategy SR-block matcher (exact / indent / whitespace / fuzzy) | landed + 12 unit tests | `tracker/agent/tools/write_enriched_sprint.go`, `_test.go` |
-| `architect_only_test.dip` Start/Exit cleanup (tools, not agents) | landed | `pipelines/architect_only_test.dip` |
-| Notebook API synthetic fixtures | landed | `pipelines/experiments/sprint_authoring_principles/synthetic_fixtures/` |
+| Architect dip Start/Exit cleanup (tools, not agents) | landed | `local_code_gen/architect_only.dip` |
+| Notebook API synthetic fixtures | landed | `local_code_gen/principles/synthetic_fixtures/` |
 
 All cleanly build; full test suite (`go test ./agent/... ./pipeline/handlers/`) green.
 
@@ -118,8 +118,8 @@ All cleanly build; full test suite (`go test ./agent/... ./pipeline/handlers/`) 
 | Agent terminates on dispatch success | `TerminalTool` interface + session loop check | `tracker/agent/tools/registry.go` + `tracker/agent/session.go` |
 | Per-sprint API errors retry transparently | `runOneWithRetry` | `tracker/agent/tools/dispatch_sprints.go` |
 | Audit SR blocks tolerate whitespace drift | 4-strategy `applySRBlocks` | `tracker/agent/tools/write_enriched_sprint.go` |
-| DAG entry/exit don't run the architect work | `tool` nodes (not `agent`) | `pipelines/architect_only_test.dip` |
-| Foundation sprint pattern (front-loaded + auto-discovery + FROZEN) | Opus prompt body | `pipelines/architect_only_test.dip:39-200` |
+| DAG entry/exit don't run the architect work | `tool` nodes (not `agent`) | `local_code_gen/architect_only.dip` and `local_code_gen/spec_to_sprints.dip` |
+| Foundation sprint pattern (front-loaded + auto-discovery + FROZEN) | Opus prompt body | `local_code_gen/architect_only.dip` and `local_code_gen/spec_to_sprints.dip` (`write_sprint_docs` agent) |
 
 ## Acceptance gate status (vs [STRUCTURAL-FIX-TEST-PLAN.md](STRUCTURAL-FIX-TEST-PLAN.md))
 
@@ -140,11 +140,11 @@ All cleanly build; full test suite (`go test ./agent/... ./pipeline/handlers/`) 
 
 ## Files to read for context
 
-- `experiments/notebook_smoke_v4/.ai/contract.md` — the Opus-authored contract from a clean run
+- `experiments/notebook_smoke_v4/.ai/contract.md` — the Opus-authored contract from a clean run (gitignored test workdir; recreate by running `local_code_gen/architect_only.dip` against the synthetic fixture)
 - `experiments/notebook_smoke_v4/.ai/sprint_descriptions.jsonl` — the JSONL handoff between Opus and dispatch_sprints
 - `experiments/notebook_smoke_v4/.ai/sprints/SPRINT-001.md` — foundation spec (33KB, all 15 speedrun sections)
-- `experiments/sprint_authoring_principles/exemplars/SPRINT-001.md` — the validated reference shape (NIFB v7)
-- `experiments/notebook_smoke_v4/backend/` — the runner-generated working code (34 tests passing — see RUNNER-INTEGRATION.md)
+- `local_code_gen/principles/exemplars/SPRINT-001.md` — the validated reference shape (NIFB v7)
+- `experiments/notebook_smoke_v4/backend/` — the runner-generated working code (34 tests passing — see [RUNNER-INTEGRATION.md](RUNNER-INTEGRATION.md))
 - `tracker/agent/tools/dispatch_sprints.go` — the deterministic dispatch loop
 - `tracker/agent/tools/write_enriched_sprint.go` — the speedrun-aligned writer prompt + 4-strategy SR matcher
 - `tracker/agent/session.go:240` — the TerminalTool short-circuit in the session loop

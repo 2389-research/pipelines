@@ -29,11 +29,11 @@ The 35B-A3B is hybrid. Recommended params CHANGE depending on which mode:
 
 **Mixing modes and params is a real footgun.** If the call uses `think:false` but `temp=1.0/top_p=0.95`, you've got non-thinking mode with thinking-mode params — a parameter mismatch.
 
-The current `pipelines/sprint_runner_local_gen_qwen_sr.dip` uses `think:false` everywhere with the (mostly correct) thinking-mode-style params per the table above. Worth A/B testing flipping Generate(initial) and LocalFix to `think:true` since SWE work benefits from reasoning. Strip `<think>...</think>` blocks from the response before writing to file.
+The current `local_code_gen/sprint_runner.dip` uses `think:false` everywhere with the (mostly correct) thinking-mode-style params per the table above. Worth A/B testing flipping Generate(initial) and LocalFix to `think:true` since SWE work benefits from reasoning. Strip `<think>...</think>` blocks from the response before writing to file.
 
 ## How this lives in the dip
 
-`pipelines/sprint_runner_local_gen_qwen_sr.dip` has FOUR qwen call sites with options blocks:
+`local_code_gen/sprint_runner.dip` has FOUR qwen call sites with options blocks:
 
 1. **Generate gen_file** (~line 119): initial-generation profile (temp=1.0, presence_penalty=1.5)
 2. **Generate patch_file** (~line 142): modify-existing profile (temp=0.6, presence_penalty=0.0)
@@ -43,7 +43,7 @@ The current `pipelines/sprint_runner_local_gen_qwen_sr.dip` uses `think:false` e
 All four were updated on Apr 30, 2026 with the values in the table above. Verify by running:
 
 ```bash
-grep -nE "temperature|top_k|presence_penalty" pipelines/sprint_runner_local_gen_qwen_sr.dip | head -20
+grep -nE "temperature|top_k|presence_penalty" local_code_gen/sprint_runner.dip | head -20
 ```
 
 ## Sources

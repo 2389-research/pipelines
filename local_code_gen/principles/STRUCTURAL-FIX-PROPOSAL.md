@@ -1,6 +1,8 @@
 # Structural fix: deterministic sprint dispatch (Opus designs, tracker iterates)
 
-**Status: proposal.** Notes for the architectural cleanup that removes Opus's agency over the per-sprint dispatch loop. Captures why the current architect+iterate pattern is fragile and what the corrected shape looks like.
+**Status: PROPOSAL (historical, May 1 2026).** Original proposal for the architectural cleanup that removed Opus's agency over the per-sprint dispatch loop. Captures the reasoning behind the now-landed design.
+
+> **Note on paths in this document:** this proposal was written before the May 4 reorganization that moved the dips into `local_code_gen/`. References to `architect_only_test.dip`, `sprint_runner_local_gen_qwen_sr.dip`, `experiments/sprint_authoring_principles/` etc. are accurate to the file layout at the time of writing. Current paths: `local_code_gen/architect_only.dip`, `local_code_gen/sprint_runner.dip`, `local_code_gen/principles/`. See [`STRUCTURAL-FIX-RESULTS.md`](STRUCTURAL-FIX-RESULTS.md) for the post-implementation file map.
 
 ## The principle
 
