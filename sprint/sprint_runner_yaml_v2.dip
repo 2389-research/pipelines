@@ -157,10 +157,16 @@ workflow SprintRunnerYamlV2
       target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "unknown")
       last_failed=$(cat .ai/runner-last-failed-sprint.txt 2>/dev/null || echo "none")
       total_failures=$(cat .ai/runner-total-failures.txt 2>/dev/null || echo "0")
-      # Check if RecoveryManager requested redecomposition
+      # Check if RecoveryManager requested redecomposition AND it matches current target
       if [ -f .ai/redecompose-request.yaml ]; then
-        printf 'redecompose-%s' "$target"
-        exit 0
+        req_target=$(yq '.failed_sprint_id' .ai/redecompose-request.yaml 2>/dev/null || echo "")
+        if [ "$req_target" = "$target" ]; then
+          printf 'redecompose-%s' "$target"
+          exit 0
+        else
+          # Stale request from a different sprint — discard it
+          rm -f .ai/redecompose-request.yaml
+        fi
       fi
       total_failures=$((total_failures + 1))
       printf '%s' "$total_failures" > .ai/runner-total-failures.txt
@@ -182,6 +188,17 @@ workflow SprintRunnerYamlV2
         fi
       fi
 
+  tool snapshot_before_redecompose
+    label: "Snapshot Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      # Save ledger state and completed count before redecompose subgraph runs
+      cp .ai/ledger.yaml .ai/ledger-pre-redecompose.yaml
+      completed=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
+      printf '%s' "$completed" > .ai/ledger-pre-redecompose-count.txt
+      printf 'snapshot-saved-%s-completed' "$completed"
+
   tool prepare_redecompose
     label: "Prepare Redecompose"
     timeout: 15s
@@ -189,12 +206,17 @@ workflow SprintRunnerYamlV2
       set -eu
       if [ ! -f .ai/redecompose-request.yaml ]; then
         printf 'no-request'
-        exit 1
+        exit 0
       fi
       target=$(yq '.failed_sprint_id' .ai/redecompose-request.yaml)
-      # Calculate next available ID
+      # Calculate next available ID — handle non-numeric IDs gracefully
       max_id=$(yq '.sprints[-1].id' .ai/ledger.yaml)
-      next_id=$(printf '%03d' $((10#$max_id + 1)))
+      # Strip any non-digit suffix to get the numeric base
+      numeric_base=$(printf '%s' "$max_id" | sed 's/[^0-9].*$//')
+      if [ -z "$numeric_base" ]; then
+        numeric_base="099"
+      fi
+      next_id=$(printf '%03d' $((10#$numeric_base + 1)))
       yq -i ".next_available_id = \"$next_id\"" .ai/redecompose-request.yaml
       # Calculate existing sprint count
       count=$(yq '.sprints | length' .ai/ledger.yaml)
@@ -203,6 +225,27 @@ workflow SprintRunnerYamlV2
 
   subgraph redecompose_sprint
     ref: spec_to_sprints_yaml_v2.dip
+
+  tool validate_ledger_after_redecompose
+    label: "Validate Ledger Integrity"
+    timeout: 15s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger-pre-redecompose-count.txt ]; then
+        printf 'no-snapshot-skipping'
+        exit 0
+      fi
+      expected=$(cat .ai/ledger-pre-redecompose-count.txt)
+      actual=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
+      if [ "$actual" -lt "$expected" ]; then
+        # Ledger was corrupted — completed sprints disappeared. Restore from snapshot.
+        cp .ai/ledger-pre-redecompose.yaml .ai/ledger.yaml
+        rm -f .ai/ledger-pre-redecompose.yaml .ai/ledger-pre-redecompose-count.txt
+        printf 'restored-ledger-%s-completed-were-%s' "$expected" "$actual"
+      else
+        rm -f .ai/ledger-pre-redecompose.yaml .ai/ledger-pre-redecompose-count.txt
+        printf 'ledger-ok-%s-completed' "$actual"
+      fi
 
   tool splice_ledger
     label: "Splice Redecomposed Sprints"
@@ -286,11 +329,20 @@ workflow SprintRunnerYamlV2
     handle_failure -> check_ledger          when ctx.tool_stdout startswith retry-        label: retry_sprint    restart: true
     handle_failure -> check_ledger          when ctx.tool_stdout startswith skipped-      label: skip_continue   restart: true
     handle_failure -> failure_summary       when ctx.tool_stdout startswith budget-       label: budget_blown
-    handle_failure -> prepare_redecompose   when ctx.tool_stdout startswith redecompose-  label: redecompose
+    handle_failure -> snapshot_before_redecompose  when ctx.tool_stdout startswith redecompose-  label: redecompose
     handle_failure -> failure_summary
-    prepare_redecompose -> redecompose_sprint
-    redecompose_sprint -> splice_ledger      when ctx.outcome = success  label: redecompose_done
-    redecompose_sprint -> failure_summary    when ctx.outcome = fail     label: redecompose_failed
+    snapshot_before_redecompose -> prepare_redecompose
+    prepare_redecompose -> redecompose_sprint                when ctx.tool_stdout startswith ready-   label: prepared
+    prepare_redecompose -> check_ledger                     when ctx.tool_stdout = no-request        label: stale_request  restart: true
+    prepare_redecompose -> check_ledger                     restart: true
+    redecompose_sprint -> validate_ledger_after_redecompose  when ctx.outcome = success  label: redecompose_done
+    redecompose_sprint -> validate_ledger_after_redecompose  when ctx.outcome = fail     label: redecompose_failed
+    redecompose_sprint -> validate_ledger_after_redecompose
+    validate_ledger_after_redecompose -> splice_ledger      when ctx.tool_stdout startswith ledger-ok     label: ledger_intact
+    validate_ledger_after_redecompose -> splice_ledger      when ctx.tool_stdout startswith restored-    label: ledger_restored
+    validate_ledger_after_redecompose -> check_ledger       restart: true
+    splice_ledger -> report_redecompose     when ctx.outcome = success  label: spliced
+    splice_ledger -> check_ledger           when ctx.outcome = fail     label: splice_failed  restart: true
     splice_ledger -> report_redecompose
     report_redecompose -> check_ledger       restart: true
     failure_summary -> Exit
