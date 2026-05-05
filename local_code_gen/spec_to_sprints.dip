@@ -786,10 +786,27 @@ workflow SpecToSprintsForLocalCodegen
       if [ "$stray" -gt 0 ]; then
         errors="${errors}sprint-files-in-root "
       fi
+      # Three-way consistency check between (a) sprint_descriptions.jsonl, the
+      # source of truth for which sprints SHOULD exist (written by Opus before
+      # dispatch), (b) the ledger built from on-disk files, and (c) the actual
+      # files in .ai/sprints/. Catches stale SPRINT-*.md files left over from a
+      # previous run with a different sprint count or numbering.
       ledger_ids=$(awk -F '\t' 'NR>1{print $1}' .ai/ledger.tsv | sort)
       file_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
-      if [ "$ledger_ids" != "$file_ids" ]; then
-        errors="${errors}ledger-file-mismatch "
+      if [ -f .ai/sprint_descriptions.jsonl ]; then
+        expected_ids=$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"SPRINT-\([0-9][0-9][0-9]\)\.md".*/\1/p' .ai/sprint_descriptions.jsonl | sort)
+        if [ "$expected_ids" != "$file_ids" ]; then
+          errors="${errors}stale-or-missing-sprint-files "
+        fi
+        if [ "$expected_ids" != "$ledger_ids" ]; then
+          errors="${errors}ledger-jsonl-mismatch "
+        fi
+      else
+        # No JSONL means we're running an older pipeline shape; fall back to
+        # the historical ledger-vs-files check.
+        if [ "$ledger_ids" != "$file_ids" ]; then
+          errors="${errors}ledger-file-mismatch "
+        fi
       fi
       # Validate the speedrun-shape required sections (see
       # local_code_gen/principles/SPEEDRUN-SPEC-FORMAT.md). The minimal floor
