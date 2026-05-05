@@ -111,9 +111,6 @@ workflow SpecToSprintsYamlV2
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
-    writes: spec_analysis
-    goal_gate: true
-    retry_target: analyze_spec
     prompt:
       You are working in `run.working_dir`.
 
@@ -168,6 +165,32 @@ workflow SpecToSprintsYamlV2
       - Every functional requirement is numbered
       - Every component dependency is mapped
 
+  tool verify_spec_analysis
+    label: "Verify Spec Analysis"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/spec_analysis.md ]; then
+        printf 'missing'
+        exit 0
+      fi
+      size=$(wc -c < .ai/spec_analysis.md | tr -d ' ')
+      if [ "$size" -lt 200 ]; then
+        printf 'too-small-%s-bytes' "$size"
+        exit 0
+      fi
+      sections=0
+      for hdr in "Project Summary" "Tech Stack" "Functional Requirements" "Architectural" "Dependency Graph" "Complexity" "Open Questions"; do
+        if grep -qi "$hdr" .ai/spec_analysis.md; then
+          sections=$((sections + 1))
+        fi
+      done
+      if [ "$sections" -lt 5 ]; then
+        printf 'incomplete-%s-of-7-sections' "$sections"
+        exit 0
+      fi
+      printf 'valid'
+
   parallel decompose_parallel -> decompose_claude, decompose_gpt, decompose_gemini
 
   agent decompose_claude
@@ -175,8 +198,6 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: spec_analysis
-    writes: decomposition_claude
     fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
@@ -221,8 +242,6 @@ workflow SpecToSprintsYamlV2
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
-    reads: spec_analysis
-    writes: decomposition_gpt
     fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
@@ -267,8 +286,6 @@ workflow SpecToSprintsYamlV2
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
-    reads: spec_analysis
-    writes: decomposition_gemini
     fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
@@ -317,7 +334,6 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: decomposition_gpt, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -345,7 +361,6 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: decomposition_gemini, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -373,7 +388,6 @@ workflow SpecToSprintsYamlV2
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
-    reads: decomposition_claude, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -401,7 +415,6 @@ workflow SpecToSprintsYamlV2
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
-    reads: decomposition_gemini, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -429,7 +442,6 @@ workflow SpecToSprintsYamlV2
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
-    reads: decomposition_claude, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -457,7 +469,6 @@ workflow SpecToSprintsYamlV2
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
-    reads: decomposition_gpt, spec_analysis
     prompt:
       You are working in `run.working_dir`.
 
@@ -487,10 +498,9 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: decomposition_claude, decomposition_gpt, decomposition_gemini, spec_analysis
-    writes: sprint_plan
     goal_gate: true
     retry_target: merge_decomposition
+    fallback_target: DecompositionManager
     prompt:
       You are working in `run.working_dir`.
 
@@ -584,7 +594,6 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: sprint_plan, spec_analysis
     auto_status: true
     prompt:
       You are the Decomposition Manager. Your job is to review the merged sprint plan for quality issues before it goes to human approval.
@@ -713,7 +722,6 @@ workflow SpecToSprintsYamlV2
     label: "Present Sprint Plan"
     model: claude-sonnet-4-6
     provider: anthropic
-    reads: sprint_plan
     reasoning_effort: medium
     prompt:
       You are working in `run.working_dir`.
@@ -735,8 +743,6 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: sprint_plan
-    writes: sprint_plan
     prompt:
       You are working in `run.working_dir`.
 
@@ -777,8 +783,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: sprint_plan, spec_analysis
-    fallback_target: Exit
+    fallback_target: write_ledger
     prompt:
       You are working in `run.working_dir`.
 
@@ -1058,7 +1063,10 @@ workflow SpecToSprintsYamlV2
     check_resume -> decompose_parallel    when ctx.tool_stdout startswith resume-decompose   label: resume_decompose
     check_resume -> analyze_spec          when ctx.tool_stdout = fresh-start                 label: fresh
     check_resume -> analyze_spec
-    analyze_spec -> decompose_parallel
+    analyze_spec -> verify_spec_analysis
+    verify_spec_analysis -> decompose_parallel  when ctx.tool_stdout = valid          label: analysis_valid
+    verify_spec_analysis -> analyze_spec        when ctx.tool_stdout != valid          label: analysis_retry  restart: true
+    verify_spec_analysis -> analyze_spec        restart: true
     decompose_parallel -> decompose_claude
     decompose_parallel -> decompose_gpt
     decompose_parallel -> decompose_gemini
