@@ -67,12 +67,14 @@ workflow SprintRunnerLocalGenQwen
       SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
       if [ ! -f "$SPRINT_DOC" ]; then echo "missing $SPRINT_DOC"; exit 1; fi
       rm -f .ai/local_fix_attempts .ai/local_exhausted
+      PROJ_ROOT=$(cat .ai/proj_root.txt 2>/dev/null || echo .)
+      if [ -d "$PROJ_ROOT" ]; then cd "$PROJ_ROOT"; fi
       if [ -f go.mod ]; then
         go mod tidy 2>/dev/null || true
       elif [ -f package.json ]; then
         npm install 2>/dev/null || true
       elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-        uv sync 2>/dev/null || true
+        uv sync --all-extras 2>/dev/null || true
       fi
       printf 'setup-done'
 
@@ -224,22 +226,25 @@ workflow SprintRunnerLocalGenQwen
     command:
       set +e
       mkdir -p .ai
+      WORKSPACE_ROOT=$(pwd)
+      PROJ_ROOT=$(cat .ai/proj_root.txt 2>/dev/null || echo .)
+      if [ -d "$PROJ_ROOT" ]; then cd "$PROJ_ROOT"; fi
       if [ -f go.mod ]; then
-        go test ./... 2>&1 | tee .ai/last_test_output.txt
+        go test ./... 2>&1 | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
         code=${PIPESTATUS[0]}
       elif [ -f package.json ]; then
-        npm test 2>&1 | tee .ai/last_test_output.txt
+        npm test 2>&1 | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
         code=${PIPESTATUS[0]}
       elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-        uv run pytest 2>&1 | tee .ai/last_test_output.txt
+        uv run pytest 2>&1 | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
         code=${PIPESTATUS[0]}
       else
-        echo "no test runner detected" | tee .ai/last_test_output.txt
+        echo "no test runner detected" | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
         code=1
       fi
       if [ $code -eq 0 ]; then
         printf 'tests-pass'
-      elif [ -f .ai/local_exhausted ]; then
+      elif [ -f "$WORKSPACE_ROOT/.ai/local_exhausted" ]; then
         printf 'tests-fail-cloud'
       else
         printf 'tests-fail'
@@ -252,10 +257,13 @@ workflow SprintRunnerLocalGenQwen
       set +e
       mkdir -p .ai
       OLLAMA=http://localhost:11434/api/chat
+      WORKSPACE_ROOT=$(pwd)
       SPRINT_ID=$(cat .ai/current_sprint_id.txt)
       SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
       SPRINT=$(cat "$SPRINT_DOC")
       TEST_OUT=$(cat .ai/last_test_output.txt)
+      PROJ_ROOT=$(cat .ai/proj_root.txt 2>/dev/null || echo .)
+      if [ -d "$PROJ_ROOT" ]; then cd "$PROJ_ROOT"; fi
 
       syntax_check() {
         local fp="$1"
@@ -308,13 +316,13 @@ workflow SprintRunnerLocalGenQwen
         echo "warning: $fp may still have syntax errors after 2 retries"
       }
 
-      attempts=$(cat .ai/local_fix_attempts 2>/dev/null || echo 0)
+      attempts=$(cat "$WORKSPACE_ROOT/.ai/local_fix_attempts" 2>/dev/null || echo 0)
       attempts=$((attempts + 1))
-      echo $attempts > .ai/local_fix_attempts
+      echo $attempts > "$WORKSPACE_ROOT/.ai/local_fix_attempts"
       echo "local fix attempt $attempts/4"
 
-      if [ "$attempts" -gt 4 ] || [ -f .ai/local_exhausted ]; then
-        touch .ai/local_exhausted
+      if [ "$attempts" -gt 4 ] || [ -f "$WORKSPACE_ROOT/.ai/local_exhausted" ]; then
+        touch "$WORKSPACE_ROOT/.ai/local_exhausted"
         echo "local model exhausted, handing off to cloud"
         printf 'local-exhausted'
         exit 0
@@ -385,8 +393,12 @@ workflow SprintRunnerLocalGenQwen
     command:
       set +e
       mkdir -p .ai
+      WORKSPACE_ROOT=$(pwd)
       SPRINT_ID=$(cat .ai/current_sprint_id.txt)
-      sprint=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      sprint="$WORKSPACE_ROOT/.ai/sprints/SPRINT-${SPRINT_ID}.md"
+      AUDIT_OUT="$WORKSPACE_ROOT/.ai/last_audit_output.txt"
+      PROJ_ROOT=$(cat .ai/proj_root.txt 2>/dev/null || echo .)
+      if [ -d "$PROJ_ROOT" ]; then cd "$PROJ_ROOT"; fi
       fail=0
 
       in_section=0
@@ -400,8 +412,10 @@ workflow SprintRunnerLocalGenQwen
         if [ "$in_section" -eq 1 ]; then
           path=$(echo "$line" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
           if [ -n "$path" ] && echo "$path" | grep -q '/'; then
-            if [ ! -f "$path" ]; then
-              echo "MISSING artifact: $path" | tee -a .ai/last_audit_output.txt
+            check_path="$path"
+            case "$path" in "$PROJ_ROOT/"*) check_path="${path#$PROJ_ROOT/}" ;; esac
+            if [ ! -f "$check_path" ]; then
+              echo "MISSING artifact: $path" | tee -a "$AUDIT_OUT"
               fail=1
             fi
           fi
@@ -426,10 +440,10 @@ workflow SprintRunnerLocalGenQwen
       fi
 
       if [ -z "$actual_tests" ]; then actual_tests=0; fi
-      echo "test count: sprint=$sprint_tests actual=$actual_tests" | tee -a .ai/last_audit_output.txt
+      echo "test count: sprint=$sprint_tests actual=$actual_tests" | tee -a "$AUDIT_OUT"
       if [ "$actual_tests" -lt "$sprint_tests" ]; then
         echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests" \
-          | tee -a .ai/last_audit_output.txt
+          | tee -a "$AUDIT_OUT"
         fail=1
       fi
 
