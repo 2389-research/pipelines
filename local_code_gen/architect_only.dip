@@ -33,6 +33,12 @@ workflow ArchitectOnlyTest
     timeout: 10s
     command:
       set -eu
+      # Preflight: TRACKER_SPRINT_WRITER_MODEL is mandatory because the
+      # write_sprint_docs agent calls dispatch_sprints, which is only
+      # registered when the var is set (gated in tracker's backend_native).
+      # Without the var the agent appears to run but silently fails to
+      # dispatch — looks like a green run with no outputs.
+      : "${TRACKER_SPRINT_WRITER_MODEL:?TRACKER_SPRINT_WRITER_MODEL must be set so dispatch_sprints registers (e.g. claude-sonnet-4-6)}"
       mkdir -p .ai/sprints .ai/drafts
       if [ ! -f .ai/ledger.tsv ]; then
         printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
@@ -54,7 +60,6 @@ workflow ArchitectOnlyTest
     reasoning_effort: high
     reads: sprint_plan, spec_analysis
     max_turns: 12
-    fallback_target: Exit
     prompt:
       You are the architect for sprint enrichment. Your job has FIVE deterministic outputs in order, then you stop:
 
@@ -259,7 +264,7 @@ workflow ArchitectOnlyTest
       {"path": "backend/pyproject.toml", "description": "Verbatim from contract section 1 — pyproject.toml verbatim block.", "required_lines": ["asyncio_mode = \"auto\"", "pytest-asyncio"]}
       {"path": "backend/app/__init__.py", "description": "Empty package marker.", "required_lines": []}
       {"path": "backend/app/main.py", "description": "FROZEN — auto-discovery app factory from contract section 4.4.", "required_lines": ["pkgutil.iter_modules"]}
-      {"path": "backend/tests/conftest.py", "description": "FROZEN — full fixture set from contract section 4.1 (Test Infrastructure → conftest.py).", "required_lines": ["from sqlalchemy import StaticPool", "expire_on_commit=False"]}
+      {"path": "backend/tests/conftest.py", "description": "FROZEN — full fixture set from contract section 4.1 (Test Infrastructure → conftest.py).", "required_lines": ["from sqlalchemy.pool import StaticPool", "expire_on_commit=False"]}
       ```
 
       Critical rule: include any file whose bytes are fully pinned by the contract, regardless of whether it lives in `app/`, `tests/`, `cmd/`, etc. If the contract has a fenced verbatim code block for the file, it is scaffolding. Do NOT include files described only by behavior/algorithm prose — those remain qwen's per-sprint job.
@@ -324,24 +329,58 @@ workflow ArchitectOnlyTest
       set -eu
       errors=""
       sprint_count=0
+      # Per-file section check. Two tiers:
+      #  - Hard-required (exact header match): every sprint must have these.
+      #  - Speedrun-shape (prefix match): header must be present, but additive
+      #    sprints may append parenthetical redirect notes (e.g.,
+      #    "## Conventions (inherited from Sprint 001 — listed for tight feedback)").
+      #    Prefix-match accepts both bare and parenthesized forms.
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
         sprint_count=$((sprint_count + 1))
+        if [ ! -s "$f" ]; then
+          errors="${errors}${f}:empty-file "
+          continue
+        fi
         for required in "## Scope" "## Non-goals" "## DoD" "## Validation"; do
           if ! grep -q "^${required}" "$f"; then
-            errors="${errors}${f}: missing section '${required}'\n"
+            errors="${errors}${f}:missing-${required} "
           fi
         done
-        if [ ! -s "$f" ]; then
-          errors="${errors}${f}: empty file\n"
-        fi
+        for prefix in "## Dependencies" "## Conventions" "## Rules"; do
+          if ! grep -Eq "^${prefix}( |\$)" "$f"; then
+            errors="${errors}${f}:missing-prefix-${prefix} "
+          fi
+        done
       done
       if [ "$sprint_count" -eq 0 ]; then
         echo "validate-fail: no sprint files found"
         exit 1
       fi
+      # Three-way consistency check between (a) sprint_descriptions.jsonl, the
+      # source of truth for which sprints SHOULD exist (written by Opus before
+      # dispatch), (b) the ledger built from on-disk files, and (c) the actual
+      # files in .ai/sprints/. Catches stale SPRINT-*.md files left over from
+      # a previous run with a different sprint count or numbering.
+      ledger_ids=$(awk -F '\t' 'NR>1{print $1}' .ai/ledger.tsv | sort)
+      file_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
+      if [ -f .ai/sprint_descriptions.jsonl ]; then
+        expected_ids=$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"SPRINT-\([0-9][0-9][0-9]\)\.md".*/\1/p' .ai/sprint_descriptions.jsonl | sort)
+        if [ "$expected_ids" != "$file_ids" ]; then
+          errors="${errors}stale-or-missing-sprint-files "
+        fi
+        if [ "$expected_ids" != "$ledger_ids" ]; then
+          errors="${errors}ledger-jsonl-mismatch "
+        fi
+      else
+        # No JSONL means we're running an older pipeline shape; fall back to
+        # the historical ledger-vs-files check.
+        if [ "$ledger_ids" != "$file_ids" ]; then
+          errors="${errors}ledger-file-mismatch "
+        fi
+      fi
       if [ -n "$errors" ]; then
-        printf "validate-fail: errors found:\n%b" "$errors"
+        printf 'validate-fail: %s' "$errors"
         exit 1
       fi
       printf 'validate-pass-%s-sprints' "$sprint_count"

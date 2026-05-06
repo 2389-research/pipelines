@@ -771,7 +771,7 @@ workflow SpecToSprintsForLocalCodegen
       {"path": "backend/pyproject.toml", "description": "Verbatim from contract section 1 — pyproject.toml verbatim block.", "required_lines": ["asyncio_mode = \"auto\"", "pytest-asyncio"]}
       {"path": "backend/app/__init__.py", "description": "Empty package marker.", "required_lines": []}
       {"path": "backend/app/main.py", "description": "FROZEN — auto-discovery app factory from contract section 4.4.", "required_lines": ["pkgutil.iter_modules"]}
-      {"path": "backend/tests/conftest.py", "description": "FROZEN — full fixture set from contract section 4.1 (Test Infrastructure → conftest.py).", "required_lines": ["from sqlalchemy import StaticPool", "expire_on_commit=False"]}
+      {"path": "backend/tests/conftest.py", "description": "FROZEN — full fixture set from contract section 4.1 (Test Infrastructure → conftest.py).", "required_lines": ["from sqlalchemy.pool import StaticPool", "expire_on_commit=False"]}
       ```
 
       Critical rule: include any file whose bytes are fully pinned by the contract, regardless of whether it lives in `app/`, `tests/`, `cmd/`, etc. If the contract has a fenced verbatim code block for the file, it is scaffolding. Do NOT include files described only by behavior/algorithm prose — those remain qwen's per-sprint job.
