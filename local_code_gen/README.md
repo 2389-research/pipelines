@@ -66,20 +66,39 @@ Requires Anthropic + OpenAI + Gemini creds.
 
 #### Path B — Architect-only + runner (most common; needs Anthropic + OpenAI)
 
-Use when you can pre-build `.ai/sprint_plan.md` and `.ai/spec_analysis.md` from another tool (or hand-write them) and just need the architect → scaffolding → sprint enrichment → code gen path. Skips the 3-model decomposition tournament entirely.
+Use when the architect's inputs are already on disk and you just need the architect → scaffolding → sprint enrichment → code gen path. Skips the 3-model decomposition tournament entirely.
+
+`architect_only.dip` consumes two files and produces everything downstream:
+
+| Input file | What it is | Where it normally comes from |
+|---|---|---|
+| `.ai/spec_analysis.md` | Project summary, functional requirements (FRs), components, entities, route table — the architect's read of the prose `spec.md` | The `analyze_spec` agent in `spec_to_sprints.dip` (line ~62). It's the *first* output of the upstream pipeline. |
+| `.ai/sprint_plan.md` | Sprint-level decomposition — how the FRs split across sprints, FR coverage matrix, per-sprint scope summaries, file ownership across sprints | The `merge_decomposition` agent in `spec_to_sprints.dip` (line ~432). It's the *final* output of the decomposition tournament + critique + merge phase, and the *last* thing produced before the architect step. |
+
+Both files are produced by `spec_to_sprints.dip` *before* the architect's `write_sprint_docs` step. `architect_only.dip` is exactly that architect step in isolation — same prompt, same outputs, just without the upstream tournament.
+
+**Three ways to obtain the inputs:**
+
+1. **Run `spec_to_sprints.dip` and stop after `merge_decomposition`.** The simplest if you have the cloud creds for the tournament (Anthropic + OpenAI + Gemini). Run normally; once `.ai/sprint_plan.md` exists, hit Ctrl-C, then re-run with `architect_only.dip` to do the architect+scaffolding+sprints flow. Useful when you want to inspect or hand-tune the decomposition before the architect commits.
+2. **Hand-write them.** See the committed exemplars in [`principles/exemplars/notebook_spec_analysis.md`](principles/exemplars/notebook_spec_analysis.md) and [`principles/exemplars/notebook_sprint_plan.md`](principles/exemplars/notebook_sprint_plan.md) for the shape — these are the actual files that produced the v11 validated run. Copy the structure (Project Summary, FR table, Components, Entities, Routes for analysis; Summary, FR Coverage Matrix, per-sprint scope+files for plan) and fill in your project's specifics.
+3. **Copy from a similar prior project.** If you've run the pipeline on a similar service before, just copy that project's `.ai/spec_analysis.md` + `.ai/sprint_plan.md` into the new workdir and edit. The shape doesn't change project-to-project; only the FRs/entities/routes do.
 
 ```fish
-# Pre-build the inputs (any way you like — examples in
-# experiments/notebook_smoke_v6/.ai/ for shape reference)
-cp <your sprint_plan.md>    $WORKDIR/.ai/sprint_plan.md
-cp <your spec_analysis.md>  $WORKDIR/.ai/spec_analysis.md
+# Place the inputs in $WORKDIR/.ai/
+mkdir -p $WORKDIR/.ai
+cp <your spec_analysis.md> $WORKDIR/.ai/spec_analysis.md
+cp <your sprint_plan.md>   $WORKDIR/.ai/sprint_plan.md
 cd $WORKDIR
 
 # Step 1: architect → contract + sprint specs + scaffolding pre-pass
-#   Models: Opus, Sonnet, Haiku
-#   Cost: ~$0.40 for a 3-sprint project; ~5-50 min
+#   Models: Opus 4.6 (architect) + Sonnet 4.6 (sprint enrichment) + Haiku 4.5 (scaffolding)
+#   Cost: ~$0.40 for a 3-sprint project; ~5-50 min depending on project size
 ~/go/bin/tracker --no-tui --auto-approve -w . \
     $PIPELINES_REPO/local_code_gen/architect_only.dip
+
+# After step 1, .ai/ contains: contract.md, sprint_descriptions.jsonl,
+# scaffolding_plan.jsonl, scaffolding_manifest.txt, sprints/SPRINT-NNN.md,
+# ledger.tsv, plus the scaffolding files written to disk under the project root.
 
 # Step 2: code gen (loops the ledger)
 #   Same as Path A Step 2
@@ -286,5 +305,5 @@ The v11 run is the canonical baseline for the current toolchain (post the SR + m
 
 - [`principles/README.md`](principles/README.md) — index of all design docs and patterns
 - [`principles/SPEEDRUN-SPEC-FORMAT.md`](principles/SPEEDRUN-SPEC-FORMAT.md) — what a "good" sprint spec looks like for local-LLM consumption
-- [`principles/exemplars/`](principles/exemplars/) — three validated sprint specs from a successful NIFB v7 run (61 cumulative tests passing)
+- [`principles/exemplars/`](principles/exemplars/) — reference shapes for the architect's inputs (`notebook_spec_analysis.md`, `notebook_sprint_plan.md`) and outputs (three validated `SPRINT-NNN.md` specs from a successful NIFB v7 run, 61 cumulative tests passing)
 - [`../spec_to_sprints.dip`](../spec_to_sprints.dip) — Harper's original cloud-only pipeline (the source we forked from)
