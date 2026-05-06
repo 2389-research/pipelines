@@ -229,19 +229,29 @@ workflow SprintRunnerLocalGenQwen
       WORKSPACE_ROOT=$(pwd)
       PROJ_ROOT=$(cat .ai/proj_root.txt 2>/dev/null || echo .)
       if [ -d "$PROJ_ROOT" ]; then cd "$PROJ_ROOT"; fi
+      # Verbose output goes ONLY to .ai/last_test_output.txt — never tee to
+      # stdout. Tracker truncates tool_stdout at 64KB; if a marker like
+      # `tests-pass` ends up past byte 65536 it's silently dropped, no edge
+      # condition matches, and the unconditional fallback fires (potentially
+      # routing as a pass when tests actually failed). Markers MUST be the
+      # only thing on stdout.
+      OUT="$WORKSPACE_ROOT/.ai/last_test_output.txt"
       if [ -f go.mod ]; then
-        go test ./... 2>&1 | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
-        code=${PIPESTATUS[0]}
+        go test ./... > "$OUT" 2>&1
+        code=$?
       elif [ -f package.json ]; then
-        npm test 2>&1 | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
-        code=${PIPESTATUS[0]}
+        npm test > "$OUT" 2>&1
+        code=$?
       elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-        uv run pytest 2>&1 | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
-        code=${PIPESTATUS[0]}
+        uv run pytest > "$OUT" 2>&1
+        code=$?
       else
-        echo "no test runner detected" | tee "$WORKSPACE_ROOT/.ai/last_test_output.txt"
+        echo "no test runner detected" > "$OUT"
         code=1
       fi
+      # surface a small one-line summary on stdout for the human running the
+      # pipeline (tail of the test runner's own summary), then the marker.
+      tail -1 "$OUT" 2>/dev/null
       if [ $code -eq 0 ]; then
         printf 'tests-pass'
       elif [ -f "$WORKSPACE_ROOT/.ai/local_exhausted" ]; then
@@ -476,7 +486,7 @@ workflow SprintRunnerLocalGenQwen
             check_path="$path"
             case "$path" in "$PROJ_ROOT/"*) check_path="${path#$PROJ_ROOT/}" ;; esac
             if [ ! -f "$check_path" ]; then
-              echo "MISSING artifact: $path" | tee -a "$AUDIT_OUT"
+              echo "MISSING artifact: $path" >> "$AUDIT_OUT"
               fail=1
             fi
           fi
@@ -501,10 +511,10 @@ workflow SprintRunnerLocalGenQwen
       fi
 
       if [ -z "$actual_tests" ]; then actual_tests=0; fi
-      echo "test count: sprint=$sprint_tests actual=$actual_tests" | tee -a "$AUDIT_OUT"
+      echo "test count: sprint=$sprint_tests actual=$actual_tests" >> "$AUDIT_OUT"
       if [ "$actual_tests" -lt "$sprint_tests" ]; then
         echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests" \
-          | tee -a "$AUDIT_OUT"
+          >> "$AUDIT_OUT"
         fail=1
       fi
 
@@ -643,7 +653,7 @@ workflow SprintRunnerLocalGenQwen
     RunTests -> LocalFix            when ctx.tool_stdout contains tests-fail
     RunTests -> Escalate            when ctx.tool_stdout contains tests-fail-cloud
     RunTests -> Audit               when ctx.tool_stdout contains tests-pass
-    RunTests -> Audit
+    RunTests -> Escalate
     LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
     LocalFix -> CloudFix            when ctx.tool_stdout contains local-exhausted
     Audit -> CommitSprint           when ctx.tool_stdout contains audit-pass
