@@ -76,7 +76,7 @@ All cleanly build; full test suite (`go test ./agent/... ./pipeline/handlers/`) 
 
 **Outcome (final, validated):**
 
-```
+```text
 [10:29:56] Start (tool, instant — no LLM)
 [10:29:56] setup_workspace (tool, instant)
 [10:29:56] write_sprint_docs starts

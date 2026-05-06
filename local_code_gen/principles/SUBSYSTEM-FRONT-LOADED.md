@@ -36,7 +36,7 @@ The architect should make this call from the spec_analysis + sprint_plan inputs 
 
 ### File structure
 
-```
+```text
 backend/
   pyproject.toml                    — sprint 001; modifiable (later sprints append deps)
   app/
@@ -214,7 +214,7 @@ Two sections in `contract.md` change shape under this pattern:
 
 Each sprint owns a fixed set of NEW files; no sprint after sprint 001 has any `## Modified files` entry.
 
-```
+```text
 Sprint 001 (foundation + auth subsystem):
   NEW: app/__init__.py, app/main.py, app/config.py, app/database.py,
        app/exceptions.py, app/auth.py, app/dependencies.py,

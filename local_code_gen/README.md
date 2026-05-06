@@ -8,7 +8,7 @@ End-to-end pipeline for taking a product `spec.md` and producing a working codeb
 
 **Offload every step to the weakest model that can do it correctly.** The full pipeline reads as a hand-off across four model tiers, each given a tightly-scoped role and a contract that pre-decides every choice the next tier downstream might otherwise have to make.
 
-```
+```text
  weakest                                                                 strongest
  ◀──────────────────────────────────────────────────────────────────────────────▶
 
@@ -74,7 +74,7 @@ Single-session iterative agent invoked when LocalFix exhausts (8 rounds + 3 roll
 
 When `sprint_runner_qwen.dip` (or `sprint_exec_qwen.dip`) runs against an architect-produced workspace, here's the step-by-step contract qwen and the surrounding runner enforce. Editing strategies and fallbacks documented inline:
 
-```
+```text
                                                        (caller writes .ai/current_sprint_id.txt for Path C;
   ┌───────────────┐                                    runner does it via check_ledger for Path A/B)
   │ check_ledger  │ ────────────────────────────────┐
@@ -342,7 +342,7 @@ The most common colleague-facing path is **B** — pre-build the decomposition i
 
 ## Architecture
 
-```
+```text
 ┌────────────────────── ARCHITECT SIDE (cloud) ──────────────────────┐
 │                                                                     │
 │  spec.md → analyze_spec → 3-model decomposition tournament →       │

@@ -14,7 +14,7 @@ The following files MUST be produced exactly as written. They are scaffolding â€
 
 ### `go.mod` (verbatim)
 
-```
+```gomod
 module example.com/smoke
 
 go 1.23
@@ -40,7 +40,7 @@ func main() {
 
 ### `.gitignore` (verbatim)
 
-```
+```gitignore
 bin/
 *.exe
 .DS_Store

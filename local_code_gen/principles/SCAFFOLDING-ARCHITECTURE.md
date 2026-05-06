@@ -17,7 +17,7 @@ Research literature [arxiv 2601.03640] confirms this is a quantized/local-model 
 
 ## Architecture: 3-tier model split
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Architect (Opus 4.6)         — cross-sprint reasoning, ALL decisions       │
 │  $15/$75 per Mtok                                                            │
@@ -85,7 +85,7 @@ Per-file retry on transient errors mirrors `dispatch_sprints`'s retry pattern.
 
 `.ai/scaffolding_manifest.txt` is the bridge between `dispatch_scaffolding` (writer) and `dispatch_sprints` → `write_enriched_sprint` (reader):
 
-```
+```text
 backend/pyproject.toml
 backend/app/__init__.py
 backend/app/main.py

@@ -4,7 +4,7 @@
 
 ## Runtime data flow (read this first)
 
-```
+```text
                 ┌─ inline prompt embeds                               ┌─ inline prompt embeds
                 │   the cross-sprint patterns                          │   the within-sprint patterns
                 │   + meta-rules                                       │   + speedrun format

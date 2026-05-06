@@ -6,7 +6,7 @@ How the architect-side outputs (post-[STRUCTURAL-FIX-RESULTS.md](STRUCTURAL-FIX-
 
 ## The two pipelines and what bridges them
 
-```
+```text
 ┌──────────────────── Architect side (cloud) ────────────────────┐
 │                                                                  │
 │  inputs/spec.md  →  spec_analysis  →  sprint_plan                │
@@ -110,7 +110,7 @@ Workdir: `experiments/notebook_smoke_v4/`. Architect already produced specs (3-s
 
 ### Final test state
 
-```
+```text
 $ cd backend && uv run pytest -v --tb=no
 ============================== 34 passed in 7.35s ==============================
 ```
@@ -147,7 +147,7 @@ This is a recurring pattern. Two adjacent defect classes:
 
 **Proposed early-escalation heuristic** for the runner (not yet built):
 
-```
+```text
 After each RunTests, classify the failure:
   if test output contains: ImportError|ModuleNotFoundError|requires the .* package
                           |"<extra>" extra is required
@@ -162,7 +162,7 @@ A regex check on `last_test_output.txt` would skip the 5 minutes of LocalFix osc
 
 Token counts on the generated `backend/` (excluding `.venv`, `__pycache__`):
 
-```
+```text
 26 files, 1,144 lines, 36,971 chars, 8,750 tokens (cl100k tokenizer)
 ```
 
@@ -188,7 +188,7 @@ Token counts on the generated `backend/` (excluding `.venv`, `__pycache__`):
 
 **Idealized one-shot generation (no agent loop, no test feedback)** — what the FLOOR cost would be if a frontier model wrote it perfectly first try:
 
-```
+```text
 Output: 8,750 tokens
 Input:  ~30K context per call × 26 calls ≈ 780K (or one big call: ~50K context + 8.75K output)
 Cost:   ~$0.40 (one-shot) / ~$1-2 (per-file calls without feedback loop)
