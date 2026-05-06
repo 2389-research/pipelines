@@ -67,7 +67,7 @@ workflow SprintRunnerLocalGenQwenSR
       SPRINT_ID=$(cat .ai/current_sprint_id.txt)
       SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
       if [ ! -f "$SPRINT_DOC" ]; then echo "missing $SPRINT_DOC"; exit 1; fi
-      rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/passing_pre.txt .ai/escalation.txt
+      rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/cloud_attempted .ai/passing_pre.txt .ai/escalation.txt
       rm -rf .ai/snapshot_pre_local .ai/snapshot_round_pre
 
       proj_root="."
@@ -88,6 +88,23 @@ workflow SprintRunnerLocalGenQwenSR
       elif [ -f package.json ]; then
         npm install 2>/dev/null || true
       fi
+      cd "$WORKDIR_ABS"
+
+      # Stage merge_sr.py in .ai/ so LocalFix has a self-contained reference
+      # (independent of $PIPELINES_REPO env). Copy from a few likely homes.
+      if [ ! -f .ai/merge_sr.py ]; then
+        for src in \
+          "${PIPELINES_REPO:-}/lib/merge_sr.py" \
+          "/Users/michaelsugimura/Documents/GitHub/pipelines/lib/merge_sr.py" \
+          "$HOME/Documents/GitHub/pipelines/lib/merge_sr.py"; do
+          if [ -n "$src" ] && [ -f "$src" ]; then
+            cp "$src" .ai/merge_sr.py
+            echo "staged merge_sr.py from $src"
+            break
+          fi
+        done
+      fi
+
       printf 'setup-done'
 
   tool Generate
@@ -304,10 +321,21 @@ workflow SprintRunnerLocalGenQwenSR
       fi
       echo "pytest summary: passed=$passed failed=$failed errors=$errors exit=$code strict_pass=$strict_pass"
 
+      # Routing markers, in order of precedence:
+      #   tests-pass       — strict pass: at least 1 PASSED, 0 FAILED, 0 ERROR, exit 0
+      #   tests-fail-final — local AND cloud have already attempted; further failures
+      #                      indicate a problem outside the recovery loop's scope
+      #   cloud-handoff    — local exhausted, this is the first cloud invocation
+      #   tests-fail       — initial failure, route to LocalFix
       if [ "$strict_pass" -eq 1 ]; then
         printf 'tests-pass'
       elif [ -f .ai/local_exhausted ]; then
-        printf 'cloud-handoff'
+        if [ -f .ai/cloud_attempted ]; then
+          printf 'tests-fail-final'
+        else
+          touch .ai/cloud_attempted
+          printf 'cloud-handoff'
+        fi
       else
         printf 'tests-fail'
       fi
@@ -348,6 +376,11 @@ workflow SprintRunnerLocalGenQwenSR
         exit 0
       fi
 
+      # Project-root files commonly named in scaffolding manifests across
+      # languages. Snapshotting these alongside the source dirs lets rollback
+      # cover the full attack surface that qwen could write to via SR.
+      ROOT_FILES="pyproject.toml package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
+
       snapshot_state() {
         local snap_dir="$1"
         # Make snap_dir absolute so cd doesn't break it
@@ -361,6 +394,9 @@ workflow SprintRunnerLocalGenQwenSR
         [ -d tests ] && cp -R tests "$snap_dir/" || true
         [ -d scripts ] && cp -R scripts "$snap_dir/" || true
         [ -d src ] && cp -R src "$snap_dir/" || true
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && cp "$f" "$snap_dir/"
+        done
         cd "$WORKDIR_ABS"
       }
       restore_state() {
@@ -383,6 +419,9 @@ workflow SprintRunnerLocalGenQwenSR
         [ -d "$snap_dir/tests" ] && cp -R "$snap_dir/tests" .
         [ -d "$snap_dir/scripts" ] && cp -R "$snap_dir/scripts" .
         [ -d "$snap_dir/src" ] && cp -R "$snap_dir/src" .
+        for f in $ROOT_FILES; do
+          [ -f "$snap_dir/$f" ] && cp "$snap_dir/$f" .
+        done
         cd "$WORKDIR_ABS"
       }
       extract_passing() {
@@ -476,6 +515,18 @@ workflow SprintRunnerLocalGenQwenSR
         SPRINT=$(cat .ai/sprints/SPRINT-001.md)
       fi
 
+      # Manifest-forbidden list (architect-pinned scaffolding). Convert workspace-
+      # relative manifest paths to proj-root-relative for inclusion in qwen's prompt
+      # (and for the post-merge violation check below).
+      MANIFEST_LOCAL=""
+      if [ -f "$WORKDIR_ABS/.ai/scaffolding_manifest.txt" ] && [ -s "$WORKDIR_ABS/.ai/scaffolding_manifest.txt" ]; then
+        if [ "$proj_root" = "." ] || [ -z "$proj_root" ]; then
+          MANIFEST_LOCAL=$(cat "$WORKDIR_ABS/.ai/scaffolding_manifest.txt")
+        else
+          MANIFEST_LOCAL=$(sed -E "s|^${proj_root}/||" "$WORKDIR_ABS/.ai/scaffolding_manifest.txt")
+        fi
+      fi
+
       SYS_SR=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s' "You are a code editor that produces SEARCH/REPLACE blocks. Each block looks EXACTLY like this:" "" "app/models.py" "<<<<<<< SEARCH" "    foo: Mapped[int]" "=======" "    foo: Mapped[int] = mapped_column(default=0)" ">>>>>>> REPLACE" "" "Rules: filepath on its own line; SEARCH must match file content EXACTLY (whitespace, indentation, every character); output ONLY SEARCH/REPLACE blocks - no prose, no markdown fences, no explanation; multiple bugs require multiple blocks (each with its own filepath, SEARCH, REPLACE, and markers); each block targets one small change; the replacement must be syntactically valid; do not output entire files - only the lines you are changing with enough surrounding context to be unique.")
 
       USER_SR=$(printf '%s\n%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
@@ -490,7 +541,17 @@ workflow SprintRunnerLocalGenQwenSR
         "PROJECT CONTEXT (paths relative to project root):" \
         "${CONTEXT}" \
         "---SPRINT SPEC---")
-      USER_SR=$(printf '%s\n%s\n%s\n%s' "$USER_SR" "$SPRINT" "---" "Emit SEARCH/REPLACE blocks. Each block's filepath line must use a path relative to the project root (e.g. app/models.py). Do NOT prefix paths with the project root directory name. Address every failure.")
+      # Append manifest forbidden list when present so qwen pre-emptively avoids
+      # scaffolding paths. Belt-and-suspenders with the post-merge violation check.
+      if [ -n "$MANIFEST_LOCAL" ]; then
+        USER_SR=$(printf '%s\n\n%s\n%s\n\n%s' "$USER_SR" \
+          "FROZEN SCAFFOLDING (architect-pinned — DO NOT emit blocks targeting these paths under any circumstance; if the fix appears to require modifying one, target an algorithmic caller instead):" \
+          "$MANIFEST_LOCAL" \
+          "$SPRINT")
+      else
+        USER_SR=$(printf '%s\n%s' "$USER_SR" "$SPRINT")
+      fi
+      USER_SR=$(printf '%s\n%s\n%s' "$USER_SR" "---" "Emit SEARCH/REPLACE blocks. Each block's filepath line must use a path relative to the project root (e.g. app/models.py). Do NOT prefix paths with the project root directory name. Address every failure.")
 
       RESPONSE=$(curl -sf "$OLLAMA" \
         -H 'Content-Type: application/json' \
@@ -508,6 +569,40 @@ workflow SprintRunnerLocalGenQwenSR
       FAILED_BLOCKS=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("failed",0))' 2>/dev/null || echo 0)
       FILES_TOUCHED=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; r=json.load(sys.stdin).get("results",[]); print(",".join(sorted(set(x["file"] for x in r if x.get("ok")))))' 2>/dev/null || echo "")
       echo "merger: applied=$APPLIED failed=$FAILED_BLOCKS files=[$FILES_TOUCHED]"
+
+      # Manifest violation check: if any touched file is in the architect's
+      # scaffolding manifest, qwen wrote where it shouldn't have. Roll back this
+      # round to snapshot_round_pre and count it as a consecutive_rollback (which
+      # eventually triggers escalation to cloud after MAX_ROLLBACKS).
+      if [ -n "$FILES_TOUCHED" ] && [ -n "$MANIFEST_LOCAL" ]; then
+        VIOLATIONS=""
+        IFS=',' read -ra TF_ARR <<< "$FILES_TOUCHED"
+        for tf in "${TF_ARR[@]}"; do
+          [ -z "$tf" ] && continue
+          if echo "$MANIFEST_LOCAL" | grep -Fxq "$tf"; then
+            VIOLATIONS="${VIOLATIONS}${tf} "
+          fi
+        done
+        if [ -n "$VIOLATIONS" ]; then
+          echo "MANIFEST VIOLATION: qwen wrote to scaffolding paths: $VIOLATIONS"
+          echo "rolling back to pre-round snapshot (architect-pinned files protected)"
+          restore_state .ai/snapshot_round_pre
+          consecutive_rollbacks=$((consecutive_rollbacks + 1))
+          echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+          if [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ]; then
+            if [ -d .ai/snapshot_pre_local ]; then
+              restore_state .ai/snapshot_pre_local
+            fi
+            touch .ai/local_exhausted
+            printf 'local-exhausted'
+            exit 0
+          fi
+          # Still have rollback budget — let next round retry with the violation
+          # logged as an attempt
+          printf 'local-fixed'
+          exit 0
+        fi
+      fi
 
       if [ "$APPLIED" = "0" ]; then
         consecutive_rollbacks=$((consecutive_rollbacks + 1))
@@ -552,7 +647,7 @@ workflow SprintRunnerLocalGenQwenSR
             path=$(echo "$line" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
             if [ -n "$path" ] && echo "$path" | grep -q '/'; then
               if [ ! -f "$path" ]; then
-                echo "MISSING artifact: $path" | tee -a .ai/last_audit_output.txt
+                echo "MISSING artifact: $path" >> .ai/last_audit_output.txt
                 fail=1
               fi
             fi
@@ -592,81 +687,85 @@ workflow SprintRunnerLocalGenQwenSR
       fi
 
       if [ -z "$actual_tests" ]; then actual_tests=0; fi
-      echo "test count: sprint=$sprint_tests actual=$actual_tests" | tee -a .ai/last_audit_output.txt
+      echo "test count: sprint=$sprint_tests actual=$actual_tests" >> .ai/last_audit_output.txt
       if [ "$actual_tests" -lt "$sprint_tests" ]; then
         echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests" \
-          | tee -a .ai/last_audit_output.txt
+          >> .ai/last_audit_output.txt
         fail=1
       fi
 
       if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
 
   agent CloudFix
-    label: "Cloud fix (gpt-5.4 — targeted debugging)"
+    label: "Cloud fix (gpt-5.4 — single-session iterative)"
     model: gpt-5.4
     provider: openai
-    max_turns: 12
-    reasoning_effort: medium
-    retry_target: RunTests
-    max_retries: 6
+    max_turns: 25
+    reasoning_effort: low
     fallback_target: Escalate
     prompt:
-      You are debugging a failing test (or audit gate) in a sprint codebase. Local
-      generation has already produced files; the patch loop has already exhausted.
-      Your job is narrow: read the failure, find the cause, apply the fix, stop.
-      You are NOT exploring the codebase. You are NOT designing architecture.
-      Identify the bug, fix it, return.
+      Tests are failing in the project. The local model (qwen3.6:35b-a3b-q8_0)
+      attempted SR-style fixes for up to 8 rounds and could not converge. You
+      have ONE session to drive tests to green — iterate within this session,
+      do NOT stop after a single fix.
 
-      Inputs to read (in this order, only as needed):
-      1. `.ai/last_test_output.txt` — the failing test output. ALWAYS read first.
-         If tests passed and audit failed, read `.ai/last_audit_output.txt` instead.
-      2. `.ai/sprints/SPRINT-$(cat .ai/current_sprint_id.txt).md` — the sprint
-         contract. Read this BEFORE editing any file. The "Tricky semantics",
-         "Rules", and the per-file "Algorithm" sections describe conventions the
-         failing code may have violated; the fix is usually "make the code match
-         the spec".
-      3. The specific source or test file named in the failing traceback's
-         user-frame (e.g., `backend/tests/test_groups.py:73`).
-      4. (Only if needed) related files. Use `grep -rn <symbol> backend/app
-         backend/tests` to locate where a symbol is defined, used, or imported.
-         Use this when the bug spans multiple files (e.g., a route returns shape A
-         but the test asserts shape B — both files matter).
+      Project layout:
+      - The project root contains a subdirectory whose name is in
+        `.ai/proj_root.txt` (e.g. `backend`). cd into it before running tests.
+      - `.ai/last_test_output.txt` holds the most recent pytest output that
+        triggered your invocation.
+      - `.ai/last_audit_output.txt` holds the most recent audit output (read
+        this if you were called for audit-fail rather than tests-fail).
+      - `.ai/scaffolding_manifest.txt` lists architect-pinned files. ALL
+        paths in that manifest are FROZEN — do not modify any of them. If
+        the bug appears to require modifying scaffolding, fix the algorithmic
+        callers instead, or report an Escalate-class diagnosis.
+      - `.ai/sprints/SPRINT-$(cat .ai/current_sprint_id.txt).md` — the sprint
+         contract. Read its "Tricky semantics", "Rules", and per-file
+         "Algorithm" sections. The fix is usually "make code match the spec".
 
-      Then make the targeted fix(s). If the bug truly spans multiple files, fix
-      every affected file in this session — do not artificially split into
-      multiple invocations. The dip's max_retries: 6 means you have headroom for
-      multi-iteration cases, but a clean cross-file fix in one session is
-      preferred.
+      Loop within this single session:
+      1. cat .ai/last_test_output.txt (and last_audit_output.txt if relevant).
+         Identify the FIRST error class. Read .ai/proj_root.txt for the
+         project subdirectory.
+      2. cat the source file(s) that produce that error. For multi-file bugs
+         (route returns shape A but test asserts shape B), read both.
+      3. apply_patch a targeted fix. For multi-file fixes, do them all in
+         this session — do not artificially split.
+      4. cd into the project subdirectory and run pytest yourself
+         (e.g. `cd backend && uv run pytest -x --tb=short 2>&1 | tail -80`).
+      5. Read pytest output. If green, you are done — output a one-line
+         summary and stop. If still failing, GOTO 1 with the new top error.
+
+      Rules:
+      - Iterate to green within this session. The pipeline does NOT call you
+        again on failure — converge here or escalate.
+      - Skip the scaffolding manifest. If a manifest file is the root cause,
+        stop and emit a one-line escalation note explaining what scaffolding
+        choice is wrong (do not edit it).
 
       Forbidden fix patterns — fix the cause, never mask the symptom:
-      - Do NOT add `try/except ImportError` or `try/except ModuleNotFoundError` to
-        silently substitute shim/fake implementations for missing dependencies.
-        Failed imports are an environment problem, not a code problem.
+      - Do NOT add `try/except ImportError` or `try/except ModuleNotFoundError`
+        to silently substitute shim/fake implementations for missing
+        dependencies. Failed imports are an environment problem.
       - Do NOT add `pytest.skip(...)` markers, `@pytest.mark.skip`, or
-        `pytest.importorskip` to make a failing test "pass" without running. Tests
-        describe the contract; skipping does not satisfy it.
+        `pytest.importorskip` to make a failing test "pass" without running.
+        Tests describe the contract; skipping does not satisfy it.
       - Do NOT comment out failing code, remove assertions, or weaken expected
         values to match wrong output. The test is telling you what should work.
       - Do NOT replace real library calls with hand-rolled fallbacks (e.g. a
-        custom BaseSettings, fake `String`/`Mapped`/`Base` classes) just because
-        the library appears unavailable.
+        custom BaseSettings, fake `String`/`Mapped`/`Base` classes) just
+        because the library appears unavailable.
 
       Environment escalation:
       - If you observe what looks like an environment problem — missing
-        dependencies in the venv, wrong Python interpreter, broken `uv sync`, a
-        build/install failure upstream of any test — do not patch around it.
-        Append a single line to `.ai/escalation.txt` describing what you observed
-        (e.g. "pytest cannot import sqlalchemy; deps may not be synced") and stop
-        without editing any source file.
+        dependencies in the venv, wrong Python interpreter, broken `uv sync`,
+        a build/install failure upstream of any test — do not patch around it.
+        Append a single line to `.ai/escalation.txt` describing what you
+        observed and stop without editing any source file.
 
-      Tool usage:
-      - `bash` is read-only inspection only. Allowed: `cat`, `head`, `tail`,
-        `wc`, `ls`, `find`, `grep` (including `grep -r`). Forbidden: anything
-        that writes (`sed -i`, `perl -pi`, `awk -i`), runs the project (`pytest`,
-        `uv run`, `python -c "..."`), or otherwise mutates state.
-      - `edit` is the ONLY way to modify files. Use it for every code change.
-      - Do NOT use `write` (don't create new files — that's the generator's job)
-        or `apply_patch`.
+      Tools available: bash (full — including pytest invocation), apply_patch,
+      read.
 
   tool CommitSprint
     label: "Commit Sprint Work"
@@ -752,16 +851,20 @@ workflow SprintRunnerLocalGenQwenSR
     mark_in_progress -> Setup
     Setup -> Generate
     Generate -> RunTests
+    # RunTests routing — single CloudFix attempt, escalate on second failure
+    RunTests -> Escalate            when ctx.tool_stdout contains tests-fail-final
     RunTests -> CloudFix            when ctx.tool_stdout contains cloud-handoff
     RunTests -> LocalFix            when ctx.tool_stdout contains tests-fail
     RunTests -> Audit               when ctx.tool_stdout contains tests-pass
-    RunTests -> Audit
+    RunTests -> Escalate
     LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
     LocalFix -> CloudFix            when ctx.tool_stdout contains local-exhausted
     Audit -> CommitSprint           when ctx.tool_stdout contains audit-pass
     Audit -> CloudFix               when ctx.tool_stdout contains audit-fail        restart: true
+    # CloudFix is single-session iterative. Success → outer RunTests verification.
+    # Failure → Escalate (no retry loop; the model converges in-session or not at all).
     CloudFix -> RunTests            when ctx.outcome = success                      restart: true
-    CloudFix -> RunTests            when ctx.outcome = fail                         restart: true
+    CloudFix -> Escalate            when ctx.outcome = fail
     CloudFix -> Escalate
     Escalate -> Exit
     CommitSprint -> mark_complete
