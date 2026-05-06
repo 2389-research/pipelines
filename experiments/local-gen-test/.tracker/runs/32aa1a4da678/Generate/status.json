@@ -1,7 +1,0 @@
-{
-  "outcome": "success",
-  "context_updates": {
-    "tool_stderr": "",
-    "tool_stdout": "generating internal/config/config.go...\nwrote internal/config/config.go (    1081 bytes)\ngenerating internal/config/loader.go...\nwrote internal/config/loader.go (     572 bytes)\ngenerating internal/config/defaults.go...\nwrote internal/config/defaults.go (    1124 bytes)\ngenerating internal/config/config_test.go...\nwrote internal/config/config_test.go (    2549 bytes)\ngenerating cmd/agent/cmd_tui.go...\nwrote cmd/agent/cmd_tui.go (     137 bytes)\ngenerating cmd/agent/cmd_serve.go...\nwrote cmd/agent/cmd_serve.go (     141 bytes)\ngenerating cmd/agent/cmd_run.go...\nwrote cmd/agent/cmd_run.go (     137 bytes)\ngenerating configs/agent.example.yaml...\nwrote configs/agent.example.yaml (     575 bytes)\npatching cmd/agent/main.go...\npatched cmd/agent/main.go (     784 bytes)\ngen-done"
-  }
-}

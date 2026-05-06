@@ -16,10 +16,6 @@ experiments/notebook_smoke_v*/
 experiments/notebook_full_run_v*/
 experiments/nifb_full_run_v*/
 experiments/architect_pipeline_test_v*/
-experiments/enrich_sprints_test/runner_test_sr*/
-experiments/enrich_sprints_test/runner_test_v*/
-experiments/enrich_sprints_test/qwen_probe/
-experiments/enrich_sprints_test/SESSION_HANDOFF_*.md
 
 # Nested-repo experiment workdirs that were accidentally tracked as orphaned
 # gitlinks (mode 160000 with no .gitmodules) by an earlier commit. They're

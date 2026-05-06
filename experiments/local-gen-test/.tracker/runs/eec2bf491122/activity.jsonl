@@ -1,9 +1,0 @@
-{"ts":"2026-04-25T17:07:14.311-05:00","source":"pipeline","type":"pipeline_started","run_id":"eec2bf491122","message":"pipeline started"}
-{"ts":"2026-04-25T17:07:14.311-05:00","source":"pipeline","type":"stage_started","run_id":"eec2bf491122","node_id":"Start","message":"executing node \"Start\""}
-{"ts":"2026-04-25T17:07:14.311-05:00","source":"agent","type":"session_start","node_id":"Start"}
-{"ts":"2026-04-25T17:07:14.311-05:00","source":"agent","type":"turn_start","node_id":"Start"}
-{"ts":"2026-04-25T17:07:14.311-05:00","source":"agent","type":"llm_request_preparing","node_id":"Start","provider":"openai","model":"claude-sonnet-4-5"}
-{"ts":"2026-04-25T17:07:15.137-05:00","source":"agent","type":"error","node_id":"Start","error":"{\n  \"error\": {\n    \"message\": \"The requested model 'claude-sonnet-4-5' does not exist.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"model\",\n    \"code\": \"model_not_found\"\n  }\n}"}
-{"ts":"2026-04-25T17:07:15.137-05:00","source":"agent","type":"session_end","node_id":"Start"}
-{"ts":"2026-04-25T17:07:15.137-05:00","source":"pipeline","type":"stage_failed","run_id":"eec2bf491122","node_id":"Start","message":"handler error at node \"Start\"","error":"node \"Start\": {\n  \"error\": {\n    \"message\": \"The requested model 'claude-sonnet-4-5' does not exist.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"model\",\n    \"code\": \"model_not_found\"\n  }\n}"}
-{"ts":"2026-04-25T17:07:15.138-05:00","source":"pipeline","type":"checkpoint_saved","run_id":"eec2bf491122","message":"checkpoint saved"}
