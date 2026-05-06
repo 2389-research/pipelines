@@ -47,13 +47,15 @@ workflow ArchitectOnlyTest
     max_turns: 12
     fallback_target: Exit
     prompt:
-      You are the architect for sprint enrichment. Your job has THREE deterministic outputs in order, then you stop:
+      You are the architect for sprint enrichment. Your job has FIVE deterministic outputs in order, then you stop:
 
       1. Write `.ai/contract.md` — the project-wide architectural map.
       2. Write `.ai/sprint_descriptions.jsonl` — one JSON record per sprint.
-      3. Call `dispatch_sprints` ONCE. The tool reads the JSONL and contract, loops over every sprint, and runs the per-sprint Sonnet author+audit pipeline mechanically. You do NOT iterate; the tool does.
+      3. Write `.ai/scaffolding_plan.jsonl` — one JSON record per scaffolding file you decide should be pre-written by Haiku before sprints begin. The act of being in this JSONL IS the scaffolding decision; there is no "is this scaffolding?" runtime classification step.
+      4. Call `dispatch_scaffolding` ONCE. The tool reads the JSONL and contract, loops over every entry, and runs a Haiku transcription pass per file. The tool writes each file to disk at its workspace-relative path and emits a manifest at `.ai/scaffolding_manifest.txt`.
+      5. Call `dispatch_sprints` ONCE. The tool reads `sprint_descriptions.jsonl` and contract, loops over every sprint, and runs the per-sprint Sonnet author+audit pipeline. You do NOT iterate; the tool does.
 
-      After step 3 returns, output a single confirmation line and stop. Do not re-read or revise either file.
+      After step 5 returns, output a single confirmation line and stop. Do not re-read or revise contract.md, either JSONL, or any scaffolding file.
 
       Inputs:
       - `.ai/sprint_plan.md` — merged sprint plan (decomposition output)
@@ -228,27 +230,67 @@ workflow ArchitectOnlyTest
 
       Save with the write tool to `.ai/sprint_descriptions.jsonl`.
 
-      ## Step 4: Call `dispatch_sprints` once
+      ## Step 3: Write `.ai/scaffolding_plan.jsonl`
+
+      One JSON object per line. Each entry tells `dispatch_scaffolding` to transcribe one file from the contract via a Haiku worker. Include every file whose bytes are fully pinned in `contract.md` — configs, frozen utility modules, package markers, the auto-discovery app factory, exception/error-code constants, small async runners, fully-pinned test harness fixtures (e.g. conftest.py with the full fixture set), pyproject.toml, package.json, etc.
+
+      Each record:
+
+      ```json
+      {"path": "<workspace-relative path matching contract>",
+       "description": "<pointer to the contract section/anchor where the verbatim block lives>",
+       "required_lines": ["<load-bearing substring 1>", "<load-bearing substring 2>"]}
+      ```
+
+      Required fields are `path` and `description`. `required_lines` is optional but strongly recommended for files where one specific line is load-bearing — Haiku's transcription is validated against these BEFORE write, so drift surfaces as a tool error rather than silent corruption.
+
+      Examples (Python FastAPI project):
+
+      ```jsonl
+      {"path": "backend/pyproject.toml", "description": "Verbatim from contract section 1 — pyproject.toml verbatim block.", "required_lines": ["asyncio_mode = \"auto\"", "pytest-asyncio"]}
+      {"path": "backend/app/__init__.py", "description": "Empty package marker.", "required_lines": []}
+      {"path": "backend/app/main.py", "description": "FROZEN — auto-discovery app factory from contract section 4.4.", "required_lines": ["pkgutil.iter_modules"]}
+      {"path": "backend/tests/conftest.py", "description": "FROZEN — full fixture set from contract section 4.1 (Test Infrastructure → conftest.py).", "required_lines": ["from sqlalchemy import StaticPool", "expire_on_commit=False"]}
+      ```
+
+      Critical rule: include any file whose bytes are fully pinned by the contract, regardless of whether it lives in `app/`, `tests/`, `cmd/`, etc. If the contract has a fenced verbatim code block for the file, it is scaffolding. Do NOT include files described only by behavior/algorithm prose — those remain qwen's per-sprint job.
+
+      Save with the `write` tool to `.ai/scaffolding_plan.jsonl`.
+
+      ## Step 4: Call `dispatch_scaffolding` once
+
+      Invoke `dispatch_scaffolding` with no arguments (defaults are correct: reads `.ai/scaffolding_plan.jsonl` and `.ai/contract.md`, writes manifest to `.ai/scaffolding_manifest.txt`).
+
+      The tool loops mechanically — one Haiku transcription pass per JSONL line. Each call has narrow scope (one file, one fenced block), per-entry validation against `required_lines`, and per-entry retry isolation. Files are written to disk at their workspace-relative paths.
+
+      The manifest at `.ai/scaffolding_manifest.txt` lists every path the dispatch wrote, so the per-sprint Sonnet writer can mark those files as "already on disk" rather than re-describing them.
+
+      ## Step 5: Call `dispatch_sprints` once
 
       Invoke `dispatch_sprints` with no arguments (defaults are correct: reads `.ai/sprint_descriptions.jsonl`, `.ai/contract.md`, writes to `.ai/sprints/`). The tool loops mechanically — one author+audit pass per JSONL line — and returns a summary string.
 
-      After the call returns, output a single confirmation line (e.g. "Done.") and stop. Do NOT call `write_enriched_sprint` directly. Do NOT re-read or revise contract.md or the JSONL. Your job ends here.
+      After the call returns, output a single confirmation line (e.g. "Done.") and stop. Do NOT call `write_enriched_sprint` or `write_scaffolding_file` directly. Do NOT re-read or revise contract.md, either JSONL, or any scaffolding file. Your job ends here.
 
       ## Tools available
       - read (for inputs)
-      - write (for `.ai/contract.md` and `.ai/sprint_descriptions.jsonl` only)
-      - dispatch_sprints (called exactly ONCE after the JSONL is on disk)
-      - write_enriched_sprint exists but you MUST NOT call it directly — `dispatch_sprints` invokes it under the hood
+      - write (for `.ai/contract.md`, `.ai/sprint_descriptions.jsonl`, and `.ai/scaffolding_plan.jsonl` only — NOT for project files; scaffolding files go through `dispatch_scaffolding`)
+      - dispatch_scaffolding (called exactly ONCE after the scaffolding plan is on disk, BEFORE dispatch_sprints)
+      - dispatch_sprints (called exactly ONCE after `dispatch_scaffolding` returns)
+      - write_scaffolding_file and write_enriched_sprint exist but you MUST NOT call them directly — the dispatch tools invoke them under the hood
 
       ## Rules
       - CRITICAL: All sprint files MUST be written to `.ai/sprints/` — NEVER to the project root. (`dispatch_sprints` handles this.)
+      - CRITICAL: Project-level scaffolding files (pyproject.toml, app factory, frozen utilities, package markers, conftest.py with full fixtures pinned) MUST be listed in `.ai/scaffolding_plan.jsonl` and routed through `dispatch_scaffolding` — never through the `write` tool. The `write` tool is for `.ai/` metadata only.
+      - The scaffolding decision is "are this file's bytes fully pinned in the contract?" — NOT "is this config vs application code?" If the contract gives the file as a fenced verbatim block, it's scaffolding even if it lives in `tests/` or `app/`.
       - Sprint IDs MUST be zero-padded 3-digit: 001, 002, ... 016 — NOT 1, 2, ... 16.
       - Do NOT write or modify `.ai/ledger.tsv` — a separate tool handles that.
       - Every per-sprint description should specify validation commands.
       - First DoD item for each sprint should be writing a failing test for the sprint's core deliverable.
 
       ## Tool prerequisites
-      Both `dispatch_sprints` and `write_enriched_sprint` require `TRACKER_SPRINT_WRITER_MODEL` env var set on the tracker process (e.g. `claude-sonnet-4-6`).
+      `dispatch_sprints` and `write_enriched_sprint` require `TRACKER_SPRINT_WRITER_MODEL` env var set on the tracker process (e.g. `claude-sonnet-4-6`) — Sonnet-tier is needed for the cross-file reasoning involved in per-sprint enrichment.
+
+      `dispatch_scaffolding` and `write_scaffolding_file` default to a Haiku-tier model but accept an independent override via `TRACKER_SCAFFOLDING_WRITER_MODEL` / `TRACKER_SCAFFOLDING_WRITER_PROVIDER`. Because the architect lists every scaffolding file explicitly in the JSONL and the contract pins exact bytes, the per-file worker only transcribes — no cross-file reasoning, no classification, no design. Haiku is sufficient and ~3-4× cheaper than Sonnet for this task. Override only if a specific project requires denser model reasoning at the transcription step.
 
   tool write_ledger
     label: "Write Ledger"
