@@ -4,6 +4,209 @@ End-to-end pipeline for taking a product `spec.md` and producing a working codeb
 
 > **Why this exists vs. the root [`spec_to_sprints.dip`](../spec_to_sprints.dip):** Harper's pipeline at the repo root is the generic spec-to-sprints workflow, designed for cloud-only code generation downstream. This variant is tuned for *local* code generation — sprint specs need to be more rigorous (the local model is a transcriber, not a designer), the file ownership model is different (front-loaded foundation + auto-discovery to avoid cross-sprint patches), and the runner has its own SR-block-based fix loop. The two pipelines share the upstream decomposition tournament; only the architect step + downstream runner differ.
 
+## Design philosophy
+
+**Offload every step to the weakest model that can do it correctly.** The full pipeline reads as a hand-off across four model tiers, each given a tightly-scoped role and a contract that pre-decides every choice the next tier downstream might otherwise have to make.
+
+```
+ weakest                                                                 strongest
+ ◀──────────────────────────────────────────────────────────────────────────────▶
+
+   qwen3.6:35b              Haiku 4.5            Sonnet 4.6           Opus 4.6
+   (local, free)            (cheap cloud)        (mid cloud)          (frontier)
+       │                         │                     │                   │
+       │                         │                     │                   │
+   executes              transcribes pinned      writes per-sprint    designs cross-
+   sprint specs          bytes from contract     contracts (the       sprint surface
+   verbatim              into scaffolding        input/output spec    (contract.md):
+   (Generate +           files (configs,         that limits qwen's   patterns, types,
+   LocalFix)             frozen utilities,       decisions)           file ownership,
+                         conftest.py)                                 invariants
+                                                                       │
+       gpt-5.4 (cloud, single-session iterative) — recovery agent: sits
+       outside the tier hierarchy. Invoked only when LocalFix exhausts;
+       has full bash + apply_patch + read; iterates pytest itself until
+       green. The design tries to never need it.
+```
+
+The principle in three rules:
+
+1. **The weakest model that can do a job correctly should do it.** Cost, latency, and reliability all reward this — frontier-model output is non-deterministic enough that asking it to do mechanical transcription work introduces drift that asking Haiku does not.
+2. **Each upstream tier's job is to remove decisions from the downstream tier.** Opus's contract.md decides architectural questions so Sonnet doesn't have to. Sonnet's per-sprint spec decides within-sprint questions so qwen doesn't have to. The pipeline's productivity is bounded by how few decisions qwen has to invent at codegen time.
+3. **Cloud falls back IN if local can't converge — but the system tries hard not to need it.** gpt-5.4's CloudFix exists because some failure modes (architectural mismatches, broken dependencies, missing routes) are genuinely beyond the local model's capacity. When it fires, that's a signal the contract was incomplete. The fallback is real but should be rare.
+
+### How this manifests at each tier
+
+**Opus 4.6 — Architect (cross-sprint authority).**
+Reads `.ai/spec_analysis.md` + `.ai/sprint_plan.md`. Produces `.ai/contract.md` (the cross-sprint architectural surface), `.ai/sprint_descriptions.jsonl` (per-sprint slices for Sonnet), and `.ai/scaffolding_plan.jsonl` (which files are pinned-bytes scaffolding for Haiku). The contract pins:
+
+- Stack, runtime, package manager, key library imports
+- Project-wide conventions (error handling shape, naming, logging, async)
+- Data model: ORM relationship loading strategy, `back_populates` symmetry
+- Test infrastructure (pool config, conftest fixtures)
+- Sprint file-ownership map (Pattern A: front-loaded; Pattern B: subsystem-front-loaded)
+- Cross-sprint type/symbol ownership (every name that crosses sprint boundaries with exact signatures)
+- The FROZEN files list — files no later sprint may modify
+- Tricky semantics (concurrency, lifecycle, paired invariants)
+
+The architect-discipline rule: **make concrete choices**. Where the spec is ambiguous, contract.md commits to one answer. Sonnet inherits this and Sonnet doesn't get to hedge either. By the time qwen sees a sprint spec, every cross-sprint question is already answered.
+
+**Sonnet 4.6 — Per-sprint enrichment (within-sprint authority).**
+For each sprint in the JSONL, Sonnet reads the contract + the sprint description and produces the enriched `.ai/sprints/SPRINT-NNN.md`. Sonnet's job is to write a contract that:
+
+- Lists every file the sprint owns under `## New files` or `## Modified files`
+- Lists every scaffolding file already-on-disk under `## Files already on disk` (so qwen doesn't regenerate them)
+- For each algorithmic file: Imports (full statements, no bare module names), Interface contract (signatures with exact types), Algorithm prose (step-by-step for non-trivial logic), Test plan
+- The sprint's Definition of Done + Validation commands
+
+Sonnet inherits the contract's rules and applies the within-sprint patterns (the speedrun spec format). Sonnet's role is **decision elimination, not design** — it re-states the architect's choices in concrete-enough terms that qwen can transcribe rather than invent. After Sonnet writes a sprint, a Sonnet auditor pass refines it via SR/REPLACE blocks (same matcher the runner uses downstream).
+
+**Haiku 4.5 — Scaffolding transcription (no authority — pure copy).**
+For each entry in `scaffolding_plan.jsonl`, Haiku reads the contract section pointed to and copies the fenced verbatim block into the named file. This is the cheapest tier: no reasoning, no design, no cross-file awareness. Each call has narrow scope (one file, one fenced block from the contract), per-entry validation against `required_lines` substrings, and per-entry retry isolation. Haiku is sufficient because the architect already decided every byte; Haiku's job is mechanical.
+
+**qwen3.6:35b — Local code generation + local fix (no authority — execute the contract).**
+Per sprint: parses the spec's `## New files` and writes each file via Ollama (one call per file). Per LocalFix round (when tests fail): emits SR/REPLACE blocks edited surgically into existing source. **qwen is intended to make zero decisions** — every cross-file question is answered in the contract, every within-file question is answered in the sprint spec. When qwen has to invent, the Sonnet contract was incomplete.
+
+**gpt-5.4 — CloudFix (recovery, not authority).**
+Single-session iterative agent invoked when LocalFix exhausts (8 rounds + 3 rollback budget). Has full bash + apply_patch + read tools; runs pytest itself within its session and iterates until green or until max_turns. Sits outside the tier hierarchy because it's a recovery surface, not a tier of authority — its existence is the explicit acknowledgment that some failures (architectural mismatches like the bcrypt+Python-3.14 case, missing dependencies that need pyproject.toml edits) are beyond what the local model can reason about. Costs ~$0.20-$0.50 per invocation. The pipeline is designed to never need it on a well-architected sprint.
+
+### Local execution flow (the runner side)
+
+When `sprint_runner_qwen.dip` (or `sprint_exec_qwen.dip`) runs against an architect-produced workspace, here's the step-by-step contract qwen and the surrounding runner enforce. Editing strategies and fallbacks documented inline:
+
+```
+                                                       (caller writes .ai/current_sprint_id.txt for Path C;
+  ┌───────────────┐                                    runner does it via check_ledger for Path A/B)
+  │ check_ledger  │ ────────────────────────────────┐
+  └───────────────┘                                  │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ Setup                                                                         │
+  │   - Detect proj_root (backend/ or frontend/ or server/ or api/ or .)          │
+  │   - Install deps (uv sync / npm install / go mod tidy)                        │
+  │   - Stage lib/merge_sr.py at .ai/merge_sr.py for self-contained LocalFix     │
+  │   - Reset per-sprint counters (.ai/local_fix_attempts, etc.)                  │
+  └───────────────────────────────────────────────────────────────────────────────┘
+                                                     │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ Generate (qwen — one Ollama call per file)                                    │
+  │   For each file in `## New files` of the sprint spec:                         │
+  │     - gen_file(): read contract + spec → emit raw file content                │
+  │     - validate_and_retry(): syntax-check; if py_compile/gofmt/node fails,     │
+  │       give qwen the error + 6-line context window, ask for a corrected file   │
+  │       (up to 2 retries per file)                                              │
+  │   For each file in `## Modified files`:                                       │
+  │     - patch_file(): read existing + sprint instructions → emit corrected file │
+  │   `## Files already on disk` is IGNORED — those are scaffolding (Haiku-       │
+  │   pinned). Generate never touches them.                                       │
+  └───────────────────────────────────────────────────────────────────────────────┘
+                                                     │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ RunTests                                                                      │
+  │   uv run pytest / go test / npm test → .ai/last_test_output.txt               │
+  │   Strict pass = exit 0 AND ≥1 PASSED AND 0 FAILED AND 0 ERROR                 │
+  │   Marker on stdout (kept tiny so it survives 64KB tool_stdout truncation):    │
+  │     • tests-pass         → Audit                                              │
+  │     • tests-fail         → LocalFix                                           │
+  │     • cloud-handoff      → CloudFix (first time local exhausted)              │
+  │     • tests-fail-final   → Escalate (cloud already attempted, still failing)  │
+  └───────────────────────────────────────────────────────────────────────────────┘
+                                                     │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ LocalFix (qwen — SEARCH/REPLACE surgical edits, max 8 rounds + 3 rollbacks)   │
+  │   Round 1: snapshot pre-local state → snapshot pre-round + record passing set │
+  │   Round 2+: Layer-1 regression check                                          │
+  │     DROPPED = pre_round_passing − post_round_passing                          │
+  │     If DROPPED non-empty: restore snapshot_round_pre, count consecutive_rollback│
+  │   Build context: full app/ source + failing test files                        │
+  │   Inject MANIFEST FORBIDDEN list into the SR system prompt (pre-emptive)     │
+  │   qwen emits SEARCH/REPLACE blocks (one per fix, possibly cross-file)         │
+  │   merge_sr.py applies blocks with 4-strategy fuzzy match:                     │
+  │     1. exact substring                                                        │
+  │     2. whitespace-insensitive (collapse runs of whitespace)                   │
+  │     3. indentation-preserving (dedent + re-indent)                            │
+  │     4. difflib.SequenceMatcher fuzzy ≥ 0.9 ratio                              │
+  │   Manifest violation check: if any TOUCHED file is in scaffolding_manifest,   │
+  │     restore snapshot_round_pre, log violation, count as rollback              │
+  │   Exhaustion: > 8 rounds OR ≥ 3 consecutive rollbacks                         │
+  │     → restore snapshot_pre_local for clean cloud handoff                      │
+  │     → printf 'local-exhausted' (routes to CloudFix)                           │
+  └───────────────────────────────────────────────────────────────────────────────┘
+                                                     │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ CloudFix (gpt-5.4 — single-session iterative, no retry loop)                  │
+  │   max_turns 25, reasoning_effort low, fallback_target Escalate                │
+  │   Tools: bash (full), apply_patch, read                                       │
+  │   Loop within ONE session:                                                    │
+  │     1. cat last_test_output.txt → identify first error class                  │
+  │     2. cat the source file(s) producing the error                             │
+  │     3. apply_patch a targeted fix                                             │
+  │     4. cd $proj_root && uv run pytest → read output                           │
+  │     5. green? stop. failing? GOTO 1                                           │
+  │   Forbidden fix patterns (anti-mask-symptom rules embedded in prompt):       │
+  │     - no try/except ImportError shims                                         │
+  │     - no pytest.skip / importorskip                                           │
+  │     - no commenting out / weakening assertions                                │
+  │     - no fake library implementations                                         │
+  │   Manifest awareness: prompt names the manifest as FROZEN; if root cause is   │
+  │   in scaffolding, CloudFix appends to .ai/escalation.txt and stops without    │
+  │   editing                                                                     │
+  └───────────────────────────────────────────────────────────────────────────────┘
+                                                     │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ Audit (DoD gate)                                                              │
+  │   Verify every artifact in `## Expected Artifacts` exists                     │
+  │   Verify test count: sprint declared N, repo has ≥ N (any-language)          │
+  │   audit-pass → CommitSprint (runner) / Done (exec)                            │
+  │   audit-fail → CloudFix (one shot)                                            │
+  └───────────────────────────────────────────────────────────────────────────────┘
+                                                     │
+                                                     ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ CommitSprint (runner only — exec leaves the workdir for caller to commit)     │
+  │   git add -A && git commit -m "feat(sprint-NNN): <title>"                     │
+  │   mark_complete updates ledger to status=completed                            │
+  │   sprint_gate (human checkpoint) → next sprint                                │
+  └───────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why SR/REPLACE for the local fix loop?
+
+The bench at `../bench_local_fix_sr.dip` measured this empirically (full data in [`DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md`](../../DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md), which reasons about it in depth):
+
+- Full-file rewrite: qwen can drift on any unchanged line. On a 13KB file, a one-bug fix produced a 15-test regression because qwen drifted on `back_populates` declarations across 5 unrelated classes. Rewriting whole files scales output cost with file size, not change size.
+- SEARCH/REPLACE: output volume scales with the change size. Failed merges fail loudly (block doesn't match) — never silently corrupts. Auditable: each block is a tiny diff. Empirically converges 9/10 breaks in 1 round, 3-6× faster than full-rewrite.
+
+Combined with set-based per-round rollback (Layer-1) and pre-local snapshot for cloud handoff (Layer-2), the local loop has structural protection against the failure modes that bit earlier full-rewrite-era runs. v9's silent-broken-commit and v10's truncation-routes-as-pass are both impossible under the current shape.
+
+### Known limitations — Python bias (future work)
+
+The pipeline architecture is language-agnostic — Setup/RunTests/LocalFix/Audit all branch on manifest files (`go.mod` / `package.json` / `pyproject.toml`) — but the *implementation underneath* has drifted Python-shaped because that's what we've been validating against. Colleagues running this on Rust/Ruby/Java/.NET projects today will hit gaps. Every Python-ism below is a leaf, not a load-bearing wall — fixable mechanically. Captured in full at [`principles/GENERALIZABILITY-BACKLOG.md`](principles/GENERALIZABILITY-BACKLOG.md).
+
+**Currently first-class:** Python (uv + pytest + pyproject.toml), Go (go test + go mod), Node/TypeScript (npm + jest/mocha + package.json) — partial coverage, see backlog for which sites have which.
+
+**Architect prompt biases (`architect_only.dip`, `spec_to_sprints.dip`):**
+- Pattern A / Pattern B descriptions cite Pydantic, FastAPI, SQLAlchemy, pytest concepts directly. A Rust/Axum or Go/chi project gets analog-via-vibes rather than language-specific guidance.
+- Scaffolding plan exemplars in the prompt are 100% Python (`pyproject.toml`, `conftest.py`, `app/main.py` with `pkgutil.iter_modules`). Opus may invent Python-shaped scaffolding for non-Python projects.
+- Test infrastructure section pins SQLAlchemy `StaticPool` + Pydantic v2 settings patterns as if every project uses them.
+
+**Runner-side biases (`sprint_runner_qwen.dip`, `sprint_exec_qwen.dip`):**
+- `RunTests` branches: pytest / go test / npm test only. Missing: cargo test, bundle exec rspec, mvn/gradle test, dotnet test.
+- `LocalFix` FILE_LIST patterns: `.go` / `.ts`+`.js` / `.py` only. Missing: `.rs`, `.rb`, `.java`, `.cs`, `.ex`.
+- `LocalFix` syntax pre-check: gofmt / py_compile / `node --check` (the last one is deprecated). Missing: `cargo check`, others.
+- LocalFix snapshot scope: hardcoded to `app/`, `tests/`, `scripts/`, `src/` plus a curated set of root-level project files (pyproject.toml / package.json / go.mod / Cargo.toml / Gemfile / pom.xml / build.gradle). May miss language-specific source roots.
+- `Audit` test-count regex: Go `^func Test`, Node `describe|it|test\(`, Python `^def test_`. Missing: Rust `#[test]`, Ruby RSpec, Java `@Test`.
+
+**CloudFix prompt bias:**
+- The example test command in the CloudFix prompt is `cd backend && uv run pytest -x --tb=short` — gpt-5.4 is intelligent enough to adapt to other test runners but the example sets the wrong default for non-Python projects.
+
+The pipeline is one focused weekend away from being a real polyglot codegen runner. The full backlog has tier-1 (mechanical fixes ~2 hrs), tier-2 (CloudFix prompt parametrization ~1 hr), and tier-3 (architect language pack ~1 day, gated on a real non-Python smoke test). Don't tackle tier-3 until we've actually run the pipeline on a Go/Rust project — guessing the right architecture archetypes without empirical data is wasted work.
+
 ## Quick start
 
 ### Prereqs (one-time)
