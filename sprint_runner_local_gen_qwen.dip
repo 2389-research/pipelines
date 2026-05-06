@@ -511,37 +511,51 @@ workflow SprintRunnerLocalGenQwen
       if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
 
   agent CloudFix
-    label: "Cloud fix fallback (gpt-5.4)"
+    label: "Cloud fix fallback (gpt-5.4 — single-session iterative)"
     model: gpt-5.4
     provider: openai
-    max_turns: 5
-    reasoning_effort: low
-    retry_target: RunTests
-    max_retries: 6
+    max_turns: 25
+    reasoning_effort: medium
+    timeout: 1200s
     fallback_target: Escalate
     prompt:
-      You are working in `run.working_dir`.
+      Tests are failing in the project. The local model (qwen3.6:35b-a3b-q8_0)
+      attempted fixes for 4 iterations and could not converge. You have ONE
+      session to drive tests to green — iterate within this session, do NOT
+      stop after a single fix.
 
-      A local model (qwen3.6:35b-a3b-q8_0) generated sprint files and attempted fixes but could
-      not converge. Tests are still failing or the audit found issues.
-      Make exactly ONE targeted fix this session, then stop. The pipeline re-runs tests
-      and calls you again if more fixes are needed.
+      Project layout:
+      - The project root contains a subdirectory whose name is in
+        `.ai/proj_root.txt` (e.g. `backend`). cd into it before running tests.
+      - `.ai/last_test_output.txt` holds the most recent pytest output that
+        triggered your invocation.
+      - `.ai/last_audit_output.txt` holds the most recent audit output (read
+        this if you were called for audit-fail rather than tests-fail).
+      - `.ai/scaffolding_manifest.txt` lists architect-pinned files.
+        ALL paths in that manifest are FROZEN — do not modify any of them.
+        If a fix appears to require modifying scaffolding, fix the algorithmic
+        callers instead, or report Escalate-class diagnosis.
 
-      Steps (3 turns max):
-      1. bash: cat .ai/last_test_output.txt
-         If tests passed, cat .ai/last_audit_output.txt instead.
-         Identify the FIRST error class and the specific file causing it.
-      2. bash: cat <that specific file>
-      3. edit — fix every instance of that error class in one edit. Stop.
+      Loop within this single session:
+      1. cat .ai/last_test_output.txt (and last_audit_output.txt if relevant).
+         Identify the FIRST error class. Read the project subdirectory from
+         .ai/proj_root.txt.
+      2. cat the source file(s) that produce that error.
+      3. apply_patch a targeted fix.
+      4. cd into the project subdirectory and run pytest yourself
+         (e.g. `cd backend && uv run pytest -x --tb=short 2>&1 | tail -80`).
+      5. Read pytest output. If green, you are done — output a one-line
+         summary and stop. If still failing, GOTO 1 with the new top error.
 
       Rules:
-      - Fix ONE error class per session. Do NOT run tests — the pipeline does that.
-      - When the same error appears in multiple places, fix ALL instances in one edit.
-      - Forbidden bash: NO sed -i, perl -pi, awk -i, python/node one-liners that write files.
-      - Use the edit tool for ALL file modifications.
+      - Iterate to green within this session. The pipeline does NOT call you
+        again on failure — converge here or escalate.
+      - When the same error appears in multiple places, fix all instances at once.
+      - Skip the scaffolding manifest. If a manifest file is the root cause,
+        stop and emit a one-line escalation note explaining what scaffolding
+        choice is wrong (do not edit it).
 
-      You have ONLY these tools: bash (cat read-only), edit.
-      Do NOT use: read, glob, grep_search, write, apply_patch, generate_code.
+      Tools available: bash, apply_patch, read.
 
   tool CommitSprint
     label: "Commit Sprint Work"
@@ -628,7 +642,7 @@ workflow SprintRunnerLocalGenQwen
     Setup -> Generate
     Generate -> RunTests
     RunTests -> LocalFix            when ctx.tool_stdout contains tests-fail
-    RunTests -> CloudFix            when ctx.tool_stdout contains tests-fail-cloud
+    RunTests -> Escalate            when ctx.tool_stdout contains tests-fail-cloud
     RunTests -> Audit               when ctx.tool_stdout contains tests-pass
     RunTests -> Audit
     LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
