@@ -1,8 +1,10 @@
 # Generalizability backlog
 
 Captured 2026-05-06 during the notebook_smoke_v8/v9/v10 validation cycle.
-Audit performed by reading `sprint_runner_local_gen_qwen.dip`,
-`local_code_gen/architect_only.dip`, and `principles/SCAFFOLDING-ARCHITECTURE.md`.
+Audit performed by reading `sprint_runner_qwen.dip` (was
+`sprint_runner_local_gen_qwen.dip` at root before the consolidation;
+see `../README.md` for the canonical file inventory),
+`architect_only.dip`, and `principles/SCAFFOLDING-ARCHITECTURE.md`.
 
 **Verdict:** the pipeline's *architecture* is language-agnostic — Setup,
 RunTests, LocalFix, and Audit all branch on manifest files. The

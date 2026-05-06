@@ -1,3 +1,12 @@
+# ABOUTME: Architect-only step. Models: Opus 4.6 (cross-sprint architectural
+#          design), Sonnet 4.6 (per-sprint enrichment + audit), Haiku 4.5
+#          (scaffolding file transcription via dispatch_scaffolding).
+#          Inputs: .ai/spec_analysis.md, .ai/sprint_plan.md.
+#          Outputs: .ai/contract.md, .ai/sprint_descriptions.jsonl,
+#          .ai/scaffolding_plan.jsonl, .ai/scaffolding_manifest.txt,
+#          .ai/sprints/SPRINT-*.md.
+#          Downstream: local_code_gen/sprint_runner_qwen.dip consumes these.
+#          File/model/strategy inventory: local_code_gen/README.md.
 workflow ArchitectOnlyTest
   goal: "Run only the write_sprint_docs architect step (Opus + write_enriched_sprint with Sonnet 2-pass audit) on existing .ai/sprint_plan.md + .ai/spec_analysis.md. Use this when you've already paid for decomposition+critique upstream and want to iterate on the architect prompt in isolation."
   start: Start

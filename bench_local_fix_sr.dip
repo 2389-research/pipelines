@@ -1,3 +1,10 @@
+# ABOUTME: Bench harness for the SR + rollback LocalFix tool body. Model:
+#          qwen3.6:35b-a3b-q8_0. Edit strategy: SEARCH/REPLACE via lib/merge_sr.py.
+#          NOT a sprint runner — no Generate, no ledger, no Audit, no CloudFix.
+#          Designed to A/B prompt designs and validate rollback layers against
+#          the deterministic pre-broken fixtures in
+#          DS-scratch/local_llm_patch_bench/. The production runner that uses
+#          this same LocalFix shape is local_code_gen/sprint_runner_qwen.dip.
 workflow BenchLocalFixSR
   goal: "Minimal dip that exercises the SR + rollback LocalFix logic against a pre-broken Python project. No generation, no ledger, no audit. Used to validate the LocalFix tool body in isolation against the local_llm_patch_bench fixtures."
   start: Setup

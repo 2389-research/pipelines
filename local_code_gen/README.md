@@ -40,7 +40,7 @@ set -gx PIPELINES_REPO /path/to/pipelines
 
 # Step 2: Generate code (qwen + LocalFix + CloudFix on test failures)
 #   Cost: $0 for local-only path, ~$5-30 if CloudFix kicks in; 1-3 hrs
-~/go/bin/tracker --no-tui --autopilot lax $PIPELINES_REPO/local_code_gen/sprint_runner.dip
+~/go/bin/tracker --no-tui --autopilot lax $PIPELINES_REPO/local_code_gen/sprint_runner_qwen.dip
 ```
 
 ### Iterating on the architect prompt (architect-only, fast)
@@ -110,13 +110,15 @@ The split is intentional: **frontier models design the architecture**, **the loc
 
 ## File index
 
-| File | Role |
-|---|---|
-| [`spec_to_sprints.dip`](spec_to_sprints.dip) | Full pipeline: spec discovery → decomposition tournament → critique → merge → architect → dispatch_sprints → ledger → validate. 28 nodes / ~860 lines. Use this for cold runs from a `spec.md`. |
-| [`architect_only.dip`](architect_only.dip) | Architect step in isolation: skips the decomposition tournament. Reads pre-existing `.ai/spec_analysis.md` + `.ai/sprint_plan.md` and produces sprint specs. 6 nodes / ~270 lines. Use this for fast iteration on the architect prompt. |
-| [`sprint_runner.dip`](sprint_runner.dip) | Code-generation runner: qwen Generate → RunTests → SR-block LocalFix → cloud CloudFix → Audit → Commit. Loops over each sprint in the ledger. 17 nodes / ~750 lines. |
-| [`principles/`](principles/) | Architecture documentation, pattern references, exemplars, structural-fix journey docs. The `principles/README.md` is the index. None of these are loaded at runtime — they're human maintenance material. |
-| `../lib/merge_sr.py` | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner.dip`'s LocalFix step. The same matching strategies are mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. |
+| File | Role | Models | Edit strategy |
+|---|---|---|---|
+| [`spec_to_sprints.dip`](spec_to_sprints.dip) | Full pipeline: spec discovery → decomposition tournament → critique → merge → architect → dispatch_sprints → ledger → validate. Use this for cold runs from a `spec.md`. | Opus + Sonnet + Haiku | n/a |
+| [`architect_only.dip`](architect_only.dip) | Architect step in isolation: skips the decomposition tournament. Reads pre-existing `.ai/spec_analysis.md` + `.ai/sprint_plan.md` and produces sprint specs + scaffolding manifest. Use this for fast iteration on the architect prompt. | Opus 4.6 (architect) + Sonnet 4.6 (sprint enrichment) + Haiku 4.5 (scaffolding transcription) | n/a |
+| [`sprint_runner_qwen.dip`](sprint_runner_qwen.dip) | Code-generation runner: qwen Generate → RunTests → SR LocalFix (with rollback + manifest gate) → single-session CloudFix → Audit → Commit. Loops over each sprint in the ledger. | qwen3.6:35b-a3b-q8_0 (Generate + LocalFix) + gpt-5.4 (CloudFix fallback) | SEARCH/REPLACE blocks via `../lib/merge_sr.py`, 4-strategy fuzzy merge, set-based per-round rollback, pre-cloud snapshot |
+| [`smoke_scaffolding/`](smoke_scaffolding/) | Tiny smoke test for `dispatch_scaffolding` (Haiku per-file scaffolding writer). | Haiku 4.5 | n/a |
+| [`principles/`](principles/) | Architecture documentation, pattern references, exemplars, structural-fix journey docs. The `principles/README.md` is the index. None of these are loaded at runtime — they're human maintenance material. | — | — |
+| `../lib/merge_sr.py` | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner_qwen.dip`'s LocalFix step. Same matching strategies mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. | — | — |
+| `../bench_local_fix_sr.dip` | Bench harness — exercises the SR LocalFix tool body in isolation against deterministic pre-broken fixtures from `DS-scratch/local_llm_patch_bench/`. No Generate, no ledger, no Audit. The bench's purpose is to A/B prompt designs and validate rollback layers without spending the cost of a full sprint run. | qwen3.6:35b-a3b-q8_0 only | Same as `sprint_runner_qwen.dip` |
 
 ## Configuration
 
@@ -127,7 +129,7 @@ The split is intentional: **frontier models design the architecture**, **the loc
 | `ANTHROPIC_API_KEY` | Architect (Opus) + writer/audit (Sonnet) calls | `tracker setup` or shell univar |
 | `OPENAI_API_KEY` | CloudFix (gpt-5.4) when LocalFix exhausts | same |
 | `TRACKER_SPRINT_WRITER_MODEL` | Model for the per-sprint writer (default `claude-sonnet-4-6`). Required for `dispatch_sprints` to register. | `set -gx` before the run |
-| `PIPELINES_REPO` | Path to this pipelines repo. `sprint_runner.dip` uses it to locate `lib/merge_sr.py`. | `set -gx` before the runner run |
+| `PIPELINES_REPO` | Path to this pipelines repo. `sprint_runner_qwen.dip` uses it to locate `lib/merge_sr.py`. (Setup also tries common default paths so this is now optional.) | `set -gx` before the runner run |
 
 ### Optional env vars
 
