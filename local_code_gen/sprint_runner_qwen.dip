@@ -1,0 +1,923 @@
+# ABOUTME: Per-sprint code-gen runner. Models: qwen3.6:35b-a3b-q8_0 (Generate +
+#          LocalFix), gpt-5.4 (CloudFix fallback, single-session iterative).
+#          Edit strategy: SEARCH/REPLACE blocks via merge_sr.py with
+#          4-strategy fuzzy merge, set-based per-round rollback, manifest-aware
+#          refusal of architect-pinned scaffolding paths.
+#          Bench harness exercising LocalFix in isolation:
+#          bench_local_fix_sr.dip.
+#          File/model/strategy inventory: local_code_gen/README.md.
+workflow SprintRunnerLocalGenQwen
+  goal: "Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge."
+  start: Start
+  exit: Exit
+
+  defaults
+    provider: openai
+    fidelity: summary:medium
+    max_restarts: 50
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'runner-started'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'runner-complete'
+
+  tool check_ledger
+    label: "Check Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'no_ledger'
+        exit 0
+      fi
+      target=$(awk -F '\t' 'NR>1 && $3!~/^completed$/ && $3!~/^skipped$/{print $1; exit}' .ai/ledger.tsv)
+      if [ -z "$target" ]; then
+        printf 'all_done'
+        exit 0
+      fi
+      printf '%s' "$target" > .ai/current_sprint_id.txt
+      printf 'next-%s' "$target"
+
+  tool no_ledger_exit
+    label: "No Ledger Found"
+    timeout: 5s
+    command:
+      echo "No .ai/ledger.tsv found. Run spec_to_sprints.dip or tools/init-ledger.sh first."
+      printf 'no-ledger'
+
+  tool mark_in_progress
+    label: "Mark In Progress"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="in_progress"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'in_progress-%s' "$target"
+
+  tool Setup
+    label: "Install deps + reset per-sprint counters"
+    timeout: 300s
+    command:
+      set +e
+      WORKDIR_ABS=$(pwd)
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      if [ ! -f "$SPRINT_DOC" ]; then echo "missing $SPRINT_DOC"; exit 1; fi
+      rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/cloud_attempted .ai/passing_pre.txt .ai/escalation.txt
+      rm -rf .ai/snapshot_pre_local .ai/snapshot_round_pre
+
+      proj_root="."
+      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
+        proj_root="backend"
+      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
+        proj_root="frontend"
+      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
+        proj_root="server"
+      fi
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+
+      cd "$proj_root"
+      if [ -f pyproject.toml ]; then
+        uv sync --all-extras > "$WORKDIR_ABS/.ai/install.log" 2>&1 || uv sync >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
+      elif [ -f go.mod ]; then
+        go mod tidy 2>/dev/null || true
+      elif [ -f package.json ]; then
+        npm install 2>/dev/null || true
+      fi
+      cd "$WORKDIR_ABS"
+
+      # Stage merge_sr.py in .ai/ so LocalFix has a self-contained reference
+      # (independent of $PIPELINES_REPO env). Try the in-tree sibling first
+      # (works for any clean checkout where this dip is run from the repo root)
+      # before the env var and hardcoded fallbacks.
+      if [ ! -f .ai/merge_sr.py ]; then
+        for src in \
+          "local_code_gen/merge_sr.py" \
+          "${PIPELINES_REPO:-}/local_code_gen/merge_sr.py" \
+          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/merge_sr.py" \
+          "$HOME/Documents/GitHub/pipelines/local_code_gen/merge_sr.py"; do
+          if [ -n "$src" ] && [ -f "$src" ]; then
+            cp "$src" .ai/merge_sr.py
+            echo "staged merge_sr.py from $src"
+            break
+          fi
+        done
+      fi
+
+      printf 'setup-done'
+
+  tool Generate
+    label: "Generate all files (qwen3.6:35b-a3b-q8_0, one Ollama call per file)"
+    timeout: 600s
+    command:
+      set -e
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      SPRINT=$(cat "$SPRINT_DOC")
+      OLLAMA=http://localhost:11434/api/chat
+      SYS="You are a code generator. Output only the raw file content. No explanation, no markdown fences, no commentary."
+
+      gen_file() {
+        local filepath="$1"
+        local description="$2"
+        local max_tokens="${3:-4096}"
+        local user_msg="CONTRACT (full spec):\n\n${SPRINT}\n\nGENERATE THIS FILE: ${filepath}\n${description}\n\nOutput ONLY the raw file content. Nothing else."
+        echo "generating ${filepath}..."
+        mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
+        # Capture the raw response and validate before writing — piping
+        # `jq -r '.message.content' > file` directly will silently overwrite
+        # the file with empty content if Ollama errored or didn't return a
+        # message field.
+        local raw
+        raw=$(curl -sf "${OLLAMA}" \
+          -H 'Content-Type: application/json' \
+          --data "$(jq -n \
+            --arg sys "${SYS}" \
+            --arg msg "${user_msg}" \
+            --argjson tokens "${max_tokens}" \
+            '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+              messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
+              options:{temperature:1.0,top_p:0.95,top_k:20,min_p:0,presence_penalty:1.5,num_ctx:32768,num_predict:$tokens}}')") || {
+          echo "ERROR: curl failed contacting Ollama for ${filepath}; leaving target untouched"
+          return 1
+        }
+        local content
+        content=$(printf '%s' "$raw" | jq -r 'if (has("message") and (.message.content | length > 0)) then .message.content else empty end' 2>/dev/null)
+        if [ -z "$content" ]; then
+          echo "ERROR: empty/missing .message.content from Ollama for ${filepath}; leaving target untouched"
+          printf '%s' "$raw" > .ai/last_failed_ollama_response.txt
+          return 1
+        fi
+        printf '%s' "$content" > "${filepath}"
+        echo "wrote ${filepath} ($(wc -c < "${filepath}") bytes)"
+        validate_and_retry "${filepath}"
+      }
+
+      patch_file() {
+        local filepath="$1"
+        local max_tokens="${2:-4096}"
+        local current
+        current=$(cat "${filepath}")
+        local user_msg="CONTRACT (full spec):\n\n${SPRINT}\n\nEXISTING FILE: ${filepath}\n\n${current}\n\nApply ONLY the modifications described for ${filepath} in the sprint spec under '## Modified files'. Output the complete updated file. Nothing else."
+        echo "patching ${filepath}..."
+        mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
+        curl -sf "${OLLAMA}" \
+          -H 'Content-Type: application/json' \
+          --data "$(jq -n \
+            --arg sys "${SYS}" \
+            --arg msg "${user_msg}" \
+            --argjson tokens "${max_tokens}" \
+            '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+              messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
+              options:{temperature:0.6,top_p:0.95,top_k:20,min_p:0,presence_penalty:0.0,num_ctx:32768,num_predict:$tokens}}')" \
+          | jq -r '.message.content' \
+          | sed '/^```/d' \
+          > "${filepath}"
+        echo "patched ${filepath} ($(wc -c < "${filepath}") bytes)"
+        validate_and_retry "${filepath}"
+      }
+
+      syntax_check() {
+        local fp="$1"
+        case "$fp" in
+          *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
+          *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
+          *.ts|*.js) node --check "$fp" 2>&1 | head -5 ;;
+        esac
+      }
+
+      validate_and_retry() {
+        local fp="$1"
+        local attempt=0
+        while [ $attempt -lt 2 ]; do
+          local err
+          err=$(syntax_check "$fp")
+          [ -z "$err" ] && return 0
+          attempt=$((attempt + 1))
+          echo "syntax error in $fp (retry $attempt/2): $err"
+          local line_num
+          line_num=$(echo "$err" | grep -oE ':[0-9]+:' | head -1 | tr -d ':')
+          local context=""
+          if [ -n "$line_num" ]; then
+            local start=$((line_num - 3))
+            [ "$start" -lt 1 ] && start=1
+            local end=$((line_num + 3))
+            context=$(awk "NR>=$start && NR<=$end {printf \"%d: %s\n\", NR, \$0}" "$fp")
+          fi
+          local current
+          current=$(cat "$fp")
+          local fixed
+          fixed=$(curl -sf "${OLLAMA}" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg file "$current" \
+              --arg err "$err" \
+              --arg ctx "$context" \
+              --arg path "$fp" \
+              '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+                messages:[
+                  {role:"system",content:"Output ONLY the corrected file content. No markdown fences. No explanation."},
+                  {role:"user",content:("File "+$path+" has a syntax error:\n\n"+$err+"\n\nContext around error:\n"+$ctx+"\n\nFull file:\n"+$file+"\n\nOutput the corrected file only.")}
+                ],
+                options:{temperature:0.6,top_p:0.95,top_k:20,min_p:0,presence_penalty:0.0,num_ctx:32768}}')" \
+            | jq -r '.message.content' | sed '/^```/d')
+          [ -z "$fixed" ] && return 0
+          echo "$fixed" > "$fp"
+          echo "syntax-retry $attempt: rewrote $fp"
+        done
+        echo "warning: $fp may still have syntax errors after 2 retries"
+      }
+
+      # Parse ## New files into two lists: empty (description contains "empty"/"blank"/"placeholder"/"marker")
+      # vs gen (everything else). Empty files get a `touch` instead of an LLM call.
+      NEW_BULLETS=$(awk '/^## New files/{f=1;next} f && /^##/{exit} f{print}' "$SPRINT_DOC")
+      EMPTY_FILES=$(printf '%s\n' "$NEW_BULLETS" \
+        | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`[[:space:]]*[—-][[:space:]]*(.+)$/\2|\1/p' \
+        | grep -iE '^(empty|blank|placeholder|marker)' \
+        | awk -F'|' '{print $2}' || true)
+      ALL_FILES=$(printf '%s\n' "$NEW_BULLETS" | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
+      NEW_FILES=$(printf '%s\n' "$ALL_FILES" | sort -u > /tmp/_all_files.txt; \
+        printf '%s\n' "$EMPTY_FILES" | sort -u > /tmp/_empty_files.txt; \
+        comm -23 /tmp/_all_files.txt /tmp/_empty_files.txt; \
+        rm -f /tmp/_all_files.txt /tmp/_empty_files.txt)
+
+      # Touch empty files (no LLM call)
+      for filepath in $EMPTY_FILES; do
+        if [ ! -f "${filepath}" ]; then
+          mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
+          : > "${filepath}"
+          echo "touched ${filepath} (empty marker)"
+        else
+          echo "skipping ${filepath} (already exists)"
+        fi
+      done
+
+      # Generate non-empty files via qwen
+      for filepath in $NEW_FILES; do
+        if [ ! -f "${filepath}" ]; then
+          gen_file "${filepath}" \
+            'Implement exactly as specified in the sprint. Use the Data contract (types/schemas), API contract (route table), Algorithm (per-route prose), Test contract (per-file tables), and Verbatim files (tiny configs) sections to find the content for this file. Older sprint formats may use Interface contract / Algorithm notes / Imports per file / Test plan instead.' \
+            4096
+        else
+          echo "skipping ${filepath} (already exists)"
+        fi
+      done
+
+      # Modified files — read existing, apply targeted changes
+      MOD_FILES=$(awk '/^## Modified files/{f=1;next} f && /^##/{exit} f{print}' \
+        "$SPRINT_DOC" | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
+      for filepath in $MOD_FILES; do
+        patch_file "${filepath}" 4096
+      done
+
+      # Fallback: sprint uses old ## Expected Artifacts format (no New/Modified split)
+      if [ -z "$NEW_FILES" ] && [ -z "$MOD_FILES" ]; then
+        ARTIFACTS=$(awk '/^## Expected Artifacts/{f=1;next} f && /^##/{exit} f{print}' \
+          "$SPRINT_DOC" | sed -nE 's/^[[:space:]]*-[[:space:]]+`([^`]+)`.*/\1/p' || true)
+        for filepath in $ARTIFACTS; do
+          gen_file "${filepath}" \
+            'Implement exactly as specified in the sprint. Use the Data contract (types/schemas), API contract (route table), Algorithm (per-route prose), Test contract (per-file tables), and Verbatim files (tiny configs) sections to find the content for this file. Older sprint formats may use Interface contract / Algorithm notes / Imports per file / Test plan instead.' \
+            4096
+        done
+      fi
+
+      if [ -f go.mod ]; then go mod tidy 2>/dev/null || true; fi
+      printf 'gen-done'
+
+  tool RunTests
+    label: "Run Tests"
+    timeout: 120s
+    command:
+      set +e
+      mkdir -p .ai
+      WORKDIR_ABS=$(pwd)
+      # Re-detect proj_root every run — Generate may have created subdirs
+      # after Setup's initial detection.
+      proj_root="."
+      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
+        proj_root="backend"
+      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
+        proj_root="frontend"
+      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
+        proj_root="server"
+      fi
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+      cd "$proj_root"
+      code=0
+      runner=""
+      if [ -f go.mod ]; then
+        runner="go"
+        go test ./... > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      elif [ -f package.json ]; then
+        runner="npm"
+        npm test > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        runner="pytest"
+        # Ensure dev/test deps installed before running. Idempotent on a synced venv.
+        # Necessary because Setup may have run before pyproject.toml existed.
+        if [ -f pyproject.toml ]; then
+          uv sync --all-extras >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
+        fi
+        uv run pytest -v > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      else
+        echo "no test runner detected" > "$WORKDIR_ABS/.ai/last_test_output.txt"
+        code=1
+      fi
+      cd "$WORKDIR_ABS"
+      tail -10 .ai/last_test_output.txt
+
+      # Strict pass: language-specific.
+      #   pytest — at least one PASSED, zero FAILED, zero ERROR (skips do NOT
+      #            count; they often hide environment problems).
+      #   go     — `go test ./...` exited 0. Reports per-package "ok" lines.
+      #   npm    — `npm test` exited 0. Output shape varies wildly across
+      #            test runners; rely on exit code as the canonical signal.
+      strict_pass=0
+      if [ "$runner" = "pytest" ]; then
+        passed=$(grep -oE '[0-9]+ passed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
+        failed=$(grep -oE '[0-9]+ failed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
+        errors=$(grep -oE '[0-9]+ error' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
+        passed=${passed:-0}; failed=${failed:-0}; errors=${errors:-0}
+        if [ "$code" -eq 0 ] && [ "$passed" -gt 0 ] && [ "$failed" -eq 0 ] && [ "$errors" -eq 0 ]; then
+          strict_pass=1
+        fi
+        echo "pytest summary: passed=$passed failed=$failed errors=$errors exit=$code strict_pass=$strict_pass"
+      else
+        # go / npm: trust the exit code.
+        if [ "$code" -eq 0 ]; then
+          strict_pass=1
+        fi
+        echo "$runner summary: exit=$code strict_pass=$strict_pass"
+      fi
+
+      # Routing markers, in order of precedence:
+      #   tests-pass       — strict pass: at least 1 PASSED, 0 FAILED, 0 ERROR, exit 0
+      #   tests-fail-final — local AND cloud have already attempted; further failures
+      #                      indicate a problem outside the recovery loop's scope
+      #   cloud-handoff    — local exhausted, this is the first cloud invocation
+      #   tests-fail       — initial failure, route to LocalFix
+      if [ "$strict_pass" -eq 1 ]; then
+        printf 'tests-pass'
+      elif [ -f .ai/local_exhausted ]; then
+        if [ -f .ai/cloud_attempted ]; then
+          printf 'tests-fail-final'
+        else
+          touch .ai/cloud_attempted
+          printf 'cloud-handoff'
+        fi
+      else
+        printf 'tests-fail'
+      fi
+
+  tool LocalFix
+    label: "Local fix (qwen3.6:35b-a3b-q8_0, SR + rollback)"
+    timeout: 600s
+    command:
+      set +e
+      mkdir -p .ai
+      OLLAMA=http://localhost:11434/api/chat
+      WORKDIR_ABS=$(pwd)
+      # Re-detect proj_root every round (Generate may have created subdirs)
+      proj_root="."
+      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
+        proj_root="backend"
+      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
+        proj_root="frontend"
+      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
+        proj_root="server"
+      fi
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+      PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
+
+      MAX_ROUNDS=8
+      MAX_ROLLBACKS=3
+
+      # Locate merge_sr.py: prefer .ai/merge_sr.py (bench wrapper drops it here),
+      # fallback to $PIPELINES_REPO/local_code_gen/merge_sr.py if env var set.
+      MERGE_SR=""
+      if [ -f .ai/merge_sr.py ]; then
+        MERGE_SR="$WORKDIR_ABS/.ai/merge_sr.py"
+      elif [ -n "${PIPELINES_REPO:-}" ] && [ -f "$PIPELINES_REPO/local_code_gen/merge_sr.py" ]; then
+        MERGE_SR="$PIPELINES_REPO/local_code_gen/merge_sr.py"
+      else
+        echo "ERROR: merge_sr.py not found. Place it at .ai/merge_sr.py or set PIPELINES_REPO."
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      # Project-root files commonly named in scaffolding manifests across
+      # languages. Snapshotting these alongside the source dirs lets rollback
+      # cover the full attack surface that qwen could write to via SR.
+      ROOT_FILES="pyproject.toml package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
+
+      snapshot_state() {
+        local snap_dir="$1"
+        # Make snap_dir absolute so cd doesn't break it
+        case "$snap_dir" in
+          /*) ;;
+          *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
+        esac
+        rm -rf "$snap_dir"; mkdir -p "$snap_dir"
+        cd "$PROJ_ROOT_ABS"
+        [ -d app ] && cp -R app "$snap_dir/" || true
+        [ -d tests ] && cp -R tests "$snap_dir/" || true
+        [ -d scripts ] && cp -R scripts "$snap_dir/" || true
+        [ -d src ] && cp -R src "$snap_dir/" || true
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && cp "$f" "$snap_dir/"
+        done
+        cd "$WORKDIR_ABS"
+      }
+      restore_state() {
+        local snap_dir="$1"
+        case "$snap_dir" in
+          /*) ;;
+          *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
+        esac
+        # Refuse to "restore" from an empty snapshot — that would just delete current state
+        if [ ! -d "$snap_dir/app" ] && [ ! -d "$snap_dir/tests" ]; then
+          echo "WARN: snapshot $snap_dir is empty; refusing to restore (would nuke current state)"
+          return 1
+        fi
+        cd "$PROJ_ROOT_ABS"
+        [ -d app ] && rm -rf app
+        [ -d tests ] && rm -rf tests
+        [ -d scripts ] && rm -rf scripts
+        [ -d src ] && rm -rf src
+        [ -d "$snap_dir/app" ] && cp -R "$snap_dir/app" .
+        [ -d "$snap_dir/tests" ] && cp -R "$snap_dir/tests" .
+        [ -d "$snap_dir/scripts" ] && cp -R "$snap_dir/scripts" .
+        [ -d "$snap_dir/src" ] && cp -R "$snap_dir/src" .
+        for f in $ROOT_FILES; do
+          [ -f "$snap_dir/$f" ] && cp "$snap_dir/$f" .
+        done
+        cd "$WORKDIR_ABS"
+      }
+      extract_passing() {
+        grep -E "::[a-zA-Z_][a-zA-Z0-9_]* PASSED " "$1" 2>/dev/null | awk '{print $1}' | sort -u
+      }
+
+      attempts=$(cat .ai/local_fix_attempts 2>/dev/null || echo 0)
+      consecutive_rollbacks=$(cat .ai/consecutive_rollbacks 2>/dev/null || echo 0)
+
+      # Layer 1: regression check (only meaningful from round 2+)
+      if [ "$attempts" -gt 0 ] && [ -f .ai/passing_pre.txt ]; then
+        POST_PASSING=$(mktemp)
+        extract_passing .ai/last_test_output.txt > "$POST_PASSING"
+        DROPPED=$(comm -23 .ai/passing_pre.txt "$POST_PASSING")
+        if [ -n "$DROPPED" ]; then
+          DROPPED_COUNT=$(echo "$DROPPED" | grep -c .)
+          echo "REGRESSION: $DROPPED_COUNT previously-passing test(s) now fail"
+          echo "dropped: $(echo "$DROPPED" | tr '\n' ',' | sed 's/,$//')"
+          echo "rolling back to pre-round snapshot"
+          restore_state .ai/snapshot_round_pre
+          consecutive_rollbacks=$((consecutive_rollbacks + 1))
+          echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+        else
+          echo 0 > .ai/consecutive_rollbacks
+          consecutive_rollbacks=0
+        fi
+        rm -f "$POST_PASSING"
+      fi
+
+      attempts=$((attempts + 1))
+      echo $attempts > .ai/local_fix_attempts
+      echo "local fix round $attempts/$MAX_ROUNDS (consecutive_rollbacks=$consecutive_rollbacks/$MAX_ROLLBACKS)"
+
+      # Exhaustion → restore pre-local for cloud handoff
+      if [ "$attempts" -gt "$MAX_ROUNDS" ] || [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ] || [ -f .ai/local_exhausted ]; then
+        if [ -d .ai/snapshot_pre_local ]; then
+          echo "restoring pre-local snapshot for cloud handoff"
+          restore_state .ai/snapshot_pre_local
+        fi
+        touch .ai/local_exhausted
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      # First round: snapshot pre-local
+      if [ "$attempts" -eq 1 ]; then
+        snapshot_state .ai/snapshot_pre_local
+        echo "saved pre-local snapshot"
+      fi
+
+      # Snapshot pre-round + capture pre-round passing set
+      snapshot_state .ai/snapshot_round_pre
+      extract_passing .ai/last_test_output.txt > .ai/passing_pre.txt
+      PRE_PASS_COUNT=$(wc -l < .ai/passing_pre.txt | tr -d ' ')
+      echo "pre-round passing tests: $PRE_PASS_COUNT"
+
+      # Build context: full app/ source + failing test files
+      cd "$PROJ_ROOT_ABS"
+      FAILING_TESTS=$( { grep -oE 'FAILED [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; \
+                        grep -oE 'ERROR [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; } | sort -u)
+
+      find app -name "*.py" -not -path "*/__pycache__/*" 2>/dev/null | sort > /tmp/lf_app_files.txt
+      printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
+      : > /tmp/lf_context.txt
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
+        cat "$f" >> /tmp/lf_context.txt
+        printf '\n\n' >> /tmp/lf_context.txt
+      done < /tmp/lf_app_files.txt
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        if [ -f "$f" ]; then
+          printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
+          cat "$f" >> /tmp/lf_context.txt
+          printf '\n\n' >> /tmp/lf_context.txt
+        fi
+      done < /tmp/lf_failing_tests.txt
+      CONTEXT=$(cat /tmp/lf_context.txt)
+      rm -f /tmp/lf_app_files.txt /tmp/lf_failing_tests.txt /tmp/lf_context.txt
+
+      FAIL_BLOCKS=$(awk '/^=+ FAILURES =+$/{f=1;next} f && /^=+ short test summary/{exit} f' "$WORKDIR_ABS/.ai/last_test_output.txt")
+      FAIL_SUMMARY=$(grep -E "^(FAILED|ERROR) " "$WORKDIR_ABS/.ai/last_test_output.txt" || true)
+      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || echo 0)
+
+      cd "$WORKDIR_ABS"
+
+      # Sprint context for the active sprint. The sprint loop writes the
+      # current id to .ai/current_sprint_id.txt; LocalFix needs that sprint's
+      # spec, not always sprint 001.
+      SPRINT=""
+      SPRINT_DOC=""
+      if [ -f .ai/current_sprint_id.txt ]; then
+        SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+        SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      fi
+      if [ -n "$SPRINT_DOC" ] && [ -f "$SPRINT_DOC" ]; then
+        SPRINT=$(cat "$SPRINT_DOC")
+      fi
+
+      # Manifest-forbidden list (architect-pinned scaffolding). Convert workspace-
+      # relative manifest paths to proj-root-relative for inclusion in qwen's prompt
+      # (and for the post-merge violation check below).
+      MANIFEST_LOCAL=""
+      if [ -f "$WORKDIR_ABS/.ai/scaffolding_manifest.txt" ] && [ -s "$WORKDIR_ABS/.ai/scaffolding_manifest.txt" ]; then
+        if [ "$proj_root" = "." ] || [ -z "$proj_root" ]; then
+          MANIFEST_LOCAL=$(cat "$WORKDIR_ABS/.ai/scaffolding_manifest.txt")
+        else
+          MANIFEST_LOCAL=$(sed -E "s|^${proj_root}/||" "$WORKDIR_ABS/.ai/scaffolding_manifest.txt")
+        fi
+      fi
+
+      SYS_SR=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s' "You are a code editor that produces SEARCH/REPLACE blocks. Each block looks EXACTLY like this:" "" "app/models.py" "<<<<<<< SEARCH" "    foo: Mapped[int]" "=======" "    foo: Mapped[int] = mapped_column(default=0)" ">>>>>>> REPLACE" "" "Rules: filepath on its own line; SEARCH must match file content EXACTLY (whitespace, indentation, every character); output ONLY SEARCH/REPLACE blocks - no prose, no markdown fences, no explanation; multiple bugs require multiple blocks (each with its own filepath, SEARCH, REPLACE, and markers); each block targets one small change; the replacement must be syntactically valid; do not output entire files - only the lines you are changing with enough surrounding context to be unique.")
+
+      USER_SR=$(printf '%s\n%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
+        "There are ${FAIL_COUNT} failing test(s). Read the project context, diagnose the cause(s), and emit SEARCH/REPLACE blocks to fix them." \
+        "IMPORTANT: when a test asserts something the code does not provide (e.g. assert obj.foo raises AttributeError), the FIX is in the source file (add the field), NOT in the test (don't remove the assertion). Tests describe what the code SHOULD do." \
+        "FAILURES SUMMARY:" \
+        "${FAIL_SUMMARY}" \
+        "---" \
+        "DETAILED TRACEBACKS:" \
+        "${FAIL_BLOCKS}" \
+        "---" \
+        "PROJECT CONTEXT (paths relative to project root):" \
+        "${CONTEXT}" \
+        "---SPRINT SPEC---")
+      # Append manifest forbidden list when present so qwen pre-emptively avoids
+      # scaffolding paths. Belt-and-suspenders with the post-merge violation check.
+      if [ -n "$MANIFEST_LOCAL" ]; then
+        USER_SR=$(printf '%s\n\n%s\n%s\n\n%s' "$USER_SR" \
+          "FROZEN SCAFFOLDING (architect-pinned — DO NOT emit blocks targeting these paths under any circumstance; if the fix appears to require modifying one, target an algorithmic caller instead):" \
+          "$MANIFEST_LOCAL" \
+          "$SPRINT")
+      else
+        USER_SR=$(printf '%s\n%s' "$USER_SR" "$SPRINT")
+      fi
+      USER_SR=$(printf '%s\n%s\n%s' "$USER_SR" "---" "Emit SEARCH/REPLACE blocks. Each block's filepath line must use a path relative to the project root (e.g. app/models.py). Do NOT prefix paths with the project root directory name. Address every failure.")
+
+      RESPONSE=$(curl -sf "$OLLAMA" \
+        -H 'Content-Type: application/json' \
+        --data "$(jq -n --arg sys "$SYS_SR" --arg msg "$USER_SR" \
+          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+            messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
+            options:{temperature:0.6,top_p:0.95,top_k:20,min_p:0,presence_penalty:0.0,num_ctx:32768,num_predict:4096}}')" \
+        | jq -r '.message.content')
+
+      echo "$RESPONSE" > .ai/last_qwen_response.txt
+
+      MERGE_OUT=$(echo "$RESPONSE" | python3 "$MERGE_SR" "$PROJ_ROOT_ABS" 2>&1)
+      echo "$MERGE_OUT" > .ai/last_merge.json
+      APPLIED=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("applied",0))' 2>/dev/null || echo 0)
+      FAILED_BLOCKS=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("failed",0))' 2>/dev/null || echo 0)
+      FILES_TOUCHED=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; r=json.load(sys.stdin).get("results",[]); print(",".join(sorted(set(x["file"] for x in r if x.get("ok")))))' 2>/dev/null || echo "")
+      echo "merger: applied=$APPLIED failed=$FAILED_BLOCKS files=[$FILES_TOUCHED]"
+
+      # Manifest violation check: if any touched file is in the architect's
+      # scaffolding manifest, qwen wrote where it shouldn't have. Roll back this
+      # round to snapshot_round_pre and count it as a consecutive_rollback (which
+      # eventually triggers escalation to cloud after MAX_ROLLBACKS).
+      if [ -n "$FILES_TOUCHED" ] && [ -n "$MANIFEST_LOCAL" ]; then
+        VIOLATIONS=""
+        IFS=',' read -ra TF_ARR <<< "$FILES_TOUCHED"
+        for tf in "${TF_ARR[@]}"; do
+          [ -z "$tf" ] && continue
+          if echo "$MANIFEST_LOCAL" | grep -Fxq "$tf"; then
+            VIOLATIONS="${VIOLATIONS}${tf} "
+          fi
+        done
+        if [ -n "$VIOLATIONS" ]; then
+          echo "MANIFEST VIOLATION: qwen wrote to scaffolding paths: $VIOLATIONS"
+          echo "rolling back to pre-round snapshot (architect-pinned files protected)"
+          restore_state .ai/snapshot_round_pre
+          consecutive_rollbacks=$((consecutive_rollbacks + 1))
+          echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+          if [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ]; then
+            if [ -d .ai/snapshot_pre_local ]; then
+              restore_state .ai/snapshot_pre_local
+            fi
+            touch .ai/local_exhausted
+            printf 'local-exhausted'
+            exit 0
+          fi
+          # Still have rollback budget — let next round retry with the violation
+          # logged as an attempt
+          printf 'local-fixed'
+          exit 0
+        fi
+      fi
+
+      if [ "$APPLIED" = "0" ]; then
+        consecutive_rollbacks=$((consecutive_rollbacks + 1))
+        echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+        echo "no blocks applied; consecutive failures: $consecutive_rollbacks"
+        if [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ]; then
+          if [ -d .ai/snapshot_pre_local ]; then
+            restore_state .ai/snapshot_pre_local
+          fi
+          touch .ai/local_exhausted
+          printf 'local-exhausted'
+          exit 0
+        fi
+      fi
+
+      printf 'local-fixed'
+
+
+  tool Audit
+    label: "Audit Sprint DoD (shell)"
+    timeout: 30s
+    command:
+      set +e
+      mkdir -p .ai
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      sprint=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      fail=0
+
+      # Artifact-presence check: scan ## New files AND ## Modified files (v4 speedrun
+      # spec shape). Falls back to ## Expected Artifacts for legacy/v1 specs.
+      check_artifact_section() {
+        local section_re="$1"
+        in_section=0
+        while IFS= read -r line; do
+          if echo "$line" | grep -qE "$section_re"; then
+            in_section=1; continue
+          fi
+          if [ "$in_section" -eq 1 ] && echo "$line" | grep -qE '^##'; then
+            in_section=0
+          fi
+          if [ "$in_section" -eq 1 ]; then
+            path=$(echo "$line" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
+            if [ -n "$path" ] && echo "$path" | grep -q '/'; then
+              if [ ! -f "$path" ]; then
+                echo "MISSING artifact: $path" >> .ai/last_audit_output.txt
+                fail=1
+              fi
+            fi
+          fi
+        done < "$sprint"
+      }
+      # v4 sections (preferred)
+      check_artifact_section '^## New files'
+      check_artifact_section '^## Modified files'
+      # v1 fallback (only fires if older specs are still in use)
+      check_artifact_section '^## Expected Artifacts'
+
+      # Test-count check: prefer v4's "## Test contract" (per-file tables); fall back
+      # to v1's "## Test plan" (named test functions).
+      test_section_awk='/^## (Test contract|Test plan)/{f=1;next} f && /^##/{exit} f{print}'
+      if [ -f go.mod ]; then
+        sprint_tests=$(awk "$test_section_awk" "$sprint" \
+          | grep -cE "^func Test" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^func Test" . --include="*.go" 2>/dev/null | wc -l | tr -d ' ')
+      elif [ -f package.json ]; then
+        sprint_tests=$(awk "$test_section_awk" "$sprint" \
+          | grep -cE "^\s*(describe|it|test)\(" 2>/dev/null || echo 0)
+        actual_tests=$(grep -rE "^\s*(describe|it|test)\(" . --include="*.ts" --include="*.js" 2>/dev/null | wc -l | tr -d ' ')
+      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        # v4 Test contract uses backticked test names in tables (`test_foo(...)`); count those.
+        # Falls back to "def test_*" lines for v1 Test plan format.
+        sprint_tests=$(awk "$test_section_awk" "$sprint" \
+          | grep -oE '`test_[a-zA-Z0-9_]+\(' | sort -u | wc -l | tr -d ' ')
+        if [ "$sprint_tests" = "0" ]; then
+          sprint_tests=$(awk "$test_section_awk" "$sprint" \
+            | grep -cE "^def test_" 2>/dev/null || echo 0)
+        fi
+        actual_tests=$(grep -rE "^(async )?def test_" . --include="*.py" 2>/dev/null | wc -l | tr -d ' ')
+      else
+        sprint_tests=0
+        actual_tests=0
+      fi
+
+      if [ -z "$actual_tests" ]; then actual_tests=0; fi
+      echo "test count: sprint=$sprint_tests actual=$actual_tests" >> .ai/last_audit_output.txt
+      if [ "$actual_tests" -lt "$sprint_tests" ]; then
+        echo "MISMATCH: sprint has $sprint_tests tests, found $actual_tests" \
+          >> .ai/last_audit_output.txt
+        fail=1
+      fi
+
+      if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
+
+  agent CloudFix
+    label: "Cloud fix (gpt-5.4 — single-session iterative)"
+    model: gpt-5.4
+    provider: openai
+    max_turns: 25
+    reasoning_effort: low
+    fallback_target: Escalate
+    prompt:
+      Tests are failing in the project. The local model (qwen3.6:35b-a3b-q8_0)
+      attempted SR-style fixes for up to 8 rounds and could not converge. You
+      have ONE session to drive tests to green — iterate within this session,
+      do NOT stop after a single fix.
+
+      Project layout:
+      - The project root contains a subdirectory whose name is in
+        `.ai/proj_root.txt` (e.g. `backend`). cd into it before running tests.
+      - `.ai/last_test_output.txt` holds the most recent pytest output that
+        triggered your invocation.
+      - `.ai/last_audit_output.txt` holds the most recent audit output (read
+        this if you were called for audit-fail rather than tests-fail).
+      - `.ai/scaffolding_manifest.txt` lists architect-pinned files. ALL
+        paths in that manifest are FROZEN — do not modify any of them. If
+        the bug appears to require modifying scaffolding, fix the algorithmic
+        callers instead, or report an Escalate-class diagnosis.
+      - `.ai/sprints/SPRINT-$(cat .ai/current_sprint_id.txt).md` — the sprint
+         contract. Read its "Tricky semantics", "Rules", and per-file
+         "Algorithm" sections. The fix is usually "make code match the spec".
+
+      Loop within this single session:
+      1. cat .ai/last_test_output.txt (and last_audit_output.txt if relevant).
+         Identify the FIRST error class. Read .ai/proj_root.txt for the
+         project subdirectory.
+      2. cat the source file(s) that produce that error. For multi-file bugs
+         (route returns shape A but test asserts shape B), read both.
+      3. apply_patch a targeted fix. For multi-file fixes, do them all in
+         this session — do not artificially split.
+      4. cd into the project subdirectory and run pytest yourself
+         (e.g. `cd backend && uv run pytest -x --tb=short 2>&1 | tail -80`).
+      5. Read pytest output. If green, you are done — output a one-line
+         summary and stop. If still failing, GOTO 1 with the new top error.
+
+      Rules:
+      - Iterate to green within this session. The pipeline does NOT call you
+        again on failure — converge here or escalate.
+      - Skip the scaffolding manifest. If a manifest file is the root cause,
+        stop and emit a one-line escalation note explaining what scaffolding
+        choice is wrong (do not edit it).
+
+      Forbidden fix patterns — fix the cause, never mask the symptom:
+      - Do NOT add `try/except ImportError` or `try/except ModuleNotFoundError`
+        to silently substitute shim/fake implementations for missing
+        dependencies. Failed imports are an environment problem.
+      - Do NOT add `pytest.skip(...)` markers, `@pytest.mark.skip`, or
+        `pytest.importorskip` to make a failing test "pass" without running.
+        Tests describe the contract; skipping does not satisfy it.
+      - Do NOT comment out failing code, remove assertions, or weaken expected
+        values to match wrong output. The test is telling you what should work.
+      - Do NOT replace real library calls with hand-rolled fallbacks (e.g. a
+        custom BaseSettings, fake `String`/`Mapped`/`Base` classes) just
+        because the library appears unavailable.
+
+      Environment escalation:
+      - If you observe what looks like an environment problem — missing
+        dependencies in the venv, wrong Python interpreter, broken `uv sync`,
+        a build/install failure upstream of any test — do not patch around it.
+        Append a single line to `.ai/escalation.txt` describing what you
+        observed and stop without editing any source file.
+
+      Tools available: bash (full — including pytest invocation), apply_patch,
+      read.
+
+  tool CommitSprint
+    label: "Commit Sprint Work"
+    timeout: 30s
+    command:
+      set -eu
+      SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+      if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "no git repo in $(pwd) — skipping commit for sprint ${SPRINT_ID}"
+        printf 'commit-skipped-no-git'
+        exit 0
+      fi
+      SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+      TITLE=$(grep -m1 '^#' "$SPRINT_DOC" \
+        | sed -E 's/^#+[[:space:]]*//' \
+        | sed -E "s/^SPRINT-${SPRINT_ID}:?[[:space:]]*//" \
+        | tr -d '\n' \
+        | head -c 100)
+      [ -z "$TITLE" ] && TITLE="implement sprint ${SPRINT_ID}"
+      git add -A
+      if git diff --cached --quiet; then
+        echo "no changes to commit for sprint ${SPRINT_ID}"
+        printf 'commit-skipped'
+        exit 0
+      fi
+      git commit -m "feat(sprint-${SPRINT_ID}): ${TITLE}"
+      git log --oneline -1
+      printf 'commit-done'
+
+  tool Escalate
+    label: "Escalate — could not converge"
+    timeout: 5s
+    command:
+      echo "Sprint did not converge after local and cloud fix attempts."
+      printf 'escalated'
+
+  tool mark_complete
+    label: "Complete Sprint"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      awk -F '\t' -v OFS='\t' -v target="$target" -v now="$now" '
+      NR==1 {print; next}
+      { if ($1==target) { $3="completed"; $5=now }; print }
+      ' .ai/ledger.tsv > .ai/ledger.tsv.tmp
+      mv .ai/ledger.tsv.tmp .ai/ledger.tsv
+      printf 'completed-%s' "$target"
+
+  tool report_progress
+    label: "Report Progress"
+    timeout: 10s
+    command:
+      set -eu
+      total=$(awk -F '\t' 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      done=$(awk -F '\t' 'NR>1 && ($3=="completed" || $3=="skipped")' .ai/ledger.tsv | wc -l | tr -d ' ')
+      if [ "$total" -gt 0 ]; then
+        pct=$((done * 100 / total))
+      else
+        pct=0
+      fi
+      printf 'progress-%s-of-%s-%spct' "$done" "$total" "$pct"
+
+  human sprint_gate
+    label: "Continue to Next Sprint?"
+
+  tool skip_gate
+    label: "Skip Gate"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "unknown")
+      printf 'continue\t%s\t%s\n' "$target" "$now"
+
+  edges
+    Start -> check_ledger
+    check_ledger -> Exit            when ctx.tool_stdout = all_done       label: all_done
+    check_ledger -> no_ledger_exit  when ctx.tool_stdout = no_ledger      label: no_ledger
+    check_ledger -> mark_in_progress when ctx.tool_stdout != all_done     label: next_sprint
+    no_ledger_exit -> Exit
+    mark_in_progress -> Setup
+    Setup -> Generate
+    Generate -> RunTests
+    # RunTests routing — single CloudFix attempt, escalate on second failure
+    RunTests -> Escalate            when ctx.tool_stdout contains tests-fail-final
+    RunTests -> CloudFix            when ctx.tool_stdout contains cloud-handoff
+    RunTests -> LocalFix            when ctx.tool_stdout contains tests-fail
+    RunTests -> Audit               when ctx.tool_stdout contains tests-pass
+    RunTests -> Escalate
+    LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
+    LocalFix -> CloudFix            when ctx.tool_stdout contains local-exhausted
+    Audit -> CommitSprint           when ctx.tool_stdout contains audit-pass
+    Audit -> CloudFix               when ctx.tool_stdout contains audit-fail        restart: true
+    # CloudFix is single-session iterative. Success → outer RunTests verification.
+    # Failure → Escalate (no retry loop; the model converges in-session or not at all).
+    CloudFix -> RunTests            when ctx.outcome = success                      restart: true
+    CloudFix -> Escalate            when ctx.outcome = fail
+    CloudFix -> Escalate
+    Escalate -> Exit
+    CommitSprint -> mark_complete
+    mark_complete -> report_progress
+    report_progress -> sprint_gate
+    sprint_gate -> skip_gate        label: "[S] Continue"
+    sprint_gate -> Exit             label: "[A] Pause"
+    skip_gate -> check_ledger       restart: true

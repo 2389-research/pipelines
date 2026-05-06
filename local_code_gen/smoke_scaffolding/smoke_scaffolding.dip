@@ -1,0 +1,49 @@
+workflow SmokeScaffolding
+  goal: "Smoke-test write_scaffolding_files end-to-end through tracker's Anthropic adapter. Uses claude-opus-4-6 as the outer agent (mirroring architect_only.dip's wire path) so we catch any tool_use serialization issues before re-running the full architect pipeline."
+  start: Start
+  exit: Exit
+
+  defaults
+    provider: anthropic
+
+  tool Start
+    label: "Start"
+    timeout: 5s
+    command:
+      printf 'start'
+
+  tool Exit
+    label: "Exit"
+    timeout: 5s
+    command:
+      printf 'exit'
+
+  agent run_smoke
+    label: "Smoke: call write_scaffolding_files once"
+    model: claude-opus-4-6
+    provider: anthropic
+    max_turns: 4
+    fallback_target: Exit
+    prompt:
+      You are running a smoke test for the `write_scaffolding_files` tool.
+
+      Your job:
+
+      1. Call `write_scaffolding_files` ONCE with no arguments. The tool reads
+         `.ai/contract.md` and writes scaffolding files to their workspace-relative
+         paths, then emits a manifest at `.ai/scaffolding_manifest.txt`.
+
+      2. After the call returns, output the single word "done" on its own line and stop.
+
+      Do NOT call any other tool. Do NOT inspect the files yourself. Do NOT call
+      `write_scaffolding_files` more than once. Do NOT call `dispatch_sprints` —
+      this is a tool-isolation smoke test, not a full architect run.
+
+      ## Tool prerequisites
+      `write_scaffolding_files` requires `TRACKER_SPRINT_WRITER_MODEL` env var
+      set on the tracker process (e.g. `claude-sonnet-4-6`). The tool calls
+      Sonnet internally to author the file set.
+
+  edges
+    Start -> run_smoke
+    run_smoke -> Exit

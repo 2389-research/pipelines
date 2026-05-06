@@ -1,5 +1,27 @@
+# macOS
+.DS_Store
+
+# Pipeline runtime artifacts
 .private-journal/
 .tracker/
 output.txt
 runs/
 .ai/
+
+# Throwaway experiment workdirs — generated artifacts (sprint specs, contracts,
+# ledgers, runner outputs) live here during iteration. The reproducible
+# inputs are checked into experiments/<project>/.ai/ on the source branches;
+# the *_v{N}/ workdirs are generated test runs, not source.
+experiments/notebook_smoke_v*/
+experiments/notebook_full_run_v*/
+experiments/nifb_full_run_v*/
+experiments/architect_pipeline_test_v*/
+
+# Nested-repo experiment workdirs that were accidentally tracked as orphaned
+# gitlinks (mode 160000 with no .gitmodules) by an earlier commit. They're
+# treated as throwaway test artifacts now — the canonical NIFB inputs live
+# inline in the docs (local_code_gen/principles/synthetic_fixtures/) or are
+# user-provided per run.
+experiments/NIFB/
+experiments/NIFB_baseline/
+experiments/remix-os-go-3/

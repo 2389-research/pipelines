@@ -1,0 +1,960 @@
+# ABOUTME: Full spec-to-sprints pipeline tuned for local-first downstream codegen.
+#          Models: Claude/GPT/Gemini (decomposition tournament + critique + merge),
+#          Opus 4.6 (architect step), Sonnet 4.6 (per-sprint enrichment + audit),
+#          Haiku 4.5 (scaffolding file transcription via dispatch_scaffolding).
+#          Inputs: spec.md (or any prose specification document).
+#          Outputs: .ai/contract.md, .ai/sprint_descriptions.jsonl,
+#          .ai/scaffolding_plan.jsonl, .ai/scaffolding_manifest.txt,
+#          .ai/sprints/SPRINT-*.md, .ai/ledger.tsv.
+#          Downstream: local_code_gen/sprint_runner_qwen.dip consumes these.
+#          For iterating just the architect step on existing decomposition output,
+#          use local_code_gen/architect_only.dip instead.
+#          File/model/strategy inventory: local_code_gen/README.md.
+workflow SpecToSprintsForLocalCodegen
+  goal: "Decompose a specification into .ai/ledger.tsv and SPRINT-*.md files tuned for downstream LOCAL CODE GENERATION (qwen + local_code_gen/sprint_runner_qwen.dip). Uses Harper's multi-model tournament decomposition + critique + merge upstream, then applies the architect/Sonnet-writer/dispatch_sprints flow + Haiku scaffolding pre-pass to produce speedrun-shape sprint specs and pre-pinned scaffolding files that the local model can build on deterministically. For pipelines targeting cloud-only code generation, use the original spec_to_sprints.dip at the repo root instead."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'spec-to-sprints-local-codegen-begin'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'spec-to-sprints-local-codegen-complete'
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    writes: spec_analysis
+    goal_gate: true
+    retry_target: analyze_spec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file found by the previous step and produce a structured analysis for sprint decomposition.
+
+      ## Process
+      1. Read the spec file thoroughly
+      2. Write .ai/spec_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      Name, purpose, one-paragraph description.
+
+      ### Tech Stack
+      Language, framework, database, test framework, linter, package manager — extracted from the spec or inferred from its requirements.
+
+      ### Functional Requirements (numbered)
+      Every discrete functional requirement extracted from the spec, numbered FR1-FRn. Each entry:
+      - ID (e.g., FR1)
+      - Spec section reference (e.g., "Section 5, FR1")
+      - One-line description
+      - Acceptance criteria if specified
+
+      ### Architectural Layers / Components (numbered)
+      For each component or layer the spec defines:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can be built in parallel, which must be sequential, and why.
+
+      ### Complexity Assessment
+      For each component: low / medium / high complexity with one-line justification.
+
+      ### Rollout Phases
+      If the spec defines phases (v0, v1, v2), list what belongs in each. If not, note "no phases defined."
+
+      ### Open Questions
+      Ambiguities, unresolved decisions, or contradictions found in the spec.
+
+      ## Output
+      Write the analysis to .ai/spec_analysis.md. Create the .ai directory if it does not exist.
+
+      ## Critical Rules
+      - Only extract requirements explicitly stated in the spec. Do not invent, infer, or add requirements.
+      - If the spec is ambiguous, note the ambiguity in Open Questions rather than guessing.
+      - Every FR must have a direct spec section reference.
+
+      ## Success Criteria
+      - .ai/spec_analysis.md exists with ALL sections filled in
+      - Every functional requirement is numbered
+      - Every component dependency is mapped
+
+  parallel decompose_parallel -> decompose_claude, decompose_gpt, decompose_gemini
+
+  agent decompose_claude
+    label: "Claude Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_claude
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Thoroughness
+      Focus on dependency ordering, risk sequencing, and DoD traceability. Every functional requirement (FR1-FRn) must be covered by at least one sprint. No requirement should be orphaned.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_claude.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  agent decompose_gpt
+    label: "GPT Decomposition"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gpt
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Implementation Pragmatism
+      Focus on execution order, what can be parallelized, and build/test feasibility. Think about what a developer actually needs working first before the next piece can start.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gpt.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  agent decompose_gemini
+    label: "Gemini Decomposition"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gemini
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Delivery Robustness
+      Focus on scope discipline, sprint size consistency, validation checkpoints, and risk mitigation. Flag any sprint that seems too large or has unclear validation criteria.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gemini.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  fan_in decompose_join <- decompose_claude, decompose_gpt, decompose_gemini
+
+  parallel critique_parallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent critique_claude_on_gpt
+    label: "Claude Critique of GPT"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_claude_on_gemini
+    label: "Claude Critique of Gemini"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_claude
+    label: "GPT Critique of Claude"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_gemini
+    label: "GPT Critique of Gemini"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_claude
+    label: "Gemini Critique of Claude"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_gpt
+    label: "Gemini Critique of GPT"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  fan_in critique_join <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent merge_decomposition
+    label: "Merge Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_claude, decomposition_gpt, decomposition_gemini, spec_analysis
+    writes: sprint_plan
+    goal_gate: true
+    retry_target: merge_decomposition
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize the three decompositions and six cross-critiques into one final sprint plan.
+
+      ## Process
+      Read the three decomposition files:
+      - .ai/drafts/decomposition_claude.md
+      - .ai/drafts/decomposition_gpt.md
+      - .ai/drafts/decomposition_gemini.md
+      And the spec analysis: .ai/spec_analysis.md
+
+      1. Compare the three decompositions side by side
+      2. Incorporate valid critique findings — fix ordering errors, fill coverage gaps, adjust sprint sizes
+      3. Produce a single merged sprint list that takes the best from each decomposition
+      4. Write the result to .ai/sprint_plan.md
+
+      ## Output Format (.ai/sprint_plan.md)
+      Start with a summary: total sprint count, overall approach, key decisions made during merge.
+
+      Then for each sprint:
+      ### Sprint NNN — Title
+
+      **Scope:** What this sprint delivers (2-3 sentences)
+
+      **Non-goals:** What is explicitly excluded
+
+      **Requirements:** FR IDs covered (e.g., FR1, FR3, FR7)
+
+      **Dependencies:** Sprint numbers that must complete first
+
+      **Expected Artifacts:**
+      - file/module paths this sprint produces
+
+      **DoD:**
+      - [ ] Checkable item 1
+      - [ ] Checkable item 2
+      ...
+
+      **Validation:**
+      - Build/test commands to verify completion
+
+      **Complexity:** low / medium / high
+
+      ## Rules
+      - Every FR from .ai/spec_analysis.md must appear in at least one sprint
+      - No dependency cycles
+      - Sprint IDs are sequential zero-padded 3-digit (001, 002, ...)
+      - First sprint should be project scaffold / foundation
+      - Create .ai directory if it does not exist
+
+  agent present_plan
+    label: "Present Sprint Plan"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reads: sprint_plan
+    reasoning_effort: medium
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/sprint_plan.md and present a concise review summary for human approval:
+
+      1. Total sprint count
+      2. Sprint titles listed in order with dependencies noted
+      3. Requirement coverage: any FRs not covered?
+      4. Risk flags: any sprints that seem too large, too vague, or have unclear validation?
+
+      Keep the summary scannable. The human needs to decide: approve as-is, or request changes.
+
+  human approval_gate
+    label: "Approve Sprint Plan"
+
+  agent apply_feedback
+    label: "Apply Feedback"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan
+    writes: sprint_plan
+    prompt:
+      You are working in `run.working_dir`.
+
+      The human has provided feedback on the sprint plan. Read .ai/sprint_plan.md, incorporate the feedback, and rewrite .ai/sprint_plan.md with the changes applied.
+
+      Preserve the same format. Update sprint numbers if sprints are added, removed, or reordered. Ensure dependency references remain consistent after renumbering.
+
+  tool skip_approval
+    label: "Skip Approval"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      count="unknown"
+      if [ -f .ai/sprint_plan.md ]; then
+        count=$(grep -c '^### Sprint' .ai/sprint_plan.md || true)
+      fi
+      printf 'approved\t%s\t%s\tauto-skipped\n' "$count" "$now"
+
+  tool setup_workspace
+    label: "Setup .ai Workspace"
+    timeout: 10s
+    command:
+      set -eu
+      # Preflight: TRACKER_SPRINT_WRITER_MODEL is mandatory because the
+      # write_sprint_docs agent calls dispatch_sprints, which requires the
+      # tool to be registered (gated on this env var by tracker's
+      # backend_native handler). Without the var the agent will appear to
+      # run but fail to dispatch and silently fall through to Exit.
+      : "${TRACKER_SPRINT_WRITER_MODEL:?TRACKER_SPRINT_WRITER_MODEL must be set so dispatch_sprints registers (e.g. claude-sonnet-4-6)}"
+      mkdir -p .ai/sprints .ai/drafts
+      if [ ! -f .ai/ledger.tsv ]; then
+        printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      fi
+      printf 'ready'
+
+  # write_sprint_docs is the load-bearing architect step. With the deterministic
+  # dispatch_sprints flow, agent failure means NO sprints generated — falling
+  # through to Exit on failure would mask that as a successful run. We omit
+  # `fallback_target` so failures halt the pipeline with a real error rather
+  # than a silent green Exit. The validate_output→write_sprint_docs restart
+  # edge below handles the soft-failure case (validation found issues to fix).
+  agent write_sprint_docs
+    label: "Design Phase (architect + dispatch)"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan, spec_analysis
+    max_turns: 12
+    prompt:
+      You are the architect for sprint enrichment. Your job has FIVE deterministic outputs in order, then you stop:
+
+      1. Write `.ai/contract.md` — the project-wide architectural map.
+      2. Write `.ai/sprint_descriptions.jsonl` — one JSON record per sprint.
+      3. Write `.ai/scaffolding_plan.jsonl` — one JSON record per scaffolding file you decide should be pre-written by Haiku before sprints begin. The act of being in this JSONL IS the scaffolding decision; there is no "is this scaffolding?" runtime classification step.
+      4. Call `dispatch_scaffolding` ONCE. The tool reads the JSONL and contract, loops over every entry, and runs a Haiku transcription pass per file. The tool writes each file to disk at its workspace-relative path and emits a manifest at `.ai/scaffolding_manifest.txt`.
+      5. Call `dispatch_sprints` ONCE. The tool reads `sprint_descriptions.jsonl` and contract, loops over every sprint, and runs the per-sprint Sonnet author+audit pipeline. You do NOT iterate; the tool does.
+
+      After step 5 returns, output a single confirmation line and stop. Do not re-read or revise contract.md, either JSONL, or any scaffolding file.
+
+      Inputs:
+      - `.ai/sprint_plan.md` — merged sprint plan (decomposition output)
+      - `.ai/spec_analysis.md` — upstream spec analysis with FR-numbered requirements
+
+      ## Step 1: Read both input files
+
+      Read `.ai/sprint_plan.md` and `.ai/spec_analysis.md` in full.
+
+      ## Step 2: Author the project-wide contract → write to `.ai/contract.md`
+
+      The contract is the cross-sprint architectural surface — pinned ONCE, read by every per-sprint generation call. The local model that ultimately writes code from SPRINT-NNN.md cannot make architectural decisions, look up library docs, or resolve ambiguity. Every cross-sprint convention must be pre-decided and pinned here.
+
+      A well-written contract leaves the per-sprint writer (Sonnet) zero choices about project-wide concerns. Sonnet's job is to expand within-sprint specifics; the architect's (your) job is to lock in cross-sprint conventions.
+
+      ### Architectural pattern (load-bearing — choose ONE per project)
+
+      Two sibling patterns are available. Pick based on project size + sprint plan shape, then declare the choice explicitly in `contract.md`'s opening section so the per-sprint writer (Sonnet) sees it on every call.
+
+      **Pattern A — All-front-loaded foundation.** Sprint 001 declares the entire surface area for the project: every ORM model + every Pydantic schema + every error code constant + every test fixture + the FastAPI/equivalent app factory. Sprints 002+ are purely additive — they only drop new router files in `app/routers/<feature>.py`, which `main.py`'s `pkgutil.iter_modules` auto-discovery picks up. FROZEN files declared in sprint 001's Rules: `app/main.py`, `app/models.py`, `app/schemas.py`, `app/exceptions.py`, `app/database.py`, `app/config.py`, `tests/conftest.py`. The only foundation file later sprints may modify is `pyproject.toml` (to append new deps).
+
+      **Pattern B — Subsystem-front-loaded.** Each sprint front-loads its OWN subsystem completely as new files: its own models module, schemas module, router module, fixture module, test files. Auto-discovery for both routers AND models means later sprints don't modify any earlier-sprint file. File structure uses `app/models/<subsystem>.py`, `app/schemas/<subsystem>.py` etc. — `app/models/__init__.py` does pkgutil auto-import so SQLAlchemy registers all classes with `Base.metadata`. Cross-subsystem relationships are forward-declared in the owner module using string class names (e.g., `Volunteer.registrations: Mapped[list["Registration"]] = relationship(...)` with `Registration` defined in a later sprint).
+
+      ### Decision criteria — which pattern to pick
+
+      Use **Pattern A (all-front-loaded)** when ALL of:
+
+      - Project has ≤ 7 ORM entities total
+      - Sprint plan has ≤ 4 sprints
+      - Sprint 001 spec is projected to fit in ~600-700 lines (back-of-envelope: ~30 lines per ORM model + ~20 lines per schema + ~50 lines for routers/tests/fixtures + ~100 lines of conventions = check if your project fits)
+
+      Use **Pattern B (subsystem-front-loaded)** when ANY of:
+
+      - Project has ≥ 8 ORM entities, OR
+      - Sprint plan has ≥ 5 sprints, OR
+      - Sprint 001 spec under Pattern A would exceed ~700 lines (which truncates LLM output and produces incomplete sprint files), OR
+      - The sprint plan already decomposes work along subsystem boundaries (auth, operations, groups, messaging, etc.) — Pattern B fits naturally
+
+      The middle ground (5-7 entities, 4-5 sprints) — either works; lean Pattern B if the sprint plan reads as subsystems, Pattern A if the data model is highly interconnected and "subsystems" don't carve cleanly.
+
+      Empirical anchor: NIFB's 18 entities + 16 sprints exceeds Pattern A's bounds — the May 1 NIFB run with Pattern A produced a 1068-line SPRINT-001 spec that truncated mid-Rules section because Sonnet hit its output-token cap. Pattern B keeps each sprint under 500 lines and patch-loop-clean.
+
+      ### Pattern declaration in contract.md (mandatory)
+
+      `contract.md`'s opening section MUST include:
+
+      ```markdown
+      ## Architectural Pattern
+
+      This project uses **<Pattern A: all-front-loaded | Pattern B: subsystem-front-loaded>** architecture.
+
+      <One paragraph rationale citing the decision criteria above. Example:
+      "Sprint plan has 16 sprints across 18 entities, decomposed naturally
+      along auth/operations/groups/messaging/check-in subsystems. Pattern B
+      keeps each sprint focused on its subsystem and avoids the foundation
+      sprint exceeding writer model output budget.">
+
+      <For Pattern B: list the subsystems and which sprint owns each.>
+      ```
+
+      The downstream Sonnet writer reads this and applies the corresponding within-sprint shape.
+
+      If the project doesn't fit either pattern (e.g., truly unknown data model that emerges sprint-by-sprint, or tightly-coupled cross-cutting state machines), declare a third option explicitly in this section with the alternative pattern documented inline.
+
+      ### Required sections in `.ai/contract.md`
+
+      Author all of these. Each must be precise enough that Sonnet's per-sprint expansion inherits unambiguous conventions.
+
+      #### 1. Stack & Runtime
+      - Language(s) and version
+      - Package manager and key third-party libraries (web framework, ORM, test framework, validation, auth) — each with exact import name
+      - Anything explicitly excluded
+      - The build-system block REQUIRED for the chosen package manager. Examples: for hatchling with project name ≠ package dir name: `[tool.hatch.build.targets.wheel] packages = ["<dir>"]` is mandatory; auto-detection fails without it. For setuptools: `find_packages(...)` config or src-layout. Pin the exact text the foundation sprint must include.
+
+      #### 2. Project-wide Conventions
+      - Error handling idiom — including the EXCEPTION CLASS and the JSON RESPONSE SHAPE it returns. If the project uses a custom exception (e.g., `AppError`) with a flat `{"detail": str, "error_code": str}` handler, pin BOTH the class signature AND the wire shape. Every sprint's tests will assert against the wire shape — if it isn't pinned, tests in different sprints will use different paths (`body["error_code"]` vs `body["detail"]["error_code"]`) and silently fail.
+      - Naming conventions (file/module casing, test file naming)
+      - Test framework + test organization rules
+      - Async vs sync, logging conventions
+
+      #### 3. Data Model Pinning (cross-sprint)
+
+      For ORMs with async semantics, pin the loading strategy explicitly:
+      - Async loading: collection-side relationships use `lazy="selectin"` (or analog).
+      - Bidirectional relationships use `back_populates` on BOTH sides with matching names.
+
+      For Pydantic v2 settings: pin the singleton pattern (`get_settings()` cached factory) and forbid class-attr access. Tests use literal values for config-derived constants; `Settings.X` is forbidden (Pydantic stores fields on instances, not class attributes — class-attr access raises `AttributeError`).
+
+      #### 4. Test Infrastructure
+
+      Pin the test fixture and engine configuration. The conftest.py lives in the foundation sprint and is referenced by every later sprint.
+
+      For in-memory SQLite tests:
+      - `create_async_engine("sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)`
+      - Without StaticPool, every connection gets its own in-memory DB; cross-session writes are invisible.
+
+      For dependency-override fixtures: helpers that reference fixture-resolved values (e.g., `override_get_db` referencing `async_engine`) MUST be defined as nested closures inside the consuming fixture, NOT at module level. Module-level definitions bind to the pytest fixture decorator object, not the resolved value.
+
+      #### 5. Sprint File-Ownership Map
+
+      For every sprint in the plan, list the files it owns. The structure differs by chosen pattern:
+
+      - **Pattern A:** Sprint 001 owns ALL foundation files (models.py, schemas.py, conftest.py, etc.). Sprints 002+ own one router + one test file each.
+
+      - **Pattern B:** Sprint 001 owns ONLY foundation infrastructure + the FIRST subsystem's modules (`app/models/<first-subsystem>.py`, `app/schemas/<first-subsystem>.py`, etc.). Each later sprint owns its OWN subsystem's modules: `app/models/<subsystem>.py`, `app/schemas/<subsystem>.py`, `app/routers/<subsystem>.py`, `tests/test_<subsystem>.py`, optionally `tests/fixtures/<subsystem>.py`.
+
+      Use dynamic-discovery patterns where the framework supports it (auto-loaded modules, plugin registries, route auto-registration) so dispatch/registration files don't need updating across sprints. Pattern B specifically requires `app/models/__init__.py` to do `pkgutil.iter_modules(__path__)` import-all so SQLAlchemy classes from subsystem modules register with `Base.metadata`.
+
+      If neither pattern fits, declare the alternative explicitly here with the modify-pattern (e.g., "Sprint 001 OWNS models.py; Sprint 002+ APPENDS new model classes only — never edits existing ones").
+
+      #### 6. Cross-Sprint Type/Symbol Ownership Map (load-bearing)
+
+      For every type, function, or constant that crosses sprint boundaries, declare:
+      - The owning sprint
+      - The exact signature: field names with types, function signatures with return types, **relationship declarations including `back_populates` and `lazy="selectin"` annotations**
+      - Where it's defined (file path)
+
+      This pins what later sprints will import. Underspecification here is the failure mode — when the per-sprint writer doesn't see exact field names, it invents and diverges across sprints.
+
+      #### 7. Cross-Sprint Dependency Edges
+      Directed graph of which sprints depend on which.
+
+      #### 8. Mandatory Rules Across All Sprints
+
+      Project-wide rules every sprint inherits. Include:
+      - **Import conventions**: `from app.X import Y` form; no relative imports; full Python statements never bare module names; for class-vs-module collisions like `datetime` / `date` / `time`, use `from X import Y` explicitly.
+      - **The FROZEN files list** (no later sprint may modify these).
+      - **Test-fixture-from-conftest rule**: no inline AsyncClient/engine/session construction in test files; tests take fixtures as function parameters.
+      - **The decisive-choice rule**: where the spec is ambiguous, contract.md commits to one answer.
+
+      #### 9. Identify the project's *tricky semantics*
+
+      Areas where convention matters and silence forces the implementer to guess. Common categories: concurrency/loading model, resource lifecycle, process-global state, paired cross-module invariants, config defaults + test override. Document the chosen pattern for each. Foundation sprint must have thorough test coverage of every shape it pins (models, schemas, error contracts) since later sprints depend on it without re-testing.
+
+      ### Architect-discipline meta-rules to apply when authoring contract.md
+
+      - **Structural sections must embody structural rules.** When contract.md states a structural rule (route order, field order, declaration order), the structured sections (tables, signatures, algorithm subsections) must reflect it. The local generator follows structure, not prose. If the rule and the structure conflict, the structure wins.
+
+      - **Make concrete choices.** Where the upstream spec is ambiguous, contract.md commits to one answer. Don't hedge with "you may use X or Y." Don't write "choose based on your preference." The local generator has no preference — it needs one answer.
+
+      - **Pin exact field sets.** When defining a schema or model, list every field with its type. Never write a partial example with "...etc." The local generator invents fields when given an incomplete shape.
+
+      - **Cross-reference the runtime symptom.** When pinning a non-obvious convention (e.g., StaticPool, lazy="selectin"), include a one-liner about WHAT FAILS WITHOUT IT. Sonnet reads contract.md and applies these conventions per-sprint; knowing the failure mode helps it judge edge cases.
+
+      Save the contract to `.ai/contract.md` using the write tool.
+
+      ## Step 3: Author `.ai/sprint_descriptions.jsonl`
+
+      Write one JSON object per line — exactly one line per sprint in `.ai/sprint_plan.md`, in numeric order. The format is strict:
+
+      ```json
+      {"path": "SPRINT-001.md", "description": "<full per-sprint description>"}
+      {"path": "SPRINT-002.md", "description": "<full per-sprint description>"}
+      ```
+
+      Each `description` field is the per-sprint slice the downstream Sonnet writer will expand into the full enriched spec. Include:
+
+      - title, scope summary, FRs covered
+      - **File breakdown — categorize EVERY file:**
+        - `New files:` — files this sprint creates that don't exist yet (no prior sprint owns them)
+        - `Modified files:` — files that already exist from prior sprints and this sprint extends. Use the contract's file-ownership map. Misclassifying a modified file as new will cause the local executor to overwrite the prior sprint's contribution.
+      - types/functions this sprint defines (NAMES — fields are pinned in the contract)
+      - cross-sprint dependencies it consumes
+      - exact validation commands
+      - Do NOT redefine field-by-field shape of cross-sprint types here; reference them by name and let the contract carry the truth.
+      - **Infrastructure & setup specifics (load-bearing for sprint 001 and any later sprint that introduces new build/config infrastructure):** include verbatim content for every config file the sprint creates — package manifests, build-system config, test-runner config, linter configs. Provide the exact text the generator should transcribe.
+
+      JSONL hard rules:
+      - Each line MUST be valid JSON. Newlines inside the description string MUST be encoded as `\n`.
+      - Path MUST match `SPRINT-NNN.md` (zero-padded 3-digit). No `SPRINT-1.md` or `001.md`.
+      - No trailing commas, no comments, no blank lines between records.
+
+      Save with the write tool to `.ai/sprint_descriptions.jsonl`.
+
+      ## Step 3: Write `.ai/scaffolding_plan.jsonl`
+
+      One JSON object per line. Each entry tells `dispatch_scaffolding` to transcribe one file from the contract via a Haiku worker. Include every file whose bytes are fully pinned in `contract.md` — configs, frozen utility modules, package markers, the auto-discovery app factory, exception/error-code constants, small async runners, fully-pinned test harness fixtures (e.g. conftest.py with the full fixture set), pyproject.toml, package.json, etc.
+
+      Each record:
+
+      ```json
+      {"path": "<workspace-relative path matching contract>",
+       "description": "<pointer to the contract section/anchor where the verbatim block lives>",
+       "required_lines": ["<load-bearing substring 1>", "<load-bearing substring 2>"]}
+      ```
+
+      Required fields are `path` and `description`. `required_lines` is optional but strongly recommended for files where one specific line is load-bearing — Haiku's transcription is validated against these BEFORE write, so drift surfaces as a tool error rather than silent corruption.
+
+      Examples (Python FastAPI project):
+
+      ```jsonl
+      {"path": "backend/pyproject.toml", "description": "Verbatim from contract section 1 — pyproject.toml verbatim block.", "required_lines": ["asyncio_mode = \"auto\"", "pytest-asyncio"]}
+      {"path": "backend/app/__init__.py", "description": "Empty package marker.", "required_lines": []}
+      {"path": "backend/app/main.py", "description": "FROZEN — auto-discovery app factory from contract section 4.4.", "required_lines": ["pkgutil.iter_modules"]}
+      {"path": "backend/tests/conftest.py", "description": "FROZEN — full fixture set from contract section 4.1 (Test Infrastructure → conftest.py).", "required_lines": ["from sqlalchemy.pool import StaticPool", "expire_on_commit=False"]}
+      ```
+
+      Critical rule: include any file whose bytes are fully pinned by the contract, regardless of whether it lives in `app/`, `tests/`, `cmd/`, etc. If the contract has a fenced verbatim code block for the file, it is scaffolding. Do NOT include files described only by behavior/algorithm prose — those remain qwen's per-sprint job.
+
+      Save with the `write` tool to `.ai/scaffolding_plan.jsonl`.
+
+      ## Step 4: Call `dispatch_scaffolding` once
+
+      Invoke `dispatch_scaffolding` with no arguments (defaults are correct: reads `.ai/scaffolding_plan.jsonl` and `.ai/contract.md`, writes manifest to `.ai/scaffolding_manifest.txt`).
+
+      The tool loops mechanically — one Haiku transcription pass per JSONL line. Each call has narrow scope (one file, one fenced block), per-entry validation against `required_lines`, and per-entry retry isolation. Files are written to disk at their workspace-relative paths.
+
+      The manifest at `.ai/scaffolding_manifest.txt` lists every path the dispatch wrote, so the per-sprint Sonnet writer can mark those files as "already on disk" rather than re-describing them.
+
+      ## Step 5: Call `dispatch_sprints` once
+
+      Invoke `dispatch_sprints` with no arguments (defaults are correct: reads `.ai/sprint_descriptions.jsonl`, `.ai/contract.md`, writes to `.ai/sprints/`). The tool loops mechanically — one author+audit pass per JSONL line — and returns a summary string.
+
+      After the call returns, output a single confirmation line (e.g. "Done.") and stop. Do NOT call `write_enriched_sprint` or `write_scaffolding_file` directly. Do NOT re-read or revise contract.md, either JSONL, or any scaffolding file. Your job ends here.
+
+      ## Tools available
+      - read (for inputs)
+      - write (for `.ai/contract.md`, `.ai/sprint_descriptions.jsonl`, and `.ai/scaffolding_plan.jsonl` only — NOT for project files; scaffolding files go through `dispatch_scaffolding`)
+      - dispatch_scaffolding (called exactly ONCE after the scaffolding plan is on disk, BEFORE dispatch_sprints)
+      - dispatch_sprints (called exactly ONCE after `dispatch_scaffolding` returns)
+      - write_scaffolding_file and write_enriched_sprint exist but you MUST NOT call them directly — the dispatch tools invoke them under the hood
+
+      ## Rules
+      - CRITICAL: All sprint files MUST be written to `.ai/sprints/` — NEVER to the project root. (`dispatch_sprints` handles this.)
+      - CRITICAL: Project-level scaffolding files (pyproject.toml, app factory, frozen utilities, package markers, conftest.py with full fixtures pinned) MUST be listed in `.ai/scaffolding_plan.jsonl` and routed through `dispatch_scaffolding` — never through the `write` tool. The `write` tool is for `.ai/` metadata only.
+      - The scaffolding decision is "are this file's bytes fully pinned in the contract?" — NOT "is this config vs application code?" If the contract gives the file as a fenced verbatim block, it's scaffolding even if it lives in `tests/` or `app/`.
+      - Sprint IDs MUST be zero-padded 3-digit: 001, 002, ... 016 — NOT 1, 2, ... 16.
+      - Do NOT write or modify `.ai/ledger.tsv` — a separate tool handles that.
+      - Every per-sprint description should specify validation commands.
+      - First DoD item for each sprint should be writing a failing test for the sprint's core deliverable.
+
+      ## Tool prerequisites
+      `dispatch_sprints` and `write_enriched_sprint` require `TRACKER_SPRINT_WRITER_MODEL` env var set on the tracker process (e.g. `claude-sonnet-4-6`) — Sonnet-tier is needed for the cross-file reasoning involved in per-sprint enrichment.
+
+      `dispatch_scaffolding` and `write_scaffolding_file` default to a Haiku-tier model but accept an independent override via `TRACKER_SCAFFOLDING_WRITER_MODEL` / `TRACKER_SCAFFOLDING_WRITER_PROVIDER`. Because the architect lists every scaffolding file explicitly in the JSONL and the contract pins exact bytes, the per-file worker only transcribes — no cross-file reasoning, no classification, no design. Haiku is sufficient and ~3-4× cheaper than Sonnet for this task. Override only if a specific project requires denser model reasoning at the transcription step.
+
+
+  tool write_ledger
+    label: "Write Ledger"
+    timeout: 10s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf 'sprint_id\ttitle\tstatus\tcreated_at\tupdated_at\n' > .ai/ledger.tsv
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        id=$(basename "$f" .md | sed 's/SPRINT-//')
+        title=$(head -1 "$f" | sed 's/^# Sprint [0-9]* *[-—–]* *//' | sed 's/^# //' | tr -d '\t')
+        printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$title" "planned" "$now" "$now" >> .ai/ledger.tsv
+      done
+      count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      printf 'wrote-%s-sprints' "$count"
+
+  tool validate_output
+    label: "Validate Output"
+    timeout: 15s
+    command:
+      set -eu
+      errors=""
+      stray=$(ls SPRINT-*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$stray" -gt 0 ]; then
+        errors="${errors}sprint-files-in-root "
+      fi
+      # Three-way consistency check between (a) sprint_descriptions.jsonl, the
+      # source of truth for which sprints SHOULD exist (written by Opus before
+      # dispatch), (b) the ledger built from on-disk files, and (c) the actual
+      # files in .ai/sprints/. Catches stale SPRINT-*.md files left over from a
+      # previous run with a different sprint count or numbering.
+      ledger_ids=$(awk -F '\t' 'NR>1{print $1}' .ai/ledger.tsv | sort)
+      file_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
+      if [ -f .ai/sprint_descriptions.jsonl ]; then
+        expected_ids=$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"SPRINT-\([0-9][0-9][0-9]\)\.md".*/\1/p' .ai/sprint_descriptions.jsonl | sort)
+        if [ "$expected_ids" != "$file_ids" ]; then
+          errors="${errors}stale-or-missing-sprint-files "
+        fi
+        if [ "$expected_ids" != "$ledger_ids" ]; then
+          errors="${errors}ledger-jsonl-mismatch "
+        fi
+      else
+        # No JSONL means we're running an older pipeline shape; fall back to
+        # the historical ledger-vs-files check.
+        if [ "$ledger_ids" != "$file_ids" ]; then
+          errors="${errors}ledger-file-mismatch "
+        fi
+      fi
+      # Validate the speedrun-shape required sections (see
+      # local_code_gen/principles/SPEEDRUN-SPEC-FORMAT.md). The minimal floor
+      # is Scope/Non-goals/DoD/Validation — every sprint must have these.
+      # Dependencies/Conventions/Rules and the data/api/algorithm/test sections
+      # are checked loosely: their *header* must be present (additive sprints
+      # use redirect notes like "## Data contract (no new types — referenced
+      # from sprint NNN)" so we grep for the section prefix, not the literal).
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        # Hard-required (exact match): every sprint MUST have these
+        for section in "## Scope" "## Non-goals" "## DoD" "## Validation"; do
+          if ! grep -q "^${section}" "$f"; then
+            tag=$(printf '%s' "$section" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+            errors="${errors}missing-${tag}-${base} "
+          fi
+        done
+        # Speedrun-shape (prefix match — additive sprints append parenthetical notes)
+        for prefix in "## Dependencies" "## Conventions" "## Rules"; do
+          if ! grep -qE "^${prefix}( |$)" "$f"; then
+            tag=$(printf '%s' "$prefix" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+            errors="${errors}missing-${tag}-${base} "
+          fi
+        done
+      done
+      if [ -z "$(awk 'NR>1' .ai/ledger.tsv)" ]; then
+        errors="${errors}empty-ledger "
+      fi
+      bad_cols=$(awk -F '\t' 'NR>1 && NF!=5' .ai/ledger.tsv | wc -l | tr -d ' ')
+      if [ "$bad_cols" -gt 0 ]; then
+        errors="${errors}ledger-wrong-column-count "
+      fi
+      if [ -n "$errors" ]; then
+        printf 'invalid-%s' "$errors"
+        exit 0
+      fi
+      printf 'valid'
+
+  tool commit_output
+    label: "Commit Output"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -d .git ]; then
+        printf 'no-git-skipped'
+        exit 0
+      fi
+      for f in .ai/ledger.tsv .ai/sprints .ai/spec_analysis.md .ai/sprint_plan.md; do
+        [ -e "$f" ] && git add "$f"
+      done
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+        exit 0
+      fi
+      count=$(awk 'NR>1' .ai/ledger.tsv | wc -l | tr -d ' ')
+      git commit -m "feat(sprints): decompose spec into ${count} sprints"
+      printf 'committed-%s-sprints' "$count"
+
+  edges
+    Start -> find_spec
+    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found  label: no_spec
+    no_spec_exit -> Exit
+    analyze_spec -> decompose_parallel
+    decompose_parallel -> decompose_claude
+    decompose_parallel -> decompose_gpt
+    decompose_parallel -> decompose_gemini
+    decompose_claude -> decompose_join
+    decompose_gpt -> decompose_join
+    decompose_gemini -> decompose_join
+    decompose_join -> critique_parallel
+    critique_parallel -> critique_claude_on_gpt
+    critique_parallel -> critique_claude_on_gemini
+    critique_parallel -> critique_gpt_on_claude
+    critique_parallel -> critique_gpt_on_gemini
+    critique_parallel -> critique_gemini_on_claude
+    critique_parallel -> critique_gemini_on_gpt
+    critique_claude_on_gpt -> critique_join
+    critique_claude_on_gemini -> critique_join
+    critique_gpt_on_claude -> critique_join
+    critique_gpt_on_gemini -> critique_join
+    critique_gemini_on_claude -> critique_join
+    critique_gemini_on_gpt -> critique_join
+    critique_join -> merge_decomposition
+    merge_decomposition -> present_plan
+    present_plan -> approval_gate
+    approval_gate -> apply_feedback  label: "[A] Revise plan"
+    approval_gate -> skip_approval  label: "[S] Approve / Skip"
+    apply_feedback -> approval_gate  restart: true
+    skip_approval -> setup_workspace
+    setup_workspace -> write_sprint_docs
+    write_sprint_docs -> write_ledger
+    write_ledger -> validate_output
+    validate_output -> commit_output  when ctx.tool_stdout = valid  label: valid
+    validate_output -> write_sprint_docs  when ctx.tool_stdout != valid  label: fix_validation  restart: true
+    commit_output -> Exit

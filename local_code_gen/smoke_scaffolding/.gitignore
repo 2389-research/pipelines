@@ -1,0 +1,20 @@
+# smoke_scaffolding workspace artifacts — written by tracker runs, not committed
+go.mod
+go.sum
+*.exe
+.gitignore.bak
+
+# Files written by write_scaffolding_file during smoke runs
+cmd/
+src/
+internal/
+app/
+tests/
+
+# Run state
+.tracker/
+.ai/scaffolding_manifest.txt
+.ai/scaffolding_plan.jsonl
+.ai/sprint_descriptions.jsonl
+.ai/sprints/
+.ai/contract.md.tmp
