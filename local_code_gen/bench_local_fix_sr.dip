@@ -1,10 +1,10 @@
 # ABOUTME: Bench harness for the SR + rollback LocalFix tool body. Model:
-#          qwen3.6:35b-a3b-q8_0. Edit strategy: SEARCH/REPLACE via lib/merge_sr.py.
+#          qwen3.6:35b-a3b-q8_0. Edit strategy: SEARCH/REPLACE via merge_sr.py.
 #          NOT a sprint runner — no Generate, no ledger, no Audit, no CloudFix.
 #          Designed to A/B prompt designs and validate rollback layers against
 #          the deterministic pre-broken fixtures in
 #          DS-scratch/local_llm_patch_bench/. The production runner that uses
-#          this same LocalFix shape is local_code_gen/sprint_runner_qwen.dip.
+#          this same LocalFix shape is sprint_runner_qwen.dip (sibling).
 workflow BenchLocalFixSR
   goal: "Minimal dip that exercises the SR + rollback LocalFix logic against a pre-broken Python project. No generation, no ledger, no audit. Used to validate the LocalFix tool body in isolation against the local_llm_patch_bench fixtures."
   start: Setup
@@ -114,12 +114,12 @@ workflow BenchLocalFixSR
       MAX_ROLLBACKS=3
 
       # Locate merge_sr.py: prefer .ai/merge_sr.py (bench wrapper drops it here),
-      # fallback to $PIPELINES_REPO/lib/merge_sr.py if env var set.
+      # fallback to $PIPELINES_REPO/local_code_gen/merge_sr.py if env var set.
       MERGE_SR=""
       if [ -f .ai/merge_sr.py ]; then
         MERGE_SR="$WORKDIR_ABS/.ai/merge_sr.py"
-      elif [ -n "${PIPELINES_REPO:-}" ] && [ -f "$PIPELINES_REPO/lib/merge_sr.py" ]; then
-        MERGE_SR="$PIPELINES_REPO/lib/merge_sr.py"
+      elif [ -n "${PIPELINES_REPO:-}" ] && [ -f "$PIPELINES_REPO/local_code_gen/merge_sr.py" ]; then
+        MERGE_SR="$PIPELINES_REPO/local_code_gen/merge_sr.py"
       else
         echo "ERROR: merge_sr.py not found. Place it at .ai/merge_sr.py or set PIPELINES_REPO."
         printf 'local-exhausted'

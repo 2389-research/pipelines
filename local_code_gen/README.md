@@ -84,7 +84,7 @@ When `sprint_runner_qwen.dip` (or `sprint_exec_qwen.dip`) runs against an archit
   │ Setup                                                                         │
   │   - Detect proj_root (backend/ or frontend/ or server/ or api/ or .)          │
   │   - Install deps (uv sync / npm install / go mod tidy)                        │
-  │   - Stage lib/merge_sr.py at .ai/merge_sr.py for self-contained LocalFix     │
+  │   - Stage merge_sr.py at .ai/merge_sr.py for self-contained LocalFix         │
   │   - Reset per-sprint counters (.ai/local_fix_attempts, etc.)                  │
   └───────────────────────────────────────────────────────────────────────────────┘
                                                      │
@@ -177,7 +177,7 @@ When `sprint_runner_qwen.dip` (or `sprint_exec_qwen.dip`) runs against an archit
 
 ### Why SR/REPLACE for the local fix loop?
 
-The bench at `../bench_local_fix_sr.dip` measured this empirically (full data in [`DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md`](../../DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md), which reasons about it in depth):
+The bench at [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) measured this empirically (full data in [`DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md`](../../DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md), which reasons about it in depth):
 
 - Full-file rewrite: qwen can drift on any unchanged line. On a 13KB file, a one-bug fix produced a 15-test regression because qwen drifted on `back_populates` declarations across 5 unrelated classes. Rewriting whole files scales output cost with file size, not change size.
 - SEARCH/REPLACE: output volume scales with the change size. Failed merges fail loudly (block doesn't match) — never silently corrupts. Auditable: each block is a tiny diff. Empirically converges 9/10 breaks in 1 round, 3-6× faster than full-rewrite.
@@ -235,7 +235,7 @@ set -gx TRACKER_SPRINT_WRITER_PROVIDER anthropic
 set -gx TRACKER_SCAFFOLDING_WRITER_MODEL claude-haiku-4-5
 set -gx TRACKER_SCAFFOLDING_WRITER_PROVIDER anthropic
 set -gx PIPELINES_REPO /path/to/pipelines   # used by sprint_runner_qwen.dip
-                                              # to locate lib/merge_sr.py
+                                              # to locate local_code_gen/merge_sr.py
 ```
 
 ### Three entry-point patterns
@@ -336,7 +336,7 @@ Same shared core (Setup/Generate/RunTests/LocalFix/CloudFix/Audit) as the runner
 | Just a `spec.md` and full cloud creds (Anthropic + OpenAI + Gemini) | One-shot from spec to working code | Path A: `spec_to_sprints.dip` → `sprint_runner_qwen.dip` |
 | `.ai/spec_analysis.md` + `.ai/sprint_plan.md` already on disk (or you'll hand-write them); only Anthropic + OpenAI creds | Skip the upstream tournament; go straight to architect → code | Path B: `architect_only.dip` → `sprint_runner_qwen.dip` |
 | Architect already done; want to run sprints one at a time (debugging, A/B testing, CI) | Execute exactly one sprint per invocation | Path C: `sprint_exec_qwen.dip` |
-| Want to A/B-test the LocalFix prompt or rollback layers without spending sprint-runner cost | Bench harness against deterministic pre-broken fixtures | `../bench_local_fix_sr.dip` |
+| Want to A/B-test the LocalFix prompt or rollback layers without spending sprint-runner cost | Bench harness against deterministic pre-broken fixtures | [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) |
 
 The most common colleague-facing path is **B** — pre-build the decomposition inputs (or copy them from a similar prior project) and run `architect_only.dip → sprint_runner_qwen.dip`. Only ~$0.50-$1.00 per project, ~20-25 min wall, doesn't need the Gemini cred that Path A's tournament step requires.
 
@@ -415,12 +415,12 @@ The split is intentional: **frontier models design the architecture**, **the loc
 |---|---|---|---|
 | [`spec_to_sprints.dip`](spec_to_sprints.dip) | **Path A** — Full pipeline: spec discovery → 3-model decomposition tournament → 6-way critique → merge → architect (5-step) → dispatch_scaffolding → dispatch_sprints → ledger → validate. Use for cold runs from a `spec.md`. Requires Anthropic + OpenAI + Gemini creds. | Claude/GPT/Gemini (decomp) + Opus 4.6 (architect) + Sonnet 4.6 (enrichment) + Haiku 4.5 (scaffolding) | n/a |
 | [`architect_only.dip`](architect_only.dip) | **Path B step 1** — Architect step in isolation: skips the decomposition tournament. Reads pre-built `.ai/spec_analysis.md` + `.ai/sprint_plan.md` and produces `.ai/contract.md` + sprint specs + `.ai/scaffolding_manifest.txt`. The fastest path when you can hand-build the decomposition inputs. | Opus 4.6 + Sonnet 4.6 + Haiku 4.5 | n/a |
-| [`sprint_runner_qwen.dip`](sprint_runner_qwen.dip) | **Path B step 2 / Path A step 2** — Code-gen runner: loops the ledger, executes Setup → Generate → RunTests → SR LocalFix (with rollback + manifest gate) → single-session CloudFix → Audit → Commit per sprint. | qwen3.6:35b-a3b-q8_0 (Generate + LocalFix) + gpt-5.4 (CloudFix fallback) | SEARCH/REPLACE blocks via `../lib/merge_sr.py`, 4-strategy fuzzy merge, set-based per-round rollback, pre-cloud snapshot, manifest-aware refusal of scaffolding paths |
+| [`sprint_runner_qwen.dip`](sprint_runner_qwen.dip) | **Path B step 2 / Path A step 2** — Code-gen runner: loops the ledger, executes Setup → Generate → RunTests → SR LocalFix (with rollback + manifest gate) → single-session CloudFix → Audit → Commit per sprint. | qwen3.6:35b-a3b-q8_0 (Generate + LocalFix) + gpt-5.4 (CloudFix fallback) | SEARCH/REPLACE blocks via `merge_sr.py`, 4-strategy fuzzy merge, set-based per-round rollback, pre-cloud snapshot, manifest-aware refusal of scaffolding paths |
 | [`sprint_exec_qwen.dip`](sprint_exec_qwen.dip) | **Path C** — Single-sprint executor: same shared Setup/Generate/RunTests/LocalFix/CloudFix/Audit core as the runner but no ledger loop, no auto-commit, no sprint_gate. Caller writes `.ai/current_sprint_id.txt` first. | Same as runner | Same as runner |
 | [`smoke_scaffolding/`](smoke_scaffolding/) | Tiny smoke test for `dispatch_scaffolding` (Haiku per-file scaffolding writer). | Haiku 4.5 | n/a |
 | [`principles/`](principles/) | Architecture documentation, pattern references, exemplars, structural-fix journey docs. The `principles/README.md` is the index. None of these are loaded at runtime — they're human maintenance material. | — | — |
-| `../lib/merge_sr.py` | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner_qwen.dip` and `sprint_exec_qwen.dip`'s LocalFix step. Same matching strategies mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. | — | — |
-| `../bench_local_fix_sr.dip` | Bench harness — exercises the SR LocalFix tool body in isolation against deterministic pre-broken fixtures from `DS-scratch/local_llm_patch_bench/`. No Generate, no ledger, no Audit. The bench's purpose is to A/B prompt designs and validate rollback layers without spending the cost of a full sprint run. | qwen3.6:35b-a3b-q8_0 only | Same as `sprint_runner_qwen.dip` |
+| [`merge_sr.py`](merge_sr.py) | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner_qwen.dip` and `sprint_exec_qwen.dip`'s LocalFix step. Same matching strategies mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. | — | — |
+| [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) | Bench harness — exercises the SR LocalFix tool body in isolation against deterministic pre-broken fixtures from `DS-scratch/local_llm_patch_bench/`. No Generate, no ledger, no Audit. The bench's purpose is to A/B prompt designs and validate rollback layers without spending the cost of a full sprint run. | qwen3.6:35b-a3b-q8_0 only | Same as `sprint_runner_qwen.dip` |
 
 ## Configuration
 
@@ -435,7 +435,7 @@ The split is intentional: **frontier models design the architecture**, **the loc
 | `TRACKER_SPRINT_WRITER_PROVIDER` | Provider for the writer model. Recommended: `anthropic` | architect-side dips |
 | `TRACKER_SCAFFOLDING_WRITER_MODEL` | Model for per-file Haiku scaffolding worker. Defaults to writer model if unset, but Haiku is ~3-4× cheaper. Recommended: `claude-haiku-4-5` | architect-side dips (`dispatch_scaffolding` step) |
 | `TRACKER_SCAFFOLDING_WRITER_PROVIDER` | Provider for scaffolding model. Recommended: `anthropic` | architect-side dips |
-| `PIPELINES_REPO` | Path to this pipelines repo. Runner/exec use it to locate `lib/merge_sr.py`. (Setup also tries common default paths so this is technically optional but explicit is clearer.) | runner/exec dips |
+| `PIPELINES_REPO` | Path to this pipelines repo. Runner/exec use it to locate `local_code_gen/merge_sr.py`. (Setup also tries common default paths so this is technically optional but explicit is clearer.) | runner/exec dips |
 
 ### Optional env vars
 

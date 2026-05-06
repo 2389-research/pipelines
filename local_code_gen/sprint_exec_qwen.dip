@@ -5,13 +5,13 @@
 #          (caller's responsibility to write that file before invoking).
 #          Models: qwen3.6:35b-a3b-q8_0 (Generate + LocalFix), gpt-5.4
 #          (CloudFix fallback, single-session iterative).
-#          Edit strategy: SEARCH/REPLACE blocks via lib/merge_sr.py with
+#          Edit strategy: SEARCH/REPLACE blocks via merge_sr.py with
 #          4-strategy fuzzy merge, set-based per-round rollback, manifest-aware
 #          refusal of architect-pinned scaffolding paths.
 #          For looped multi-sprint runs with auto-commit and ledger management,
 #          use sprint_runner_qwen.dip.
 #          Bench harness exercising LocalFix in isolation:
-#          ../bench_local_fix_sr.dip.
+#          bench_local_fix_sr.dip.
 #          File/model/strategy inventory: local_code_gen/README.md.
 workflow SprintExecLocalGenQwen
   goal: "Execute exactly ONE sprint with the local-gen pattern. Reads sprint id from .ai/current_sprint_id.txt (caller writes), runs Setup → Generate → RunTests → LocalFix → CloudFix → Audit, exits at Done. No ledger management, no auto-commit, no sprint_gate. Use sprint_runner_qwen.dip when you want to loop the ledger."
@@ -65,9 +65,9 @@ workflow SprintExecLocalGenQwen
       # (independent of $PIPELINES_REPO env). Copy from a few likely homes.
       if [ ! -f .ai/merge_sr.py ]; then
         for src in \
-          "${PIPELINES_REPO:-}/lib/merge_sr.py" \
-          "/Users/michaelsugimura/Documents/GitHub/pipelines/lib/merge_sr.py" \
-          "$HOME/Documents/GitHub/pipelines/lib/merge_sr.py"; do
+          "${PIPELINES_REPO:-}/local_code_gen/merge_sr.py" \
+          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/merge_sr.py" \
+          "$HOME/Documents/GitHub/pipelines/local_code_gen/merge_sr.py"; do
           if [ -n "$src" ] && [ -f "$src" ]; then
             cp "$src" .ai/merge_sr.py
             echo "staged merge_sr.py from $src"
@@ -335,12 +335,12 @@ workflow SprintExecLocalGenQwen
       MAX_ROLLBACKS=3
 
       # Locate merge_sr.py: prefer .ai/merge_sr.py (bench wrapper drops it here),
-      # fallback to $PIPELINES_REPO/lib/merge_sr.py if env var set.
+      # fallback to $PIPELINES_REPO/local_code_gen/merge_sr.py if env var set.
       MERGE_SR=""
       if [ -f .ai/merge_sr.py ]; then
         MERGE_SR="$WORKDIR_ABS/.ai/merge_sr.py"
-      elif [ -n "${PIPELINES_REPO:-}" ] && [ -f "$PIPELINES_REPO/lib/merge_sr.py" ]; then
-        MERGE_SR="$PIPELINES_REPO/lib/merge_sr.py"
+      elif [ -n "${PIPELINES_REPO:-}" ] && [ -f "$PIPELINES_REPO/local_code_gen/merge_sr.py" ]; then
+        MERGE_SR="$PIPELINES_REPO/local_code_gen/merge_sr.py"
       else
         echo "ERROR: merge_sr.py not found. Place it at .ai/merge_sr.py or set PIPELINES_REPO."
         printf 'local-exhausted'

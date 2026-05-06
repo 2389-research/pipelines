@@ -77,7 +77,7 @@ The dip validates clean post-fix (`tracker validate local_code_gen/sprint_runner
 
 ## Fix: 4-strategy SR-block matcher in the auditor
 
-The architect-side audit pass (Sonnet patches drafts via SR blocks) and the runner-side LocalFix (qwen patches failing source via SR blocks) use the same Aider-style format. The runner has a robust Python merger at `pipelines/lib/merge_sr.py` with 4 fallback strategies; the auditor in `tracker/agent/tools/write_enriched_sprint.go` was using exact-match-only with a `count == 1` uniqueness check, which fell back to the unaudited draft on any whitespace drift.
+The architect-side audit pass (Sonnet patches drafts via SR blocks) and the runner-side LocalFix (qwen patches failing source via SR blocks) use the same Aider-style format. The runner has a robust Python merger at `pipelines/local_code_gen/merge_sr.py` with 4 fallback strategies; the auditor in `tracker/agent/tools/write_enriched_sprint.go` was using exact-match-only with a `count == 1` uniqueness check, which fell back to the unaudited draft on any whitespace drift.
 
 **Ported the 4 strategies into Go** (`applySRBlocks`):
 
