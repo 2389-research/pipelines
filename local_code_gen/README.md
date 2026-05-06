@@ -13,47 +13,110 @@ End-to-end pipeline for taking a product `spec.md` and producing a working codeb
 ollama serve &   # or run as a service
 ollama pull qwen3.6:35b-a3b-q8_0
 
-# 2. Tracker built (this repo's tracker, with our extensions)
+# 2. Tracker built (with the dispatch_sprints + dispatch_scaffolding tools)
 cd /path/to/tracker
 go install ./cmd/tracker
 ~/go/bin/tracker version   # confirm
 
-# 3. API keys configured for tracker (Anthropic for architect/audit, OpenAI for CloudFix)
+# 3. API keys configured for tracker
+#    - ANTHROPIC_API_KEY  — required for architect (Opus + Sonnet + Haiku)
+#    - OPENAI_API_KEY     — required for CloudFix fallback (gpt-5.4)
+#    - GEMINI_API_KEY     — only needed if you run the full spec_to_sprints
+#                           pipeline (Path A below) which has Gemini in the
+#                           decomposition tournament
 ~/go/bin/tracker setup
+
+# 4. Env vars for the architect tools (set per shell session)
+set -gx TRACKER_SPRINT_WRITER_MODEL claude-sonnet-4-6
+set -gx TRACKER_SPRINT_WRITER_PROVIDER anthropic
+set -gx TRACKER_SCAFFOLDING_WRITER_MODEL claude-haiku-4-5
+set -gx TRACKER_SCAFFOLDING_WRITER_PROVIDER anthropic
+set -gx PIPELINES_REPO /path/to/pipelines   # used by sprint_runner_qwen.dip
+                                              # to locate lib/merge_sr.py
 ```
 
-### From `spec.md` to working code (full pipeline, ~2-4 hrs)
+### Three entry-point patterns
+
+There are three ways to drive the pipeline depending on what you already have on disk and which cloud creds are available.
+
+#### Path A — From `spec.md` cold (full pipeline, all creds required)
+
+Use when you have only a prose spec and want the whole flow: decomposition tournament + critique + merge + architect + scaffolding pre-pass + sprint enrichment + per-sprint code gen.
 
 ```fish
-# Workdir layout
 mkdir -p $WORKDIR/.ai/sprints
 echo "<your product spec>" > $WORKDIR/spec.md
 cd $WORKDIR
 
-# Architect-side env
-set -gx TRACKER_SPRINT_WRITER_MODEL claude-sonnet-4-6
-set -gx PIPELINES_REPO /path/to/pipelines
-
-# Step 1: Decompose spec into sprints (Harper's tournament + our architect)
+# Step 1: spec.md → .ai/contract.md + sprint specs + scaffolding files
+#   Models: Claude/GPT/Gemini decomposition tournament,
+#           Opus architect, Sonnet enrichment, Haiku scaffolding
 #   Cloud cost: ~$5-10 for a 16-sprint project; ~30-50 min
-~/go/bin/tracker --no-tui --autopilot lax $PIPELINES_REPO/local_code_gen/spec_to_sprints.dip
+~/go/bin/tracker --no-tui --auto-approve -w . \
+    $PIPELINES_REPO/local_code_gen/spec_to_sprints.dip
 
-# Step 2: Generate code (qwen + LocalFix + CloudFix on test failures)
-#   Cost: $0 for local-only path, ~$5-30 if CloudFix kicks in; 1-3 hrs
-~/go/bin/tracker --no-tui --autopilot lax $PIPELINES_REPO/local_code_gen/sprint_runner_qwen.dip
+# Step 2: sprint specs → working code (looped through ledger)
+#   Models: qwen3.6:35b (local), gpt-5.4 (CloudFix fallback only)
+#   Cost: $0 for local-only path, ~$0.20-1.00 if CloudFix fires; 15-60 min
+~/go/bin/tracker --no-tui --auto-approve -w . \
+    $PIPELINES_REPO/local_code_gen/sprint_runner_qwen.dip
 ```
 
-### Iterating on the architect prompt (architect-only, fast)
+Requires Anthropic + OpenAI + Gemini creds.
 
-If you already have `.ai/spec_analysis.md` + `.ai/sprint_plan.md` (output of decomposition) and want to re-run only the architect step:
+#### Path B — Architect-only + runner (most common; needs Anthropic + OpenAI)
+
+Use when you can pre-build `.ai/sprint_plan.md` and `.ai/spec_analysis.md` from another tool (or hand-write them) and just need the architect → scaffolding → sprint enrichment → code gen path. Skips the 3-model decomposition tournament entirely.
 
 ```fish
-~/go/bin/tracker --no-tui --autopilot lax $PIPELINES_REPO/local_code_gen/architect_only.dip
+# Pre-build the inputs (any way you like — examples in
+# experiments/notebook_smoke_v6/.ai/ for shape reference)
+cp <your sprint_plan.md>    $WORKDIR/.ai/sprint_plan.md
+cp <your spec_analysis.md>  $WORKDIR/.ai/spec_analysis.md
+cd $WORKDIR
+
+# Step 1: architect → contract + sprint specs + scaffolding pre-pass
+#   Models: Opus, Sonnet, Haiku
+#   Cost: ~$0.40 for a 3-sprint project; ~5-50 min
+~/go/bin/tracker --no-tui --auto-approve -w . \
+    $PIPELINES_REPO/local_code_gen/architect_only.dip
+
+# Step 2: code gen (loops the ledger)
+#   Same as Path A Step 2
+~/go/bin/tracker --no-tui --auto-approve -w . \
+    $PIPELINES_REPO/local_code_gen/sprint_runner_qwen.dip
 ```
 
-This skips the 3-model decomposition tournament + 6-way critique tournament + merge (~10 min, ~$3 of cloud) and just re-runs the architect step (~5-50 min depending on project size, ~$1-5).
+Total per-project: ~$0.50-$1.00 for a 3-sprint project, ~20-25 min wall.
 
-Useful when iterating on the Opus prompt body in `architect_only.dip` or when validating that a prompt change behaves on a fixed input.
+#### Path C — Single-sprint execution (debug / iterate)
+
+Use when you want to execute exactly one sprint at a time — for debugging a specific sprint, A/B testing prompt changes, or piping into a CI job that runs one sprint per invocation. Requires the architect step (Path A or B) to have already produced `.ai/sprints/SPRINT-NNN.md` and `.ai/contract.md`.
+
+```fish
+# After running architect (Path B step 1), before / instead of running runner:
+echo "001" > .ai/current_sprint_id.txt   # caller's responsibility
+
+~/go/bin/tracker --no-tui --auto-approve -w . \
+    $PIPELINES_REPO/local_code_gen/sprint_exec_qwen.dip
+
+# When done, advance the ledger and commit manually:
+git add -A && git commit -m "feat(sprint-001): <title>"
+# update .ai/ledger.tsv to mark sprint 001 'completed' if you want to track
+```
+
+Same shared core (Setup/Generate/RunTests/LocalFix/CloudFix/Audit) as the runner — same SR + manifest gate + single-session CloudFix improvements. Just no ledger loop, no auto-commit, no sprint_gate.
+
+### Which path do I want?
+
+| You have | You want | Use |
+|---|---|---|
+| Just a `spec.md` and full cloud creds (Anthropic + OpenAI + Gemini) | One-shot from spec to working code | Path A: `spec_to_sprints.dip` → `sprint_runner_qwen.dip` |
+| `.ai/spec_analysis.md` + `.ai/sprint_plan.md` already on disk (or you'll hand-write them); only Anthropic + OpenAI creds | Skip the upstream tournament; go straight to architect → code | Path B: `architect_only.dip` → `sprint_runner_qwen.dip` |
+| Architect already done; want to run sprints one at a time (debugging, A/B testing, CI) | Execute exactly one sprint per invocation | Path C: `sprint_exec_qwen.dip` |
+| Want to A/B-test the LocalFix prompt or rollback layers without spending sprint-runner cost | Bench harness against deterministic pre-broken fixtures | `../bench_local_fix_sr.dip` |
+
+The most common colleague-facing path is **B** — pre-build the decomposition inputs (or copy them from a similar prior project) and run `architect_only.dip → sprint_runner_qwen.dip`. Only ~$0.50-$1.00 per project, ~20-25 min wall, doesn't need the Gemini cred that Path A's tournament step requires.
 
 ## Architecture
 
@@ -67,22 +130,34 @@ Useful when iterating on the Opus prompt body in `architect_only.dip` or when va
 │                                                                     │
 │   ▼                                                                 │
 │                                                                     │
-│  write_sprint_docs (Opus)                                           │
+│  write_sprint_docs (Opus, 5-step deterministic flow)                │
 │    1. write .ai/contract.md            (cross-sprint architectural  │
 │                                          map; pinned ONCE)          │
 │    2. write .ai/sprint_descriptions.jsonl  (one record per sprint)  │
-│    3. call dispatch_sprints once        (terminal tool — agent ends │
-│                                          on success)                │
+│    3. write .ai/scaffolding_plan.jsonl  (which files Haiku pre-writes) │
+│    4. call dispatch_scaffolding once    (Haiku transcribes pinned-  │
+│                                          bytes files; emits manifest) │
+│    5. call dispatch_sprints once        (terminal — agent ends on   │
+│                                          success)                   │
+│                                                                     │
+│  dispatch_scaffolding (deterministic loop, in tracker)              │
+│    For each scaffolding_plan.jsonl line:                            │
+│      Haiku transcription pass — one fenced block from contract → file│
+│      required_lines pre-write validation                            │
+│    emits: .ai/scaffolding_manifest.txt (one path per line)          │
 │                                                                     │
 │  dispatch_sprints (deterministic loop, in tracker)                  │
-│    For each JSONL line:                                             │
+│    For each sprint_descriptions.jsonl line:                         │
 │      Sonnet author pass — produces draft SPRINT-NNN.md              │
+│        (sees the manifest; marks pinned files as "already on disk") │
 │      Sonnet audit pass  — emits SR/REPLACE patches if needed        │
 │      4-strategy SR matcher applies patches (exact/indent/ws/fuzzy)  │
 │      Partial-apply: ships whatever blocks succeeded                  │
 │                                                                     │
 │   produces:  .ai/sprints/SPRINT-NNN.md (one per sprint)             │
 │              .ai/contract.md (kept on disk for the runner to read)  │
+│              .ai/scaffolding_manifest.txt (architect-pinned files)  │
+│              backend/<scaffolding files> already on disk            │
 │              .ai/ledger.tsv  (NNN  title  status  ...)              │
 │                                                                     │
 └─────────────────────────────────┬───────────────────────────────────┘
@@ -91,15 +166,19 @@ Useful when iterating on the Opus prompt body in `architect_only.dip` or when va
                                   ▼
 ┌─────────────────────── RUNNER SIDE (local + cloud-handoff) ────────┐
 │                                                                     │
-│  For each sprint in ledger:                                         │
+│  sprint_runner_qwen.dip (looped) | sprint_exec_qwen.dip (one shot)  │
+│    Setup:              detect proj_root, install deps, stage merge_sr.py│
 │    Generate (qwen):    parse `## New files`, gen_file each         │
 │      ↳ syntax check + retry per file                                │
 │    RunTests:           uv run pytest / go test / npm test          │
-│    LocalFix (qwen):    SR-block surgical edits on failing tests    │
-│      ↳ retry up to 10 LocalFix rounds                               │
-│    CloudFix (gpt-5.4): cloud agent if local exhausts                │
+│    LocalFix (qwen):    SR-block surgical edits, max 8 rounds       │
+│      ↳ Layer-1: per-round set-based regression rollback             │
+│      ↳ Layer-2: pre-local snapshot for cloud handoff                │
+│      ↳ manifest gate: post-merge violation check refuses scaffolding edits│
+│    CloudFix (gpt-5.4): single-session iterative — runs pytest itself, │
+│                         iterates until green or max_turns; once only │
 │    Audit:              artifact + test-count gates                  │
-│    Commit:             git commit per sprint                        │
+│    Commit:             git commit per sprint (runner only)         │
 │                                                                     │
 │   produces: backend/<all the files>, all tests passing              │
 │                                                                     │
@@ -112,31 +191,35 @@ The split is intentional: **frontier models design the architecture**, **the loc
 
 | File | Role | Models | Edit strategy |
 |---|---|---|---|
-| [`spec_to_sprints.dip`](spec_to_sprints.dip) | Full pipeline: spec discovery → decomposition tournament → critique → merge → architect → dispatch_sprints → ledger → validate. Use this for cold runs from a `spec.md`. | Opus + Sonnet + Haiku | n/a |
-| [`architect_only.dip`](architect_only.dip) | Architect step in isolation: skips the decomposition tournament. Reads pre-existing `.ai/spec_analysis.md` + `.ai/sprint_plan.md` and produces sprint specs + scaffolding manifest. Use this for fast iteration on the architect prompt. | Opus 4.6 (architect) + Sonnet 4.6 (sprint enrichment) + Haiku 4.5 (scaffolding transcription) | n/a |
-| [`sprint_runner_qwen.dip`](sprint_runner_qwen.dip) | Code-generation runner: qwen Generate → RunTests → SR LocalFix (with rollback + manifest gate) → single-session CloudFix → Audit → Commit. Loops over each sprint in the ledger. | qwen3.6:35b-a3b-q8_0 (Generate + LocalFix) + gpt-5.4 (CloudFix fallback) | SEARCH/REPLACE blocks via `../lib/merge_sr.py`, 4-strategy fuzzy merge, set-based per-round rollback, pre-cloud snapshot |
+| [`spec_to_sprints.dip`](spec_to_sprints.dip) | **Path A** — Full pipeline: spec discovery → 3-model decomposition tournament → 6-way critique → merge → architect (5-step) → dispatch_scaffolding → dispatch_sprints → ledger → validate. Use for cold runs from a `spec.md`. Requires Anthropic + OpenAI + Gemini creds. | Claude/GPT/Gemini (decomp) + Opus 4.6 (architect) + Sonnet 4.6 (enrichment) + Haiku 4.5 (scaffolding) | n/a |
+| [`architect_only.dip`](architect_only.dip) | **Path B step 1** — Architect step in isolation: skips the decomposition tournament. Reads pre-built `.ai/spec_analysis.md` + `.ai/sprint_plan.md` and produces `.ai/contract.md` + sprint specs + `.ai/scaffolding_manifest.txt`. The fastest path when you can hand-build the decomposition inputs. | Opus 4.6 + Sonnet 4.6 + Haiku 4.5 | n/a |
+| [`sprint_runner_qwen.dip`](sprint_runner_qwen.dip) | **Path B step 2 / Path A step 2** — Code-gen runner: loops the ledger, executes Setup → Generate → RunTests → SR LocalFix (with rollback + manifest gate) → single-session CloudFix → Audit → Commit per sprint. | qwen3.6:35b-a3b-q8_0 (Generate + LocalFix) + gpt-5.4 (CloudFix fallback) | SEARCH/REPLACE blocks via `../lib/merge_sr.py`, 4-strategy fuzzy merge, set-based per-round rollback, pre-cloud snapshot, manifest-aware refusal of scaffolding paths |
+| [`sprint_exec_qwen.dip`](sprint_exec_qwen.dip) | **Path C** — Single-sprint executor: same shared Setup/Generate/RunTests/LocalFix/CloudFix/Audit core as the runner but no ledger loop, no auto-commit, no sprint_gate. Caller writes `.ai/current_sprint_id.txt` first. | Same as runner | Same as runner |
 | [`smoke_scaffolding/`](smoke_scaffolding/) | Tiny smoke test for `dispatch_scaffolding` (Haiku per-file scaffolding writer). | Haiku 4.5 | n/a |
 | [`principles/`](principles/) | Architecture documentation, pattern references, exemplars, structural-fix journey docs. The `principles/README.md` is the index. None of these are loaded at runtime — they're human maintenance material. | — | — |
-| `../lib/merge_sr.py` | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner_qwen.dip`'s LocalFix step. Same matching strategies mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. | — | — |
+| `../lib/merge_sr.py` | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner_qwen.dip` and `sprint_exec_qwen.dip`'s LocalFix step. Same matching strategies mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. | — | — |
 | `../bench_local_fix_sr.dip` | Bench harness — exercises the SR LocalFix tool body in isolation against deterministic pre-broken fixtures from `DS-scratch/local_llm_patch_bench/`. No Generate, no ledger, no Audit. The bench's purpose is to A/B prompt designs and validate rollback layers without spending the cost of a full sprint run. | qwen3.6:35b-a3b-q8_0 only | Same as `sprint_runner_qwen.dip` |
 
 ## Configuration
 
 ### Required env vars
 
-| Variable | What it does | Where set |
+| Variable | What it does | Used by |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Architect (Opus) + writer/audit (Sonnet) calls | `tracker setup` or shell univar |
-| `OPENAI_API_KEY` | CloudFix (gpt-5.4) when LocalFix exhausts | same |
-| `TRACKER_SPRINT_WRITER_MODEL` | Model for the per-sprint writer (default `claude-sonnet-4-6`). Required for `dispatch_sprints` to register. | `set -gx` before the run |
-| `PIPELINES_REPO` | Path to this pipelines repo. `sprint_runner_qwen.dip` uses it to locate `lib/merge_sr.py`. (Setup also tries common default paths so this is now optional.) | `set -gx` before the runner run |
+| `ANTHROPIC_API_KEY` | Architect (Opus) + per-sprint writer/audit (Sonnet) + scaffolding transcription (Haiku) | `spec_to_sprints.dip`, `architect_only.dip` |
+| `OPENAI_API_KEY` | CloudFix (gpt-5.4) when LocalFix exhausts | `sprint_runner_qwen.dip`, `sprint_exec_qwen.dip` |
+| `GEMINI_API_KEY` | Gemini decomposition agent in the upstream tournament | `spec_to_sprints.dip` (Path A only — not needed for Path B/C) |
+| `TRACKER_SPRINT_WRITER_MODEL` | Model for per-sprint writer. Required for `dispatch_sprints` and `dispatch_scaffolding` tools to register. Recommended: `claude-sonnet-4-6` | architect-side dips |
+| `TRACKER_SPRINT_WRITER_PROVIDER` | Provider for the writer model. Recommended: `anthropic` | architect-side dips |
+| `TRACKER_SCAFFOLDING_WRITER_MODEL` | Model for per-file Haiku scaffolding worker. Defaults to writer model if unset, but Haiku is ~3-4× cheaper. Recommended: `claude-haiku-4-5` | architect-side dips (`dispatch_scaffolding` step) |
+| `TRACKER_SCAFFOLDING_WRITER_PROVIDER` | Provider for scaffolding model. Recommended: `anthropic` | architect-side dips |
+| `PIPELINES_REPO` | Path to this pipelines repo. Runner/exec use it to locate `lib/merge_sr.py`. (Setup also tries common default paths so this is technically optional but explicit is clearer.) | runner/exec dips |
 
 ### Optional env vars
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TRACKER_SPRINT_WRITER_PROVIDER` | `anthropic` | Override only for testing alternate providers |
-| `TRACKER_CODEGEN_MODEL` | unset | If set, registers a `generate_code` cheap-model tool — separate from the runner pipeline; not used by this pipeline |
+| `TRACKER_CODEGEN_MODEL` | unset | If set, registers a `generate_code` cheap-model tool — separate from the runner pipeline; not used by these dips |
 
 ### Architectural pattern (chosen by Opus per project)
 
@@ -155,8 +238,14 @@ Architect didn't write `.ai/sprint_descriptions.jsonl`. Check the run log for th
 ### `audit=PASS-FALLBACK-NOMATCH` on multiple sprints
 Sonnet auditor emitted SR blocks whose SEARCH text the 4-strategy matcher couldn't locate. With partial-apply (May 1 fix), this only fires when ZERO blocks could be applied — usually means the auditor is patching against text that was modified by an earlier block in the same set, OR the search context is genuinely missing. Look at `.ai/last_qwen_response.txt` (during runner) or stderr lines in the run log to see specific block-match failures. Fallback ships the unaudited draft, which is still valid; just missing audit improvements.
 
-### Sprint 001 takes forever in the runner (10+ LocalFix rounds)
-Likely a dependency-resolution issue, not a code logic issue. Look at `last_test_output.txt` for `ImportError`, `ModuleNotFoundError`, or "requires the X package" — the local model can't add deps to `pyproject.toml`, so it patches code endlessly. CloudFix usually fixes this in one shot (it sees the full project + tests + spec and identifies the missing dep). Workaround for now: let CloudFix run after the LocalFix budget exhausts. Future improvement (not yet built): early-escalation regex on `last_test_output.txt` that routes dep errors directly to CloudFix.
+### Sprint 001 takes forever in the runner (8 LocalFix rounds + escalates to CloudFix)
+Likely an architectural-mismatch case — qwen genuinely can't fix it. Common cause: a dependency is broken in the runtime (e.g. `passlib + bcrypt` on Python 3.14), and the fix requires either changing the hashing scheme (architect-level decision) or pinning specific versions in `pyproject.toml` (manifest-frozen, qwen blocked). LocalFix burns its 8-round budget patching code endlessly; CloudFix takes over and converges in one session. This is the *correct* escalation path — local should not be trusted to make architectural choices. Wall-time penalty is ~12 min. Future improvement: fixed-point detection (escalate when 2+ rounds produce identical SR output).
+
+### "MANIFEST VIOLATION" lines in LocalFix log
+qwen tried to write to a scaffolding file. The manifest gate caught it, restored from snapshot_round_pre, counted it as a consecutive_rollback. After 3 consecutive rollbacks (default) the runner escalates to CloudFix. This is healthy — manifest-frozen files should not be edited by local. If you see this on every round, the architect's contract may be over-pinning files that need sprint-level changes; revisit the scaffolding_plan.jsonl decisions in `architect_only.dip`.
+
+### "REGRESSION: N previously-passing tests now fail" then rollback
+Layer-1 rollback fired. qwen's SR block introduced a regression. Round is rolled back to pre-round state; consecutive_rollbacks increments. This is healthy — the alternative is the v9 sprint 3 silent-broken-commit failure mode. After 3 consecutive rollbacks the runner escalates.
 
 ### Sprint 001 file truncated mid-section (missing `## DoD` / `## Validation`)
 Sonnet hit MaxTokens on the author pass. Was a real failure mode in NIFB v1; fixed May 1 by setting MaxTokens=16384 explicitly + adding Pattern B which keeps each sprint smaller. If you're seeing this on an existing run, you can:
@@ -182,12 +271,16 @@ If you find a new defect class while running the pipeline:
 
 ## Validated runs
 
-| Project | Date | Sprints | Cost | Time | Outcome |
-|---|---|---|---|---|---|
-| Notebook (synthetic) | 2026-05-01 | 3 | ~$2.30 | 17 min | 34/34 pytest passing end-to-end |
-| NIFB (architect-only) | 2026-05-01 | 16 | ~$5 | 47 min | All 16 sprints generated; Pattern B chosen autonomously; validate_output green |
+| Project | Date | Pipeline shape | Sprints | Cost | Time | Outcome |
+|---|---|---|---|---|---|---|
+| Notebook (synthetic) | 2026-05-01 | spec_to_sprints + earlier full-rewrite runner | 3 | ~$2.30 | 17 min | 34/34 pytest passing end-to-end |
+| NIFB (architect-only) | 2026-05-01 | architect_only (16 sprints generated, runner not exercised) | 16 | ~$5 | 47 min | All 16 sprints generated; Pattern B chosen autonomously; validate_output green |
+| Notebook v6 (synthetic) | 2026-05-06 | architect_only | 3 | $0.39 | 8m39s | 11-file scaffolding manifest, 3 sprint specs, valid contract |
+| Notebook v8 (synthetic) | 2026-05-06 | sprint_runner (medium reasoning, full-rewrite LocalFix, single-session CloudFix) | 3 | $0.54 | 18m | 42/42 passing, drift-clean |
+| Notebook v10 (synthetic) | 2026-05-06 | sprint_runner (low reasoning, full-rewrite LocalFix, truncation fix) | 3 | $0.36 | 19m | 42/42 passing, drift-clean |
+| Notebook v11 (synthetic) | 2026-05-06 | sprint_runner_qwen (SR LocalFix + manifest gate + Layer-1+2 rollback) | 3 | $0.45 | 16m29s | 42/42 passing, drift-clean. Sprint 2 converged locally with one SR round (no CloudFix); sprint 1's bcrypt issue routed through CloudFix cleanly. |
 
-See [`principles/STRUCTURAL-FIX-RESULTS.md`](principles/STRUCTURAL-FIX-RESULTS.md) and [`principles/RUNNER-INTEGRATION.md`](principles/RUNNER-INTEGRATION.md) for the full run telemetry, defect-class observations, and cost breakdowns.
+The v11 run is the canonical baseline for the current toolchain (post the SR + manifest-gate + single-session CloudFix consolidation). See [`principles/STRUCTURAL-FIX-RESULTS.md`](principles/STRUCTURAL-FIX-RESULTS.md) and [`principles/RUNNER-INTEGRATION.md`](principles/RUNNER-INTEGRATION.md) for older run telemetry, defect-class observations, and cost breakdowns.
 
 ## See also
 
