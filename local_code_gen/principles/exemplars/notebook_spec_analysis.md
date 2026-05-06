@@ -17,7 +17,7 @@
 | FR2 | Each user owns notes. A note has a title (≤200 chars) and a body (markdown text).                |
 | FR3 | Notes can be tagged. Each tag is per-user (scoped to its owner). A note has 0+ tags.             |
 | FR4 | Users can list their notes, optionally filtered by a single tag (returns notes that own the tag).|
-| FR5 | Full CRUD on notes and on tags. All data routes require a valid JWT.                             |
+| FR5 | Full CRUD on notes; create/list/delete on tags (no rename). All data routes require a valid JWT. |
 | FR6 | Public `/health` endpoint that returns `{"status": "ok"}`.                                       |
 
 ## Components
@@ -27,7 +27,7 @@
 | C1 | Auth      | Signup, login, JWT issue/verify, password hashing.                                |
 | C2 | User      | Account record (email + password hash). Owner of notes and tags.                  |
 | C3 | Note      | CRUD; list (own only); tag-filtered list.                                         |
-| C4 | Tag       | CRUD per-user. Tag a note (many-to-many via `note_tags`).                         |
+| C4 | Tag       | Create/list/delete per-user. Tag a note (many-to-many via `note_tags`).           |
 
 ## Entities (high level — exact field sets pinned in contract.md)
 

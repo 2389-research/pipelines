@@ -36,7 +36,7 @@ matches Mocha/Jest. Vitest, Cypress, and async patterns slip through.
 `CloudFix` prompt at `sprint_runner_local_gen_qwen.dip:554-555` literally
 hardcodes:
 
-```
+```bash
 cd backend && uv run pytest -x --tb=short
 ```
 

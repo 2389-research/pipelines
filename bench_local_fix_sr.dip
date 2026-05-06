@@ -61,6 +61,8 @@ workflow BenchLocalFixSR
         proj_root="."
         if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
           proj_root="backend"
+        elif [ -f api/pyproject.toml ] || [ -f api/go.mod ] || [ -f api/package.json ]; then
+          proj_root="api"
         elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
           proj_root="frontend"
         elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
@@ -102,6 +104,8 @@ workflow BenchLocalFixSR
         proj_root="."
         if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
           proj_root="backend"
+        elif [ -f api/pyproject.toml ] || [ -f api/go.mod ] || [ -f api/package.json ]; then
+          proj_root="api"
         fi
       fi
       PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
@@ -204,7 +208,9 @@ workflow BenchLocalFixSR
       FAILING_TESTS=$( { grep -oE 'FAILED [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; \
                         grep -oE 'ERROR [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; } | sort -u)
 
-      find app -name "*.py" -not -path "*/__pycache__/*" 2>/dev/null | sort > /tmp/lf_app_files.txt
+      # Search both app/ and src/ — projects use one or the other (or both).
+      # Mirrors snapshot_state/restore_state, which also handle both layouts.
+      find app src -name "*.py" -not -path "*/__pycache__/*" 2>/dev/null | sort > /tmp/lf_app_files.txt
       printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
       : > /tmp/lf_context.txt
       while IFS= read -r f; do
@@ -261,6 +267,30 @@ workflow BenchLocalFixSR
         | jq -r '.message.content')
 
       echo "$RESPONSE" > .ai/last_qwen_response.txt
+
+      # Guard: empty/null Ollama response (curl failure, model timeout, etc.).
+      # Skip the merger entirely — running it on empty input throws away the
+      # round and inflates consecutive_rollbacks confusingly.
+      RESPONSE_TRIMMED=$(printf '%s' "$RESPONSE" | tr -d '[:space:]')
+      if [ -z "$RESPONSE_TRIMMED" ] || [ "$RESPONSE_TRIMMED" = "null" ]; then
+        echo "ERROR: empty/null Ollama response — skipping merger"
+        APPLIED=0
+        FAILED_BLOCKS=0
+        FILES_TOUCHED=""
+        echo '{"applied":0,"failed":0,"results":[],"error":"empty-ollama-response"}' > .ai/last_merge.json
+        consecutive_rollbacks=$((consecutive_rollbacks + 1))
+        echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+        if [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ]; then
+          if [ -d .ai/snapshot_pre_local ]; then
+            restore_state .ai/snapshot_pre_local
+          fi
+          touch .ai/local_exhausted
+          printf 'local-exhausted'
+          exit 0
+        fi
+        printf 'local-fix-applied'
+        exit 0
+      fi
 
       MERGE_OUT=$(echo "$RESPONSE" | python3 "$MERGE_SR" "$PROJ_ROOT_ABS" 2>&1)
       echo "$MERGE_OUT" > .ai/last_merge.json
