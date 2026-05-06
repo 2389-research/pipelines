@@ -515,7 +515,7 @@ workflow SprintRunnerLocalGenQwen
     model: gpt-5.4
     provider: openai
     max_turns: 25
-    reasoning_effort: medium
+    reasoning_effort: low
     fallback_target: Escalate
     prompt:
       Tests are failing in the project. The local model (qwen3.6:35b-a3b-q8_0)
