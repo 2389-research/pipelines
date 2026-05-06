@@ -1,0 +1,444 @@
+# ABOUTME: L1 intelligence gathering pipeline for Greenfield reverse engineering.
+# ABOUTME: Reads target through 8 parallel intelligence sources, writes raw evidence to workspace/raw/.
+# PROVIDER DEPENDENCIES:
+# Primary: gemini (L1 intelligence agents)
+# Fallback: anthropic (CoverageAgent)
+# See spec section "Provider Outage Handling" for fallback strategies.
+workflow GreenfieldDiscovery
+  goal: "Read the target through every available intelligence source (source code, docs, SDK, community, runtime, binary, git history, tests). Write raw evidence to workspace/raw/ with provenance citations. Each agent writes a completion marker (.completed, .skipped, or .failed) for fan-in verification."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 10
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge that the L1 intelligence gathering pipeline is starting. Report ready status.
+
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      L1 intelligence gathering complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+
+  tool ReadManifest
+    label: "Read Discovery Manifest"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f "workspace/discovery-manifest.yaml" ]; then
+        printf 'no-manifest'
+        exit 0
+      fi
+      count=$(yq '.source_count' "workspace/discovery-manifest.yaml")
+      printf 'manifest-ready-%s-sources' "$count"
+
+  tool WriteSkipMarkers
+    label: "Write Skip Markers"
+    timeout: 15s
+    command:
+      set -eu
+      sources="source_code:source docs:public/docs sdk:public/ecosystem community:public/community runtime:runtime binary:binary git_history:project-history tests:test-evidence"
+      for entry in $sources; do
+        key=$(printf '%s' "$entry" | cut -d: -f1)
+        dir=$(printf '%s' "$entry" | cut -d: -f2)
+        available=$(yq ".sources.${key}" "workspace/discovery-manifest.yaml" 2>/dev/null)
+        if [ "$key" = "community" ]; then
+          continue
+        fi
+        case "$dir" in
+          public/*) base="workspace/$dir" ;;
+          *) base="workspace/raw/$dir" ;;
+        esac
+        mkdir -p "$base"
+        if [ "$available" != "true" ]; then
+          printf 'Source type %s not available for this target\n' "$key" > "$base/.skipped"
+        fi
+      done
+      mkdir -p "workspace/public/community"
+      printf 'skip-markers-written'
+
+  parallel IntelligenceParallel -> SourceAnalyzer, DocResearcher, SdkAnalyzer, CommunityAnalyst, RuntimeObserver, BinaryAnalyzer, GitArchaeologist, TestSuiteAnalyzer
+
+  agent SourceAnalyzer
+    label: "Source Code Analyzer"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Source Code Analyzer for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/raw/source/.skipped exists, write "Source code analysis skipped — source not available" to workspace/raw/source/skipped-summary.md and stop.
+
+      ## Your job
+      Read EVERY source file in the target directory exhaustively. Do not skim. Do not skip "boring" sections.
+
+      1. Read the full source tree structure first (use Glob to map all files)
+      2. Chunk files by module/directory (not by line count)
+      3. For each chunk, analyze: functions, classes, methods, control flow, state management, error handling
+      4. Write per-chunk analysis to workspace/raw/source/analysis/chunk-NNNN.md
+      5. Write a function index to workspace/raw/source/functions/index.md
+      6. Write a manifest listing all evidence files to workspace/raw/source/manifest.md
+
+      ## Provenance
+      Every behavioral claim MUST have a provenance citation:
+      <!-- cite: source=source-code, ref=workspace/raw/source/analysis/chunk-NNNN.md:LINE, confidence=inferred, agent=source-analyzer -->
+
+      ## Completion
+      On success: write workspace/raw/source/.completed with: "files: N, chunks: M"
+      On failure: write workspace/raw/source/.failed with the error description
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent DocResearcher
+    label: "Documentation Researcher"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Documentation Researcher for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/public/docs/.skipped exists, write "Doc research skipped — docs not available" to workspace/public/docs/skipped-summary.md and stop.
+
+      ## Your job
+      Read ALL documentation in the target: README files, docs/ directories, wikis, inline documentation, man pages, help text.
+
+      1. Catalog all documentation sources found
+      2. Extract behavioral descriptions, configuration docs, API docs, user guides
+      3. Write evidence files to workspace/public/docs/ organized by topic
+      4. Write a manifest to workspace/public/docs/manifest.md
+
+      ## Provenance
+      <!-- cite: source=docs, ref=workspace/public/docs/FILE:LINE, confidence=inferred, agent=doc-researcher -->
+
+      ## Completion
+      On success: write workspace/public/docs/.completed with file count
+      On failure: write workspace/public/docs/.failed with error
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent SdkAnalyzer
+    label: "SDK Analyzer"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the SDK Analyzer for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/public/ecosystem/.skipped exists, write "SDK analysis skipped — no SDK deps found" to workspace/public/ecosystem/skipped-summary.md and stop.
+
+      ## Your job
+      Read package manifests (package.json, go.mod, Cargo.toml, pyproject.toml, etc.) and analyze SDK dependencies, integration patterns, and ecosystem relationships.
+
+      1. Identify all external dependencies and their purposes
+      2. Document SDK APIs being consumed and how
+      3. Map integration patterns (HTTP clients, database drivers, auth libraries)
+      4. Write evidence to workspace/public/ecosystem/
+
+      ## Provenance
+      <!-- cite: source=sdk, ref=workspace/public/ecosystem/FILE:LINE, confidence=inferred, agent=sdk-analyzer -->
+
+      ## Completion
+      On success: write workspace/public/ecosystem/.completed
+      On failure: write workspace/public/ecosystem/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent CommunityAnalyst
+    label: "Community Intelligence Analyst"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Community Intelligence Analyst for Greenfield reverse engineering.
+
+      ## Your job
+      Search the web for public information about the target software: documentation sites, GitHub issues, discussions, blog posts, Stack Overflow questions, tutorials.
+
+      Community analysis is ALWAYS available (web search). There is no skip marker for this source type.
+
+      First, read workspace/discovery-manifest.yaml for the target path. Read any README*, package.json, go.mod, Cargo.toml, or pyproject.toml in the target to identify the project name, description, and key terms for searching.
+
+      1. Search for the project name, key APIs, error messages
+      2. Document community understanding of behavior, known issues, common patterns
+      3. Write evidence to workspace/public/community/
+
+      ## Provenance
+      <!-- cite: source=community, ref=workspace/public/community/FILE:LINE, confidence=inferred, agent=community-analyst -->
+
+      ## Completion
+      On success: write workspace/public/community/.completed
+      On failure: write workspace/public/community/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent RuntimeObserver
+    label: "Runtime Observer"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Runtime Observer for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/raw/runtime/.skipped exists, write "Runtime observation skipped — no container runtime available" to workspace/raw/runtime/skipped-summary.md and stop.
+
+      ## Your job
+      Run the target software in a container and observe its behavior.
+
+      1. Detect the entry point (CLI, web server, library)
+      2. Build/install if needed
+      3. Run the target in a container with MANDATORY security flags:
+         docker run --network none --memory 2g --cpus 1.0 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m --tmpfs /var/tmp:rw,noexec,nosuid,size=256m --security-opt no-new-privileges --pids-limit 256 "$IMAGE" "$CMD"
+         These flags are NON-NEGOTIABLE. Never run containers without them.
+      4. Exercise CLI flags, API endpoints, interactive commands
+      5. Observe and document behavior, capture output
+      6. Write evidence to workspace/raw/runtime/
+
+      ## Provenance
+      <!-- cite: source=runtime, ref=workspace/raw/runtime/FILE:LINE, confidence=confirmed, agent=runtime-observer -->
+
+      ## Completion
+      On success: write workspace/raw/runtime/.completed
+      On failure: write workspace/raw/runtime/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent BinaryAnalyzer
+    label: "Binary Analyzer"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Binary Analyzer for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/raw/binary/.skipped exists, write "Binary analysis skipped — no binaries found" to workspace/raw/binary/skipped-summary.md and stop.
+
+      ## Your job
+      Analyze binary files: decompile, extract symbols, trace execution paths.
+
+      1. Check for available tools: objdump, radare2, ghidra (headless). Fall back to strings + file for minimal analysis
+      2. Document symbol tables, string constants, linked libraries
+      3. If decompilation is available, analyze control flow and data structures
+      4. Write evidence to workspace/raw/binary/
+
+      ## Provenance
+      <!-- cite: source=binary, ref=workspace/raw/binary/FILE:LINE, confidence=inferred, agent=binary-analyzer -->
+
+      ## Completion
+      On success: write workspace/raw/binary/.completed
+      On failure: write workspace/raw/binary/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent GitArchaeologist
+    label: "Git Archaeologist"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Git Archaeologist for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/raw/project-history/.skipped exists, write "Git archaeology skipped — no git repo found" to workspace/raw/project-history/skipped-summary.md and stop.
+
+      ## Your job
+      Mine the git history for behavioral evidence: evolution patterns, deleted features, architectural decisions.
+
+      1. Analyze git log for major changes, feature additions, bug fixes
+      2. Use git blame on key files to understand evolution
+      3. Look for deleted code that reveals past behavior
+      4. Document architectural decisions visible in commit messages
+      5. Write evidence to workspace/raw/project-history/
+
+      ## Provenance
+      <!-- cite: source=git-history, ref=workspace/raw/project-history/FILE:LINE, confidence=inferred, agent=git-archaeologist -->
+
+      ## Completion
+      On success: write workspace/raw/project-history/.completed
+      On failure: write workspace/raw/project-history/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent TestSuiteAnalyzer
+    label: "Test Suite Analyzer"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Test Suite Analyzer for Greenfield reverse engineering.
+
+      ## Pre-flight
+      If the file workspace/raw/test-evidence/.skipped exists, write "Test suite analysis skipped — no tests found" to workspace/raw/test-evidence/skipped-summary.md and stop.
+
+      ## Your job
+      Read existing test suites for behavioral evidence. Tests are one of the best sources of behavioral specification.
+
+      1. Read all test files exhaustively
+      2. Extract behavioral assertions — what does each test verify?
+      3. Run tests if possible and capture results
+      4. Document test coverage: what behaviors are tested, what gaps exist
+      5. Write evidence to workspace/raw/test-evidence/
+
+      ## Provenance
+      <!-- cite: source=tests, ref=workspace/raw/test-evidence/FILE:LINE, confidence=confirmed, agent=test-suite-analyzer -->
+
+      ## Completion
+      On success: write workspace/raw/test-evidence/.completed
+      On failure: write workspace/raw/test-evidence/.failed
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  fan_in IntelligenceJoin <- SourceAnalyzer, DocResearcher, SdkAnalyzer, CommunityAnalyst, RuntimeObserver, BinaryAnalyzer, GitArchaeologist, TestSuiteAnalyzer
+
+  tool CoverageCheck
+    label: "Coverage Check"
+    timeout: 15s
+    command:
+      set -eu
+      completed=0
+      skipped=0
+      failed=0
+      missing_types=""
+      entries="source:workspace/raw/source docs:workspace/public/docs ecosystem:workspace/public/ecosystem community:workspace/public/community runtime:workspace/raw/runtime binary:workspace/raw/binary git_history:workspace/raw/project-history tests:workspace/raw/test-evidence"
+      for entry in $entries; do
+        key=$(printf '%s' "$entry" | cut -d: -f1)
+        d=$(printf '%s' "$entry" | cut -d: -f2)
+        if [ -f "$d/.completed" ]; then
+          completed=$((completed + 1))
+        elif [ -f "$d/.skipped" ]; then
+          skipped=$((skipped + 1))
+        elif [ -f "$d/.failed" ]; then
+          failed=$((failed + 1))
+        else
+          missing_types="${missing_types}${key},"
+        fi
+      done
+      missing_types="${missing_types%,}"
+      if [ -n "$missing_types" ]; then
+        printf 'incomplete-%s' "$missing_types"
+        exit 0
+      fi
+      community_done=0
+      [ -f "workspace/public/community/.completed" ] && community_done=1
+      non_community=$((completed - community_done))
+      printf 'coverage-%s-completed-%s-skipped-%s-failed-noncommunity-%s' "$completed" "$skipped" "$failed" "$non_community"
+
+  agent CoverageAgent
+    label: "Coverage Review Agent"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Coverage Review Agent. You are invoked because fewer than 2 non-community intelligence sources produced results.
+
+      Read workspace/discovery-manifest.yaml to see what sources were available.
+      Read the .completed, .skipped, and .failed markers in workspace/raw/ and workspace/public/ to understand what happened.
+
+      Your job:
+      1. Assess whether the available evidence is sufficient for meaningful behavioral spec generation
+      2. Identify any additional sources that might have been missed (e.g., docs embedded in source comments, tests in non-standard locations)
+      3. If you find additional sources, analyze them and write evidence to the appropriate workspace directories
+      4. Write a coverage assessment to workspace/raw/coverage-assessment.md
+
+      HARD CONSTRAINT: If evidence is truly insufficient (binary-only with no decompiler, no docs, no community presence), report this clearly. Do not fabricate evidence.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent L1IncompleteFailed
+    label: "L1 Incomplete — Missing Markers"
+    max_turns: 2
+    auto_status: true
+    prompt:
+      One or more L1 intelligence agents completed without writing a completion marker (.completed, .skipped, or .failed).
+
+      Check each directory for markers:
+      - workspace/raw/source/
+      - workspace/public/docs/
+      - workspace/public/ecosystem/
+      - workspace/public/community/
+      - workspace/raw/runtime/
+      - workspace/raw/binary/
+      - workspace/raw/project-history/
+      - workspace/raw/test-evidence/
+
+      Report which agents are missing markers. Write workspace/.l1-failed with "incomplete fan-in: <list of missing agent types>".
+
+  tool WriteL1Summary
+    label: "Write L1 Summary"
+    timeout: 10s
+    command:
+      set -eu
+      completed=0
+      paths=""
+      entries="source:workspace/raw/source docs:workspace/public/docs ecosystem:workspace/public/ecosystem community:workspace/public/community runtime:workspace/raw/runtime binary:workspace/raw/binary git_history:workspace/raw/project-history tests:workspace/raw/test-evidence"
+      for entry in $entries; do
+        key=$(printf '%s' "$entry" | cut -d: -f1)
+        d=$(printf '%s' "$entry" | cut -d: -f2)
+        if [ -f "$d/.completed" ]; then
+          completed=$((completed + 1))
+          paths="${paths}\n  ${key}: ${d}"
+        elif [ -f "$d/.skipped" ]; then
+          paths="${paths}\n  ${key}: skipped"
+        elif [ -f "$d/.failed" ]; then
+          paths="${paths}\n  ${key}: failed"
+        fi
+      done
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      fallback=false
+      [ -f "workspace/raw/coverage-assessment.md" ] && fallback=true
+      printf 'completed_sources: %s\ntimestamp: "%s"\nprovider_fallback: %s\nsource_paths:%b\n' "$completed" "$now" "$fallback" "$paths" > "workspace/raw/l1-summary.yaml"
+      printf 'l1-summary-written-%s-sources' "$completed"
+
+  edges
+    Start -> ReadManifest
+    ReadManifest -> WriteSkipMarkers  when ctx.tool_stdout startswith manifest-ready  label: manifest_ok
+    ReadManifest -> Exit              when ctx.tool_stdout = no-manifest              label: no_manifest
+    ReadManifest -> Exit
+    WriteSkipMarkers -> IntelligenceParallel
+    IntelligenceParallel -> SourceAnalyzer
+    IntelligenceParallel -> DocResearcher
+    IntelligenceParallel -> SdkAnalyzer
+    IntelligenceParallel -> CommunityAnalyst
+    IntelligenceParallel -> RuntimeObserver
+    IntelligenceParallel -> BinaryAnalyzer
+    IntelligenceParallel -> GitArchaeologist
+    IntelligenceParallel -> TestSuiteAnalyzer
+    SourceAnalyzer -> IntelligenceJoin
+    DocResearcher -> IntelligenceJoin
+    SdkAnalyzer -> IntelligenceJoin
+    CommunityAnalyst -> IntelligenceJoin
+    RuntimeObserver -> IntelligenceJoin
+    BinaryAnalyzer -> IntelligenceJoin
+    GitArchaeologist -> IntelligenceJoin
+    TestSuiteAnalyzer -> IntelligenceJoin
+    IntelligenceJoin -> CoverageCheck
+    CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith -noncommunity-0  label: low_coverage_zero
+    CoverageCheck -> CoverageAgent      when ctx.tool_stdout endswith -noncommunity-1  label: low_coverage_one
+    CoverageCheck -> L1IncompleteFailed  when ctx.tool_stdout startswith incomplete  label: fan_in_failed
+    CoverageCheck -> WriteL1Summary
+    CoverageAgent -> WriteL1Summary
+    L1IncompleteFailed -> Exit  when ctx.outcome = fail  label: l1_incomplete_failed_terminal
+    L1IncompleteFailed -> Exit
+    WriteL1Summary -> Exit

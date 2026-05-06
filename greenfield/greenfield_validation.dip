@@ -1,0 +1,345 @@
+# ABOUTME: L4 test vectors + Gate 2 + L5 sanitization for Greenfield reverse engineering.
+# ABOUTME: Generates test vectors/acceptance criteria, reviews for leakage, sanitizes to output/.
+# PROVIDER DEPENDENCIES:
+# Primary: openai (L4 test vectors, Gate 2 review)
+# Secondary: anthropic (L5 sanitizers)
+# See spec section "Provider Outage Handling" for fallback strategies.
+workflow GreenfieldValidation
+  goal: "Generate test vectors and acceptance criteria (L4), review for implementation leakage (Gate 2), and sanitize raw specs into clean output/ form (L5)."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 15
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge that the L4/L5 validation pipeline is starting. Report ready status.
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Your ONLY job is to acknowledge start.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      L4/L5 validation pipeline complete. Report final status.
+      HARD CONSTRAINT: Your ONLY job is to acknowledge completion.
+
+  tool ReadSpecs
+    label: "Read Specs"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -d "workspace/raw/specs/modules" ]; then
+        printf 'no-specs'
+        exit 0
+      fi
+      count=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      if [ "$count" -eq 0 ]; then
+        printf 'no-specs'
+        exit 0
+      fi
+      printf 'specs-ready-%s-modules' "$count"
+
+  parallel ValidationParallel -> TestVectorGenerator, TestGenerator, AcceptanceCriteriaWriter
+
+  agent TestVectorGenerator
+    label: "Test Vector Generator"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Test Vector Generator for Greenfield reverse engineering.
+
+      Read all behavioral specs in workspace/raw/specs/modules/ and workspace/raw/specs/journeys/.
+
+      Generate Given/When/Then test vectors for every P0 behavioral claim:
+
+      ### TV-MODULE-001: Description
+      GIVEN: <precondition>
+      WHEN: <action>
+      THEN: <expected outcome>
+
+      Also generate edge case vectors and dependency contract failure mode vectors.
+
+      Write to workspace/raw/specs/test-vectors/
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent TestGenerator
+    label: "Test Spec Generator"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Test Spec Generator for Greenfield reverse engineering.
+
+      Read all behavioral specs in workspace/raw/specs/.
+
+      Generate runnable test spec outlines organized by module. These are skeleton test files an implementation team can flesh out.
+
+      Write to workspace/raw/specs/test-vectors/test-specs/
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent AcceptanceCriteriaWriter
+    label: "Acceptance Criteria Writer"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Acceptance Criteria Writer for Greenfield reverse engineering.
+
+      Read all behavioral specs in workspace/raw/specs/.
+
+      Write formal acceptance criteria per module:
+
+      ### AC-MODULE-001: Description
+      GIVEN: <context>
+      WHEN: <trigger>
+      THEN: <observable result>
+      Linked specs: [spec-module-behavior-name]
+
+      Each AC must have a unique ID and link to the spec it validates.
+
+      Write to workspace/raw/specs/validation/
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  fan_in ValidationJoin <- TestVectorGenerator, TestGenerator, AcceptanceCriteriaWriter
+
+  agent Gate2Remediation
+    label: "Gate 2 Remediation"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Gate 2 Remediation agent. Gate 2 found quality issues with test vectors and acceptance criteria.
+
+      Read workspace/raw/specs/gate2-findings.md for the specific issues found. For each finding, the file specifies the file path, the issue, and what the fix should look like.
+      Before rewriting any file, remove the old version first. Delete orphaned files from workspace/raw/specs/test-vectors/ and workspace/raw/specs/validation/ that gate2-findings.md identifies as needing replacement.
+
+      Read the behavioral specs in workspace/raw/specs/modules/ and workspace/raw/specs/journeys/ for context.
+
+      Fix ONLY the issues identified in gate2-findings.md. Rewrite affected files in workspace/raw/specs/test-vectors/ and workspace/raw/specs/validation/. Do NOT re-run full L4 generation — make targeted fixes.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  tool Gate2ToolCheck
+    label: "Gate 2 Tool Check"
+    timeout: 30s
+    command:
+      set -eu
+      errors=""
+      retries=0
+      if [ -f "workspace/.gate2-retries" ]; then
+        retries=$(cat "workspace/.gate2-retries")
+      fi
+      retries=$((retries + 1))
+      printf '%s' "$retries" > "workspace/.gate2-retries"
+      if [ "$retries" -gt 3 ]; then
+        printf 'budget-exhausted'
+        exit 0
+      fi
+      tv_count=$(find "workspace/raw/specs/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$tv_count" -eq 0 ]; then errors="${errors}no-test-vectors "; fi
+      ac_count=$(find "workspace/raw/specs/validation/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$ac_count" -eq 0 ]; then errors="${errors}no-acceptance-criteria "; fi
+      leak_pyjs=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "function \|def \|class \|import \|require(" 2>/dev/null | wc -l)
+      leak_go=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^func \|^package \|^import (" 2>/dev/null | wc -l)
+      leak_rust=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^fn \|^pub struct \|^impl \|^use " 2>/dev/null | wc -l)
+      leak_c=$(find "workspace/raw/specs/test-vectors/" -path "*/test-specs" -prune -o -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "^void \|^int \|^#include " 2>/dev/null | wc -l)
+      leak_count=$((leak_pyjs + leak_go + leak_rust + leak_c))
+      if [ "$leak_count" -gt 0 ]; then errors="${errors}leakage-${leak_count}-files "; fi
+      ac_leak=$(find "workspace/raw/specs/validation/" -name "*.md" -print0 2>/dev/null | xargs -0 grep -rl "function \|def \|class \|^func \|^fn \|^void \|^int \|^#include " 2>/dev/null | wc -l)
+      if [ "$ac_leak" -gt 0 ]; then errors="${errors}ac-leakage-${ac_leak}-files "; fi
+      if [ -n "$errors" ]; then
+        printf 'invalid-%s' "$errors"
+        exit 0
+      fi
+      rm -f "workspace/.gate2-retries"
+      printf 'gate2-pass'
+
+  agent Gate2AgentReview
+    label: "Gate 2 Agent Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    auto_status: true
+    max_retries: 3
+    retry_target: Gate2Remediation
+    fallback_target: Gate2Failed
+    prompt:
+      You are the Gate 2 quality reviewer. Review test vectors and acceptance criteria in workspace/raw/specs/.
+
+      Check for:
+      1. All P0 behaviors have test vectors
+      2. Acceptance criteria have valid IDs and link to specs
+      3. No implementation leakage in behavioral prose (code in examples is OK)
+      4. Test vectors cover edge cases and error conditions
+
+      Write findings to workspace/raw/specs/gate2-findings.md. For each finding, specify the file path, the issue, and what the fix should look like. This file is read by the remediation agent on retry — make findings actionable.
+
+      STATUS: success if quality is adequate. STATUS: fail if material issues found.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent Gate2Failed
+    label: "Gate 2 Failed"
+    max_turns: 1
+    auto_status: true
+    prompt:
+      Gate 2 has exhausted its retry budget. Report what passed and what failed.
+      Write workspace/.validation-failed with the failure reason.
+      HARD CONSTRAINT: Do NOT fix anything. Report only.
+
+  parallel SanitizationParallel -> SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria, SanitizerContracts
+
+  agent SanitizerSpecs
+    label: "Sanitizer — Specs"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are a Sanitizer worker for Greenfield. Rewrite raw behavioral specs to output form.
+
+      Read workspace/raw/specs/modules/ and workspace/raw/specs/journeys/.
+      Write sanitized versions to workspace/output/specs/.
+
+      PRESERVE: environment variables, CLI flags, config keys, API fields, protocol names, error messages, user-facing paths.
+      REMOVE: function names, variable names, minified identifiers, line numbers, source file paths, code structure descriptions, internal data structure names.
+
+      Provenance citations survive — but replace raw source paths with workspace-relative refs.
+
+      You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent SanitizerTestVectors
+    label: "Sanitizer — Test Vectors"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are a Sanitizer worker for Greenfield. Sanitize test vectors.
+
+      Read workspace/raw/specs/test-vectors/.
+      Write sanitized versions to workspace/output/test-vectors/.
+
+      Same PRESERVE/REMOVE rules as spec sanitization (including removal of internal data structure names). Test vectors should describe behavior (Given/When/Then) without referencing internal code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent SanitizerAcceptanceCriteria
+    label: "Sanitizer — Acceptance Criteria"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are a Sanitizer worker for Greenfield. Sanitize acceptance criteria.
+
+      Read workspace/raw/specs/validation/.
+      Write sanitized versions to workspace/output/validation/acceptance-criteria/.
+
+      Same PRESERVE/REMOVE rules (including removal of internal data structure names). AC IDs and spec links must be preserved.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  agent SanitizerContracts
+    label: "Sanitizer — Contracts"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are a Sanitizer worker for Greenfield. Sanitize dependency contracts and protocol specs.
+
+      Read workspace/raw/specs/contracts/.
+      Write sanitized versions to workspace/output/contracts/.
+
+      PRESERVE: environment variables, CLI flags, config keys, API fields, wire protocol names, error messages, user-facing paths.
+      REMOVE: function names, variable names, minified identifiers, line numbers, source file paths, code structure descriptions, internal data structure names.
+
+      Provenance citations survive — but replace raw source paths with workspace-relative refs.
+
+      You REWRITE from understanding, not copy. The output must read as if written by someone who knows the behavior but never saw the code.
+
+      WRITE BOUNDARY: You may ONLY create or modify files under workspace/. Never modify, create, or delete files outside workspace/. The target repo is READ-ONLY to you.
+
+  fan_in SanitizationJoin <- SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria, SanitizerContracts
+
+  tool SanitizationToolCheck
+    label: "Sanitization Check"
+    timeout: 15s
+    command:
+      set -eu
+      errors=""
+      spec_count=$(find "workspace/output/specs/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$spec_count" -eq 0 ]; then errors="${errors}no-output-specs "; fi
+      tv_count=$(find "workspace/output/test-vectors/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$tv_count" -eq 0 ]; then errors="${errors}no-output-test-vectors "; fi
+      ac_count=$(find "workspace/output/validation/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      if [ "$ac_count" -eq 0 ]; then errors="${errors}no-output-acceptance-criteria "; fi
+      if [ -n "$errors" ]; then
+        printf 'sanitization-incomplete-%s' "$errors"
+        exit 0
+      fi
+      contract_count=$(find "workspace/output/contracts/" -name "*.md" -print0 2>/dev/null | xargs -0 -I{} echo x | wc -l)
+      printf 'sanitization-ok-specs-%s-tv-%s-ac-%s-contracts-%s' "$spec_count" "$tv_count" "$ac_count" "$contract_count"
+
+  tool WriteL4L5Summary
+    label: "Write L4/L5 Summary"
+    timeout: 10s
+    command:
+      set -eu
+      raw_specs=$(find "workspace/raw/specs/modules/" -name "*.md" 2>/dev/null | wc -l)
+      output_specs=$(find "workspace/output/specs/" -name "*.md" 2>/dev/null | wc -l)
+      tv=$(find "workspace/output/test-vectors/" -name "*.md" 2>/dev/null | wc -l)
+      ac=$(find "workspace/output/validation/" -name "*.md" 2>/dev/null | wc -l)
+      printf 'l4l5-done-raw-%s-output-%s-tv-%s-ac-%s' "$raw_specs" "$output_specs" "$tv" "$ac"
+
+  edges
+    Start -> ReadSpecs
+    ReadSpecs -> ValidationParallel  when ctx.tool_stdout startswith specs-ready  label: specs_ok
+    ReadSpecs -> Exit                when ctx.tool_stdout = no-specs              label: no_specs
+    ReadSpecs -> Exit
+    ValidationParallel -> TestVectorGenerator
+    ValidationParallel -> TestGenerator
+    ValidationParallel -> AcceptanceCriteriaWriter
+    TestVectorGenerator -> ValidationJoin
+    TestGenerator -> ValidationJoin
+    AcceptanceCriteriaWriter -> ValidationJoin
+    ValidationJoin -> Gate2ToolCheck
+    Gate2ToolCheck -> Gate2AgentReview     when ctx.tool_stdout = gate2-pass        label: gate2_tool_pass
+    Gate2ToolCheck -> Gate2AgentReview     when ctx.tool_stdout startswith invalid  label: gate2_tool_issues
+    Gate2ToolCheck -> Gate2Failed          when ctx.tool_stdout = budget-exhausted  label: gate2_budget
+    Gate2ToolCheck -> Gate2Failed
+    Gate2AgentReview -> SanitizationParallel  when ctx.outcome = success  label: gate2_pass
+    Gate2AgentReview -> Gate2Remediation       when ctx.outcome = fail     label: gate2_remediate
+    Gate2Remediation -> Gate2ToolCheck  when ctx.outcome = success  restart: true  label: gate2_remediated
+    Gate2Remediation -> Gate2Failed     when ctx.outcome = fail     label: gate2_remediation_failed
+    Gate2Remediation -> Gate2Failed
+    SanitizationParallel -> SanitizerSpecs
+    SanitizationParallel -> SanitizerTestVectors
+    SanitizationParallel -> SanitizerAcceptanceCriteria
+    SanitizationParallel -> SanitizerContracts
+    SanitizerSpecs -> SanitizationJoin
+    SanitizerTestVectors -> SanitizationJoin
+    SanitizerAcceptanceCriteria -> SanitizationJoin
+    SanitizerContracts -> SanitizationJoin
+    SanitizationJoin -> SanitizationToolCheck
+    SanitizationToolCheck -> WriteL4L5Summary  when ctx.tool_stdout startswith sanitization-ok  label: sanitization_ok
+    SanitizationToolCheck -> Gate2Failed       when ctx.tool_stdout startswith sanitization-incomplete  label: sanitization_failed
+    SanitizationToolCheck -> Gate2Failed
+    WriteL4L5Summary -> Exit
+    Gate2Failed -> Exit  when ctx.outcome = fail  label: gate2_failed_terminal
+    Gate2Failed -> Exit

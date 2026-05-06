@@ -1,0 +1,1823 @@
+workflow SpecToDip
+  goal: "Generate a validated, production-quality .dip pipeline from a spec using multi-model tournament with domain-specific review panels and spec compliance verification"
+  start: Start
+  exit: Done
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 30
+
+  agent Start
+    label: Start
+
+  agent Done
+    label: Done
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  tool find_plan
+    label: "Find Superpowers Plan"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      spec=""
+      plan=""
+      if [ -d docs/superpowers/specs ]; then
+        for f in docs/superpowers/specs/*.md; do
+          [ -f "$f" ] && spec="$f" && break
+        done
+      fi
+      if [ -d docs/superpowers/plans ]; then
+        for f in docs/superpowers/plans/*.md; do
+          [ -f "$f" ] && plan="$f" && break
+        done
+      fi
+      if [ -n "$spec" ] || [ -n "$plan" ]; then
+        printf 'plan_found'
+      else
+        printf 'no_plan'
+      fi
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    max_retries: 3
+    retry_target: analyze_spec
+    fallback_target: Done
+    writes: spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file and optional superpowers plan. Produce a structured analysis for pipeline generation.
+
+      ## Process
+      1. Find and read the spec file (the previous step confirmed one exists)
+      2. Check for superpowers artifacts in docs/superpowers/specs/*.md and docs/superpowers/plans/*.md
+      3. Write docs/plans/dip_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      [Name, purpose, one-paragraph description]
+
+      ### Tech Stack
+      - Language: [e.g., Python 3.12]
+      - Framework: [e.g., FastAPI]
+      - Database: [e.g., PostgreSQL]
+      - Test framework: [e.g., pytest]
+      - Linter: [e.g., ruff]
+      - Type checker: [e.g., mypy]
+      - Package manager: [e.g., uv]
+
+      ### Components (numbered)
+      For each component:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can run in parallel, which must be sequential.
+
+      ### Recommended Topology
+      Based on component count and dependencies:
+      - LINEAR: 1-3 components, simple deps
+      - FAN_OUT: 4-8 components, shared foundation, independent features
+      - DAG: 8+ components with cross-dependencies
+
+      ### Architectural Slots
+      Key design decisions where multiple valid approaches exist. For each slot:
+      - What the decision is
+      - 2-3 valid approaches
+      - Trade-offs
+
+      ### Pipeline Node Inventory
+      Which components need agent nodes, which need tool nodes, where human gates belong.
+
+      ### Edge Pattern Recommendations
+      Where to use conditional routing, retry loops, fallback paths.
+
+      ### Spec Requirements Checklist
+      Every discrete requirement extracted from the spec, numbered R1-Rn for compliance tracing.
+
+      4. Commit: git add -A && git commit -m 'docs(analysis): spec analysis for pipeline generation'
+
+      ## Success Criteria
+      - docs/plans/dip_analysis.md exists with ALL sections filled in
+      - Every component named, every dependency mapped
+      - Requirements numbered for traceability
+
+  tool check_analysis
+    label: "Check Analysis File"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      if [ ! -f docs/plans/dip_analysis.md ]; then
+        printf 'analysis_missing'
+        exit 0
+      fi
+      for section in "Project Summary" "Tech Stack" "Components" "Dependency Graph" "Recommended Topology" "Architectural Slots" "Pipeline Node Inventory" "Edge Pattern" "Spec Requirements Checklist"; do
+        if ! grep -q "$section" docs/plans/dip_analysis.md; then
+          printf 'analysis_missing'
+          exit 0
+        fi
+      done
+      printf 'analysis_ok'
+
+  agent identify_perspectives
+    label: "Identify Perspectives"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: perspectives
+    fallback_target: gen_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read docs/plans/dip_analysis.md and identify 3-5 domain-specific perspectives relevant to this project's pipeline design.
+
+      These are NOT hardcoded personas. Generate them fresh based on the problem domain in the spec.
+
+      ## Process
+      1. Read the spec analysis, especially Tech Stack, Components, and Architectural Slots
+      2. Identify which professional perspectives would produce the most diverse pipeline designs
+      3. Write .ai/perspectives.md with 3-5 perspectives, each containing:
+         - Role title (e.g., "QA engineer focused on test coverage and edge cases")
+         - What this perspective prioritizes in pipeline design
+         - What this perspective would critique in a pipeline
+         - Specific architectural slots this perspective has strong opinions about
+
+      ## Examples by domain
+      Web app: full-stack architect, QA engineer, DevOps engineer, security engineer
+      Data pipeline: data engineer, ML engineer, SRE, data quality analyst
+      CLI tool: developer experience engineer, test engineer, release manager
+      API: API design specialist, performance engineer, integration specialist
+
+      Pick perspectives that will produce genuinely different pipeline designs, not slight variations of the same approach.
+
+  parallel gen_parallel -> gen_claude, gen_gpt, gen_gemini
+
+  agent gen_claude
+    label: "Claude Generation"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_claude
+    fallback_target: gen_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows the most common constructs:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          reasoning_effort: high
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          retry_target: run_tests
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
+
+      ## Common LLM Mistakes to Avoid
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
+
+      ## Generation Emphasis: THOROUGHNESS
+      Your strength is exhaustive edge conditions and spec compliance. Make sure:
+      - Every requirement from the Spec Requirements Checklist maps to at least one node
+      - All conditional edges are exhaustive (success/fail pairs) or have fallback edges
+      - All tool nodes have timeouts
+      - All back-edges have restart: true
+      - Use auto_status: true on decision-point agents
+      - Use goal_gate: true on critical quality checks
+
+      ## Self-Test Checklist (verify BEFORE writing the .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/claude.dip
+      mkdir -p .ai/candidates first.
+
+  agent gen_gpt
+    label: "GPT Generation"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_gpt
+    fallback_target: gen_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows the most common constructs:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          reasoning_effort: high
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          retry_target: run_tests
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
+
+      ## Common LLM Mistakes to Avoid
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
+
+      ## Generation Emphasis: STRUCTURAL CLARITY
+      Your strength is clean topology and readable structure. Make sure:
+      - The pipeline reads top-to-bottom as a clear narrative
+      - Phase comments (# ── Phase N: Name ──) separate logical sections
+      - Node IDs are descriptive and consistent (PascalCase or snake_case, pick one)
+      - Parallel branches are symmetric and balanced
+      - Edge routing is immediately understandable
+
+      ## Self-Test Checklist (verify BEFORE writing the .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/gpt.dip
+      mkdir -p .ai/candidates first.
+
+  agent gen_gemini
+    label: "Gemini Generation"
+    model: gemini-2.5-pro
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis, perspectives
+    writes: candidate_gemini
+    fallback_target: gen_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Generate a complete, production-quality .dip pipeline file from the spec analysis.
+
+      ## Inputs
+      1. Read docs/plans/dip_analysis.md (spec analysis with components, topology, requirements checklist)
+      2. Read .ai/perspectives.md (domain-specific viewpoints to consider)
+      3. Read the original spec file referenced in the analysis
+      4. If docs/superpowers/plans/*.md exists, read the superpowers plan for task ordering
+
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows the most common constructs:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          reasoning_effort: high
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          retry_target: run_tests
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
+
+      ## Common LLM Mistakes to Avoid
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
+
+      ## Generation Emphasis: ROBUSTNESS
+      Your strength is error handling and edge case coverage. Make sure:
+      - Every decision point has explicit failure handling
+      - Retry loops are bounded with max_retries and fallback_target
+      - Non-routing tool scripts use set -eu; routing tools that must printf a value use if/then/else instead (set -e kills the script before printf runs)
+      - Pipeline can recover from partial failures
+      - Fallback edges exist for every conditional routing point
+      - max_restarts is set appropriately for the number of loops
+
+      ## Self-Test Checklist (verify BEFORE writing the .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
+
+      ## Output
+      Write the complete .dip file to .ai/candidates/gemini.dip
+      mkdir -p .ai/candidates first.
+
+  fan_in gen_join <- gen_claude, gen_gpt, gen_gemini
+
+  tool validate_all
+    label: "Validate All Candidates"
+    timeout: 1m
+    command:
+      #!/bin/sh
+      set -eu
+      mkdir -p .ai/candidates
+      errors=""
+      missing=""
+      for name in claude gpt gemini; do
+        f=".ai/candidates/${name}.dip"
+        if [ ! -f "$f" ]; then
+          missing="${missing}${name} "
+          printf 'skipped (not generated)' > ".ai/candidates/${name}_check.txt"
+          continue
+        fi
+        result=$(dippin validate "$f" 2>&1 || true)
+        printf '%s' "$result" > ".ai/candidates/${name}_check.txt"
+        if ! printf '%s' "$result" | grep -q 'validation passed'; then
+          errors="${errors}${name} "
+        fi
+      done
+      # Priority: validation errors first, then missing files, then all good
+      if [ -n "$errors" ]; then
+        count=$(printf '%s' "$errors" | wc -w | tr -d ' ')
+        if [ "$count" -gt 1 ]; then
+          printf 'multiple_errors'
+        elif printf '%s' "$errors" | grep -q 'claude'; then
+          printf 'claude_errors'
+        elif printf '%s' "$errors" | grep -q 'gpt'; then
+          printf 'gpt_errors'
+        else
+          printf 'gemini_errors'
+        fi
+      elif [ -n "$missing" ]; then
+        # Existing candidates are valid but some were never generated
+        printf '%s' "$missing" > .ai/candidates/missing.txt
+        printf 'missing_candidates'
+      else
+        printf 'all_valid'
+      fi
+
+  agent fix_claude
+    label: "Fix Claude Candidate"
+    reads: candidate_claude
+    writes: candidate_claude
+    fallback_target: compliance_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/claude.dip.
+
+      ## Process
+      1. Read .ai/candidates/claude_check.txt for the dippin validate diagnostics
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/claude.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/claude.dip
+
+      ## Common Fixes
+      - Bracket edge syntax: WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true` — no brackets on edges
+      - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
+        find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
+        `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
+        If you see this pattern, rewrite the file in correct indentation-based dippin syntax.
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
+
+  agent fix_gpt
+    label: "Fix GPT Candidate"
+    reads: candidate_gpt
+    writes: candidate_gpt
+    fallback_target: compliance_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/gpt.dip.
+
+      ## Process
+      1. Read .ai/candidates/gpt_check.txt for the dippin validate diagnostics
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/gpt.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/gpt.dip
+
+      ## Common Fixes
+      - Bracket edge syntax: WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true` — no brackets on edges
+      - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
+        find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
+        `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
+        If you see this pattern, rewrite the file in correct indentation-based dippin syntax.
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
+
+  agent fix_gemini
+    label: "Fix Gemini Candidate"
+    reads: candidate_gemini
+    writes: candidate_gemini
+    fallback_target: compliance_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors in .ai/candidates/gemini.dip.
+
+      ## Process
+      1. Read .ai/candidates/gemini_check.txt for the dippin validate diagnostics
+      2. For each error, understand what the diagnostic code means:
+         - DIP001-DIP009 are structural errors that MUST be fixed
+         - DIP101-DIP133 are warnings — fix if straightforward
+      3. Read .ai/candidates/gemini.dip
+      4. Fix the minimum necessary to resolve errors. Do NOT rewrite the file.
+      5. Write the fixed version back to .ai/candidates/gemini.dip
+
+      ## Common Fixes
+      - Bracket edge syntax: WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true` — no brackets on edges
+      - DIP001/DIP002 (start/exit not found): Usually means WRONG SYNTAX — the parser cannot
+        find nodes declared with `with` keyword, curly braces, or parentheses. Correct syntax:
+        `tool my_node` on own line, fields indented below. NO `with`, NO `{`, NO `(`.
+        If you see this pattern, rewrite the file in correct indentation-based dippin syntax.
+      - DIP003 (unknown node): Check for typos in edge references, declare missing nodes
+      - DIP004 (unreachable): Add edges connecting the orphaned node
+      - DIP005 (cycle): Add restart: true to back-edges
+      - DIP007 (parallel/fan_in mismatch): Ensure target/source sets match exactly
+
+  agent fix_all
+    label: "Fix All Candidates"
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: candidate_claude, candidate_gpt, candidate_gemini
+    fallback_target: compliance_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Multiple candidates have validation errors. Fix all of them.
+
+      ## Critical: Dippin Syntax
+      The #1 cause of DIP001/DIP002 ("node not found") is WRONG SYNTAX — the parser
+      cannot find nodes if they are declared incorrectly. Correct dippin syntax:
+      - `workflow Name` on its own line (NO `with` keyword, NO curly braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented 2 spaces under their node
+      - `parallel X -> A, B, C` (comma-separated targets, NOT inline agent blocks)
+      - `fan_in Y <- A, B, C` (comma-separated sources)
+      - `edges` section at end with all edge declarations
+      - Indentation-based structure (like YAML), never curly braces
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = fail] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true`
+
+      If you see `tool X with`, `workflow X {`, `parallel X (`, or any `with` keyword
+      after a node declaration — that is the root cause. Rewrite the entire file using
+      correct indentation-based syntax before attempting individual error fixes.
+
+      ## Process
+      For each of claude, gpt, gemini:
+      1. Read .ai/candidates/{name}_check.txt
+      2. If errors exist, read .ai/candidates/{name}.dip
+      3. Check for fundamental syntax errors FIRST (with keyword, curly braces, parenthetical blocks)
+      4. If syntax is fundamentally wrong, rewrite the file in correct dippin format
+      5. If syntax is correct, fix the minimum necessary for each diagnostic
+      6. Write fixed version back
+
+      Fix each candidate independently — do not merge or cross-pollinate.
+
+  agent regen_missing
+    label: "Regenerate Missing Candidates"
+    reads: spec_analysis, perspectives
+    writes: candidate_claude, candidate_gpt, candidate_gemini
+    fallback_target: compliance_parallel
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Some gen agents failed to produce candidates. Generate the missing ones.
+
+      ## Process
+      1. Read .ai/candidates/missing.txt to see which candidates are missing
+      2. For each missing candidate name (claude, gpt, gemini):
+         a. Read docs/plans/dip_analysis.md for the spec analysis
+         b. Read .ai/perspectives.md for domain perspectives
+         c. Read the original spec file referenced in the analysis
+         d. Generate a complete .dip pipeline file
+         e. Write it to .ai/candidates/{name}.dip
+
+      ## Dippin Syntax Reference — CONCRETE EXAMPLE
+      Dippin uses INDENTATION (2 spaces), NOT curly braces. There is NO `with` keyword.
+      Study this example carefully — it shows the most common constructs:
+
+      ```
+      workflow MyPipeline
+        goal: "Build and test the thing"
+        start: begin
+        exit: done
+
+        defaults
+          model: claude-sonnet-4-6
+          provider: anthropic
+          max_retries: 3
+          max_restarts: 10
+
+        agent begin
+          label: Start
+
+        agent done
+          label: Done
+
+        tool run_tests
+          label: "Run Tests"
+          timeout: 120s
+          command:
+            #!/bin/sh
+            if uv run pytest -q 2>&1; then printf 'pass'; else printf 'fail'; fi
+
+        agent implement
+          label: "Write Code"
+          model: claude-sonnet-4-6
+          provider: anthropic
+          reasoning_effort: high
+          auto_status: true
+          goal_gate: true
+          reads: test_results
+          writes: source_code
+          max_retries: 2
+          retry_target: run_tests
+          fallback_target: done
+          prompt:
+            You are working in `run.working_dir`.
+            Implement the code to make failing tests pass.
+
+        human review_gate
+          label: "Approve implementation?"
+          mode: choice
+
+        parallel build_parallel -> build_frontend, build_backend
+        fan_in build_join <- build_frontend, build_backend
+
+        agent build_frontend
+          label: "Build Frontend"
+          prompt:
+            Build the frontend components.
+
+        agent build_backend
+          label: "Build Backend"
+          prompt:
+            Build the backend services.
+
+        edges
+          begin -> run_tests
+          run_tests -> implement  when ctx.tool_stdout = fail
+          run_tests -> review_gate  when ctx.tool_stdout = pass
+          implement -> run_tests  restart: true
+          review_gate -> build_parallel  when ctx.outcome = success
+          review_gate -> implement  when ctx.outcome = fail  restart: true
+          build_parallel -> build_frontend
+          build_parallel -> build_backend
+          build_frontend -> build_join
+          build_backend -> build_join
+          build_join -> done
+      ```
+
+      ### Key syntax rules:
+      - `workflow Name` on its own line (NO `with`, NO braces)
+      - `agent Name` / `tool Name` / `human Name` on own line (NO `with`, NO parentheses)
+      - Fields indented under their node (2-space indent)
+      - `parallel X -> A, B, C` and `fan_in Y <- A, B, C` declare targets/sources inline
+      - `edges` section at end lists all edges
+      - Edge annotations use KEYWORD syntax, NOT brackets:
+        WRONG: `A -> B [when ctx.x = 1] [label: go] [restart: true]`
+        RIGHT: `A -> B  when ctx.x = 1  label: go  restart: true`
+      - NO `[otherwise]` keyword — use explicit condition pairs instead
+      - Conditions: ctx.outcome, ctx.tool_stdout, graph.*, params.* (MUST have namespace prefix)
+      - Exhaustive condition pairs (success + fail) suppress DIP101/DIP102 warnings
+      - Tool scripts run from the project directory — do NOT use `cd "$WORKING_DIR"` or
+        any custom env vars. Just run commands directly (the runner sets cwd for you).
+      - Tool scripts that route on pass/fail MUST NOT use `set -e` — it kills the script
+        before printf runs. Use `if cmd; then printf 'pass'; else printf 'fail'; fi`
+        or capture with `result=$(cmd 2>&1 || true)` then check `$?` or parse output.
+
+      ## Common LLM Mistakes to Avoid
+      1. Using `with` keyword — WRONG: `tool scaffold with` / RIGHT: `tool scaffold`
+      2. Using curly braces — WRONG: `workflow X { }` / RIGHT: indentation only
+      3. Using parentheses — WRONG: `parallel X (` / RIGHT: `parallel X -> A, B`
+      4. Using brackets in edges — WRONG: `A -> B [when x = 1]` / RIGHT: `A -> B  when x = 1`
+      5. Using `[otherwise]` — use explicit condition pairs instead (success + fail)
+      6. Missing start: or exit: field
+      7. Edge references undeclared node
+      8. parallel targets without matching fan_in sources
+      9. Bare variable names in conditions (use ctx.outcome, not outcome)
+      10. Agent node with empty prompt
+      11. Missing tool timeout
+      12. Back-edges without restart: true
+
+      ## Required Patterns in Generated Pipeline
+      Every pipeline MUST include ALL of these:
+
+      ### TDD Loop
+      write_tests -> run_tests (expect fail) -> implement -> verify_tests
+        verify_tests -> next_step  when ctx.tool_stdout = pass
+        verify_tests -> implement  when ctx.tool_stdout = fail  restart: true
+
+      ### Security Review
+      security_scan (tool with timeout) -> security_review (agent, goal_gate: true, auto_status: true)
+        security_review -> next_step  when ctx.outcome = success
+        security_review -> fix_security  when ctx.outcome = fail  restart: true
+      Security scan tool MUST use tech-stack-specific tooling (bandit for Python, gosec for Go, eslint-plugin-security for JS/TS)
+
+      ### Code Quality Gates
+      lint (tool) -> type_check (tool, if applicable) -> format_check (tool)
+      All with timeouts.
+
+      ### Scenario Testing (The Iron Law)
+      scenario_setup (tool) -> scenario_run (tool) -> scenario_extract (tool)
+        scenario_extract -> next_step  when ctx.tool_stdout = pass
+        scenario_extract -> fix_scenarios  when ctx.tool_stdout = fail  restart: true
+      Real dependencies only. No mocks.
+
+      ### Fresh-Eyes Review Before Commit
+      fresh_eyes (agent, goal_gate: true, auto_status: true)
+        fresh_eyes -> commit  when ctx.outcome = success
+        fresh_eyes -> fix  when ctx.outcome = fail  restart: true
+      Immediately before EVERY commit node.
+
+      ### Human Review Gate
+      At least one human gate at a meaningful decision point (after implementation, before shipping).
+
+      ### Simmer Refinement (for complex output artifacts)
+      judge (agent, auto_status: true)
+        judge -> next_step  when ctx.outcome = success
+        judge -> refine  when ctx.outcome = fail  restart: true
+        (refine -> revalidate -> judge in the retry loop)
+
+      ### Integration Testing
+      After components are built, test them together with real APIs and real data flows.
+
+      ## Self-Test Checklist (verify BEFORE writing each .dip file)
+      1. No `[` or `]` characters in your edges section
+      2. Every conditional edge uses keyword syntax: `A -> B  when ctx.x = val`
+      3. No `with` keyword after node type declarations (agent, tool, human)
+      4. Indentation is consistent (2 spaces per level)
+      5. Every tool node has a timeout field
+      6. Every back-edge has restart: true
+      7. start: and exit: fields are present in the workflow header
+
+      ## CRITICAL: Do NOT skip any missing candidate. Generate ALL of them.
+      If only one is missing, generate that one. If two are missing, generate both.
+      Each generated pipeline should be a complete, production-quality .dip file.
+
+  parallel compliance_parallel -> compliance_claude, compliance_gpt, compliance_gemini
+
+  agent compliance_claude
+    label: "Claude Compliance Check"
+    reads: spec_analysis, candidate_claude
+    writes: compliance_claude
+    fallback_target: compliance_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the Claude candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/claude.dip
+      3. For each numbered requirement (R1, R2, ...), find the node(s) that implement it
+      4. Write .ai/candidates/claude_compliance.md as a table:
+
+      | # | Requirement | Node(s) | Coverage | Gap |
+      |---|------------|---------|----------|-----|
+
+      Coverage values: Full, Partial, MISSING
+      5. Also check for required patterns:
+         - TDD loop present? (write_tests -> run -> implement -> verify)
+         - Security review present? (scan tool + review agent with goal_gate)
+         - Code quality gates present? (lint, type check, format tools)
+         - Scenario testing present? (real deps, no mocks)
+         - Fresh-eyes before commit? (goal_gate agent before commit node)
+         - Human review gate present?
+
+      Note any MISSING requirements or absent patterns in the compliance table's Gap column.
+
+  agent compliance_gpt
+    label: "GPT Compliance Check"
+    reads: spec_analysis, candidate_gpt
+    writes: compliance_gpt
+    fallback_target: compliance_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the GPT candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/gpt.dip
+      3. For each numbered requirement, find implementing node(s)
+      4. Write .ai/candidates/gpt_compliance.md as a compliance matrix table
+      5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
+
+      Note any MISSING requirements or absent patterns in the compliance table's Gap column.
+
+  agent compliance_gemini
+    label: "Gemini Compliance Check"
+    reads: spec_analysis, candidate_gemini
+    writes: compliance_gemini
+    fallback_target: compliance_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Trace every requirement from the spec to nodes in the Gemini candidate pipeline.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md — find the "Spec Requirements Checklist" section
+      2. Read .ai/candidates/gemini.dip
+      3. For each numbered requirement, find implementing node(s)
+      4. Write .ai/candidates/gemini_compliance.md as a compliance matrix table
+      5. Check for all required patterns (TDD, security, quality gates, scenarios, fresh-eyes, human gate)
+
+      Note any MISSING requirements or absent patterns in the compliance table's Gap column.
+
+  fan_in compliance_join <- compliance_claude, compliance_gpt, compliance_gemini
+
+  parallel review_parallel -> review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+
+  agent review_structure
+    label: "Structure Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_structure
+    fallback_target: review_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate graph structure of all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. Read docs/plans/dip_analysis.md for recommended topology
+      3. For each candidate, evaluate:
+         - Are edges exhaustive? (success/fail pairs, fallback edges)
+         - Are conditions syntactically correct? (ctx.* namespace prefix)
+         - Are parallel/fan_in correctly matched?
+         - Does the topology match the recommended architecture?
+         - Are all nodes reachable from start?
+         - Can execution reach exit from every path?
+      4. Write .ai/reviews/structure.md with scores and detailed reasoning for each candidate
+
+  agent review_compliance
+    label: "Compliance Review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis, compliance_claude, compliance_gpt, compliance_gemini
+    writes: review_compliance
+    fallback_target: review_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Cross-check compliance matrices against the spec. Score each candidate 1-10.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md (spec requirements checklist)
+      2. Read all three compliance matrices from .ai/candidates/*_compliance.md
+      3. For each candidate, evaluate:
+         - Are all requirements genuinely addressed or just superficially mentioned?
+         - Do the mapped nodes actually implement the requirement?
+         - Are there requirements marked "Full" that are really "Partial"?
+         - Are required patterns (TDD, security, scenarios, fresh-eyes, human gate) real or perfunctory?
+      4. Write .ai/reviews/compliance.md with scores and evidence
+
+  agent review_robustness
+    label: "Robustness Review"
+    model: gemini-2.5-pro
+    provider: gemini
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_robustness
+    fallback_target: review_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate error handling and robustness of all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate:
+         - Do retry loops have max_retries set?
+         - Do critical nodes have fallback_target?
+         - Are tool timeouts realistic (not 5s for a build, not 10m for a grep)?
+         - Are goal_gate nodes placed at critical quality checks?
+         - Is max_restarts sufficient for the number of restart edges?
+         - Can the pipeline recover from partial failures?
+         - Do non-routing tool scripts use set -eu? Do routing tools that must printf a value use if/then/else instead of set -e?
+      3. Write .ai/reviews/robustness.md with scores and specific weaknesses found
+
+  agent review_efficiency
+    label: "Efficiency Review"
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_efficiency
+    fallback_target: review_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Check for efficiency issues in all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate:
+         - Are there unnecessary serial bottlenecks? (could parallel fan-out help?)
+         - Are model choices appropriate? (Opus for analysis, Sonnet for routine tasks)
+         - Are reasoning_effort levels justified? (high only where needed)
+         - Is the pipeline longer than necessary? (unnecessary nodes?)
+         - Could any adjacent agent nodes be combined without loss?
+      3. Write .ai/reviews/efficiency.md with scores and optimization suggestions
+
+  agent review_prompts
+    label: "Prompt Quality Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: candidate_claude, candidate_gpt, candidate_gemini
+    writes: review_prompts
+    fallback_target: review_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Evaluate prompt quality across all three candidates. Score each 1-10.
+
+      ## Process
+      1. Read all three .dip files from .ai/candidates/
+      2. For each candidate, evaluate every agent node's prompt:
+         - Is it specific enough to produce good output? (not "review the code")
+         - Does it include success criteria?
+         - Does it reference context variables correctly? (${ctx.*} syntax)
+         - Are instructions contradictory or ambiguous?
+         - Does it tell the agent what format to output in?
+         - For auto_status agents: does the prompt instruct STATUS: success/fail output?
+      3. Write .ai/reviews/prompts.md with scores and specific prompt improvements
+
+  fan_in review_join <- review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+
+  agent synthesize_scores
+    label: "Synthesize Tournament Results"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    reads: compliance_claude, compliance_gpt, compliance_gemini, review_structure, review_compliance, review_robustness, review_efficiency, review_prompts
+    writes: tournament_results
+    fallback_target: rework_feedback
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize all review panel findings and compliance matrices into tournament results.
+
+      ## Process
+      1. Read all review files from .ai/reviews/ (structure, compliance, robustness, efficiency, prompts)
+      2. Read all compliance matrices from .ai/candidates/*_compliance.md
+      3. Produce .ai/candidates/tournament_results.md containing:
+
+      ### Score Summary
+      | Dimension | Claude | GPT | Gemini |
+      |-----------|--------|-----|--------|
+      | Structure | X/10 | X/10 | X/10 |
+      | Compliance | X/10 | X/10 | X/10 |
+      | Robustness | X/10 | X/10 | X/10 |
+      | Efficiency | X/10 | X/10 | X/10 |
+      | Prompts | X/10 | X/10 | X/10 |
+      | **Total** | **X/50** | **X/50** | **X/50** |
+
+      ### Ranking
+      1st, 2nd, 3rd with reasoning.
+
+      ### Tensions
+      Where reviewers disagreed. Surface the tension — do not paper over it.
+
+      ### Synthesis Opportunities
+      Specific elements from non-winning candidates worth merging:
+      - "GPT's prompt for node X is clearer than Claude's"
+      - "Gemini's retry pattern on node Y is more robust"
+
+      ### Compliance Status
+      Which candidates have gaps? Which are fully compliant?
+
+      ### Recommendation
+      Make the call. You are the decision-maker here.
+      - If there is a clear winner (5+ point lead, no critical gaps): write `pick` to .ai/candidates/decision.txt
+      - If the top two are close or there are significant synthesis opportunities worth merging: write `merge` to .ai/candidates/decision.txt
+      - If all candidates have major compliance gaps or fundamental design flaws: write `rework` to .ai/candidates/decision.txt
+
+      You MUST write exactly one word (pick, merge, or rework) to .ai/candidates/decision.txt as your final action.
+
+  tool read_decision
+    label: "Read Tournament Decision"
+    timeout: 10s
+    command:
+      #!/bin/sh
+      set -eu
+      f=".ai/candidates/decision.txt"
+      if [ ! -f "$f" ]; then
+        printf 'merge'
+        exit 0
+      fi
+      decision=$(cat "$f" | tr -d '[:space:]')
+      case "$decision" in
+        pick|merge|rework) printf '%s' "$decision" ;;
+        *) printf 'merge' ;;
+      esac
+
+  agent copy_winner
+    label: "Copy Winner to Final"
+    fallback_target: final_validate
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Copy the tournament winner to .ai/candidates/final.dip.
+
+      ## Process
+      1. Read .ai/candidates/tournament_results.md to determine the winner
+      2. Copy .ai/candidates/{winner}.dip to .ai/candidates/final.dip
+      3. Apply any trivial fixes noted by reviewers (missing labels, lint warnings)
+      4. Do NOT make structural changes — the winner was already validated
+
+  agent merge_candidates
+    label: "Merge Best Elements"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    fallback_target: rework_feedback
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Active synthesis: take the winning candidate as base and incorporate the best elements from other candidates.
+
+      ## Process
+      1. Read .ai/candidates/tournament_results.md for:
+         - Which candidate won
+         - Synthesis opportunities (specific elements to incorporate)
+      2. Read all three .dip candidates
+      3. Start with the winner as the base
+      4. For each synthesis opportunity identified:
+         - Evaluate whether incorporating it improves the pipeline
+         - If yes, make the change while preserving structural validity
+      5. Write the merged result to .ai/candidates/final.dip
+
+      ## Rules
+      - Preserve structural validity at all times
+      - Every change must be justified by the synthesis opportunities
+      - Do not add elements not identified by the review panel
+      - Run dippin validate mentally after each change
+
+  tool validate_merge
+    label: "Validate Merged Output"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      printf '%s' "$result" > .ai/candidates/final_check.txt
+      if printf '%s' "$result" | grep -q 'validation passed'; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  agent fix_merge
+    label: "Fix Merged Output"
+    fallback_target: rework_feedback
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors introduced by the merge.
+
+      ## Dippin Edge Syntax (CRITICAL)
+      WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+      RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      Brackets in edges cause parse errors. Use keyword syntax only.
+
+      ## Process
+      1. Read .ai/candidates/final_check.txt for diagnostics
+      2. Read .ai/candidates/final.dip
+      3. Fix the minimum necessary
+      4. Write back to .ai/candidates/final.dip
+
+  human rework_feedback
+    label: "What needs to change? Provide specific feedback."
+    mode: freeform
+
+  tool rework_cleanup
+    label: "Clean Stale Artifacts"
+    timeout: 15s
+    command:
+      #!/bin/sh
+      set -eu
+      rm -rf .ai/candidates .ai/reviews .ai/simmer
+      mkdir -p .ai/candidates
+      printf 'cleaned'
+
+  agent rework_analysis
+    label: "Incorporate Rework Feedback"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    fallback_target: rework_feedback
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The human requested rework. Incorporate their feedback into the analysis.
+
+      ## Process
+      1. Read the human's feedback from context
+      2. Read docs/plans/dip_analysis.md
+      3. Update the analysis to reflect the feedback:
+         - Add new requirements if specified
+         - Modify architectural recommendations if needed
+         - Update the requirements checklist
+      4. Write updated analysis back to docs/plans/dip_analysis.md
+      5. Commit: git add -A && git commit -m 'docs(analysis): update analysis with rework feedback'
+
+  tool final_validate
+    label: "Final Validation Suite"
+    timeout: 2m
+    command:
+      #!/bin/sh
+      set -eu
+      f=".ai/candidates/final.dip"
+      validate_out=$(dippin validate "$f" 2>&1 || true)
+      if ! printf '%s' "$validate_out" | grep -q 'validation passed'; then
+        printf 'grade_F'
+        exit 0
+      fi
+      lint_out=$(dippin lint "$f" 2>&1 || true)
+      printf '%s' "$lint_out" > .ai/candidates/final_lint.txt
+      lint_warns=$(printf '%s' "$lint_out" | grep -c 'warning\[' || true)
+      error_warns=$(printf '%s' "$lint_out" | grep -c 'error\[' || true)
+      : "${lint_warns:=0}"
+      : "${error_warns:=0}"
+      if [ "$error_warns" -gt 0 ]; then
+        printf 'grade_F'
+      elif [ "$lint_warns" -lt 5 ]; then
+        printf 'grade_A'
+      elif [ "$lint_warns" -lt 15 ]; then
+        printf 'grade_B'
+      else
+        printf 'grade_C'
+      fi
+
+  agent final_fix
+    label: "Fix Final Issues"
+    fallback_target: simmer_judge
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      The final .dip file has lint warnings or doctor suggestions. Fix them.
+
+      ## Dippin Edge Syntax (CRITICAL)
+      WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+      RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      Brackets in edges cause parse errors. Use keyword syntax only.
+
+      ## Process
+      1. Run dippin lint .ai/candidates/final.dip and read output
+      2. Run dippin validate .ai/candidates/final.dip and read any errors
+      3. Fix each issue in .ai/candidates/final.dip
+      4. Focus on: missing timeouts, empty prompts, unused writes, missing fallbacks
+
+  agent simmer_judge
+    label: "Simmer Judge"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    auto_status: true
+    fallback_target: fresh_eyes
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Investigation-first judge. Evaluate the final .dip pipeline against quality criteria.
+
+      ## Investigation (do this BEFORE scoring)
+      1. Read the original spec file
+      2. Read docs/plans/dip_analysis.md
+      3. Read .ai/candidates/final.dip thoroughly
+      4. Read the compliance matrix for the winning candidate
+      5. Read .ai/candidates/tournament_results.md
+
+      ## Scoring Criteria (1-10 each)
+      - **Spec fidelity**: Does the pipeline do what the spec says? Every requirement addressed?
+      - **Prompt specificity**: Are prompts actionable with success criteria? Not vague?
+      - **Edge exhaustiveness**: Can execution get stuck? Missing fallbacks?
+      - **Error recovery**: Retry loops bounded? Fallback targets set? Goal gates on critical nodes?
+      - **TDD quality**: Is the test-first loop real or perfunctory? Tests before implementation?
+      - **Security depth**: Tech-stack-specific scan tool? OWASP-aware review agent?
+      - **Scenario testing**: Real dependencies? No mocks? Infrastructure setup?
+
+      ## Output
+      Write scores and reasoning to .ai/simmer/judge_round_N.md (increment N each round).
+
+      If ALL scores >= 8: STATUS: success
+      If ANY score < 8: STATUS: fail
+
+      When STATUS: fail, write ONE Actionable Side Information (ASI) to .ai/simmer/asi_round_N.md (same N).
+      This file MUST contain ONLY the improvement instruction — no scores, no reasoning.
+      The refiner reads only this file, not the judge file.
+
+      ASI must be specific:
+      - BAD: "improve prompts"
+      - GOOD: "Node build_feature has a vague prompt 'implement the feature' — add success criteria, expected artifacts, and the tech stack context from the analysis"
+
+      Also check for score regression: if any dimension scored lower than the previous round, note it and consider whether the previous ASI caused a regression.
+
+  agent simmer_refine
+    label: "Simmer Refine"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    fallback_target: fresh_eyes
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Apply the judge's ASI (Actionable Side Information) to improve the .dip file.
+
+      ## Process
+      1. Read the latest .ai/simmer/asi_round_N.md for the ASI (NOT the judge file)
+      2. Read .ai/candidates/final.dip
+      3. Make the MINIMUM change to address the ASI
+      4. Write the improved version back to .ai/candidates/final.dip
+
+      ## Rules
+      - You do NOT see scores. Only the ASI.
+      - Make one focused improvement, not scattered edits
+      - Preserve structural validity
+      - Do not add nodes/edges not implied by the ASI
+
+      ## Dippin Edge Syntax (CRITICAL)
+      When editing edges, use KEYWORD syntax, NOT bracket syntax:
+        WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      Brackets in edges will cause parse errors. This is the most common mistake.
+
+  tool simmer_revalidate
+    label: "Simmer Revalidate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      if printf '%s' "$result" | grep -q 'validation passed'; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  agent fresh_eyes
+    label: "Fresh-Eyes Review"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    fallback_target: publish_output
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Final sanity check. Re-read the .dip file from scratch as if seeing it for the first time.
+
+      Passing validation proves the .dip works as designed. Fresh-eyes proves the design is correct.
+
+      ## Systematic Checks
+      1. **Security**: Do tool commands have injection risks? Do non-routing tool scripts use set -eu? Do routing tools that must printf a value use if/then/else instead of set -e? Are API keys or secrets hardcoded in prompts?
+      2. **Logic errors**: Can edge conditions deadlock? Are there unreachable nodes the validator missed? Do restart loops have bounded retries?
+      3. **Spec fidelity**: Re-read the original spec one more time. Is anything missing that slipped through the compliance matrix?
+      4. **Prompt correctness**: Do prompts reference context variables (${ctx.*}) that upstream nodes actually produce? Are instructions contradictory?
+      5. **Operational safety**: Are tool timeouts realistic? Could any tool command cause data loss? Are fallback paths sensible?
+
+      ## Dippin Edge Syntax (CRITICAL)
+      When reviewing or editing edges, verify KEYWORD syntax, NOT bracket syntax:
+        WRONG: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+        RIGHT: `A -> B  when ctx.x = fail  restart: true  label: go`
+      If you see bracket syntax in edges, fix it. This causes parse errors.
+
+      ## Process
+      1. Read the original spec file
+      2. Read .ai/candidates/final.dip from top to bottom
+      3. For each check above, note any issues found
+      4. If issues found:
+         - Fix them directly in .ai/candidates/final.dip
+         - List what you fixed in .ai/fresh_eyes_report.md
+         - STATUS: fail (to trigger revalidation)
+      5. If clean:
+         - Write .ai/fresh_eyes_report.md confirming clean review
+         - STATUS: success
+
+  tool fresh_eyes_revalidate
+    label: "Fresh-Eyes Revalidate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      if printf '%s' "$result" | grep -q 'validation passed'; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  tool pre_publish_validate
+    label: "Pre-Publish Validation Gate"
+    timeout: 30s
+    command:
+      #!/bin/sh
+      set -eu
+      result=$(dippin validate .ai/candidates/final.dip 2>&1 || true)
+      printf '%s' "$result" > .ai/candidates/pre_publish_check.txt
+      if printf '%s' "$result" | grep -q 'validation passed'; then
+        printf 'valid'
+      else
+        printf 'errors'
+      fi
+
+  agent pre_publish_fix
+    label: "Fix Pre-Publish Errors"
+    fallback_target: publish_output
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Fix validation errors caught by the pre-publish gate.
+
+      ## Process
+      1. Read .ai/candidates/pre_publish_check.txt for diagnostics
+      2. Read .ai/candidates/final.dip
+      3. Fix the minimum necessary — typically bracket syntax on edges
+         The correct syntax is keyword-based: `A -> B when ctx.x = fail restart: true label: go`
+         NOT bracket-based: `A -> B [when ctx.x = fail] [restart: true] [label: go]`
+      4. Write back to .ai/candidates/final.dip
+
+  agent publish_output
+    label: "Publish Final Pipeline"
+    fallback_target: Done
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Copy the final .dip to the working directory root and commit.
+
+      ## Process
+      1. Read docs/plans/dip_analysis.md for the project name
+      2. Derive a filename: {project_name_snake_case}.dip
+      3. Copy .ai/candidates/final.dip to ./{filename}.dip
+      4. Write .ai/summary.md containing:
+         - Final dippin lint warning count
+         - Simmer judge scores (from latest .ai/simmer/judge_round_*.md)
+         - Fresh-eyes review result
+         - Compliance matrix summary
+         - Tournament results summary (winner, scores)
+         - Generation provenance (which model contributed what)
+      5. Commit:
+         git add ./{filename}.dip .ai/summary.md
+         git commit -m "feat: generate {filename}.dip from spec via multi-model tournament"
+
+  edges
+    Start -> find_spec
+    find_spec -> find_plan  when ctx.tool_stdout != no_spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found
+    find_plan -> analyze_spec
+    no_spec_exit -> Done
+    analyze_spec -> check_analysis
+    check_analysis -> identify_perspectives  when ctx.tool_stdout = analysis_ok
+    check_analysis -> analyze_spec  when ctx.tool_stdout = analysis_missing  restart: true
+    identify_perspectives -> gen_parallel
+    gen_parallel -> gen_claude
+    gen_parallel -> gen_gpt
+    gen_parallel -> gen_gemini
+    gen_claude -> gen_join
+    gen_gpt -> gen_join
+    gen_gemini -> gen_join
+    gen_join -> validate_all
+    validate_all -> compliance_parallel  when ctx.tool_stdout = all_valid
+    validate_all -> fix_claude  when ctx.tool_stdout = claude_errors
+    validate_all -> fix_gpt  when ctx.tool_stdout = gpt_errors
+    validate_all -> fix_gemini  when ctx.tool_stdout = gemini_errors
+    validate_all -> fix_all  when ctx.tool_stdout = multiple_errors
+    validate_all -> regen_missing  when ctx.tool_stdout = missing_candidates
+    fix_claude -> validate_all  restart: true
+    fix_gpt -> validate_all  restart: true
+    fix_gemini -> validate_all  restart: true
+    fix_all -> validate_all  restart: true
+    regen_missing -> validate_all  restart: true
+    compliance_parallel -> compliance_claude
+    compliance_parallel -> compliance_gpt
+    compliance_parallel -> compliance_gemini
+    compliance_claude -> compliance_join
+    compliance_gpt -> compliance_join
+    compliance_gemini -> compliance_join
+    compliance_join -> review_parallel
+    review_parallel -> review_structure
+    review_parallel -> review_compliance
+    review_parallel -> review_robustness
+    review_parallel -> review_efficiency
+    review_parallel -> review_prompts
+    review_structure -> review_join
+    review_compliance -> review_join
+    review_robustness -> review_join
+    review_efficiency -> review_join
+    review_prompts -> review_join
+    review_join -> synthesize_scores
+    synthesize_scores -> read_decision
+    read_decision -> copy_winner  when ctx.tool_stdout = pick
+    read_decision -> merge_candidates  when ctx.tool_stdout = merge
+    read_decision -> rework_feedback  when ctx.tool_stdout = rework
+    copy_winner -> final_validate
+    merge_candidates -> validate_merge
+    validate_merge -> fix_merge  when ctx.tool_stdout = errors
+    fix_merge -> validate_merge  restart: true
+    validate_merge -> final_validate  when ctx.tool_stdout = valid
+    rework_feedback -> rework_analysis
+    rework_analysis -> rework_cleanup
+    rework_cleanup -> gen_parallel  restart: true
+    final_validate -> final_fix  when ctx.tool_stdout = grade_C
+    final_validate -> final_fix  when ctx.tool_stdout = grade_F
+    final_fix -> final_validate  restart: true
+    final_validate -> simmer_judge  when ctx.tool_stdout = grade_A
+    final_validate -> simmer_judge  when ctx.tool_stdout = grade_B
+    simmer_judge -> fresh_eyes  when ctx.outcome = success
+    simmer_judge -> simmer_refine  when ctx.outcome = fail
+    simmer_refine -> simmer_revalidate
+    simmer_revalidate -> simmer_judge  when ctx.tool_stdout = valid  restart: true
+    simmer_revalidate -> simmer_refine  when ctx.tool_stdout = errors  restart: true
+    fresh_eyes -> pre_publish_validate  when ctx.outcome = success
+    fresh_eyes -> fresh_eyes_revalidate  when ctx.outcome = fail
+    fresh_eyes_revalidate -> fresh_eyes  when ctx.tool_stdout = valid  restart: true
+    fresh_eyes_revalidate -> fresh_eyes  when ctx.tool_stdout = errors  restart: true
+    pre_publish_validate -> publish_output  when ctx.tool_stdout = valid
+    pre_publish_validate -> pre_publish_fix  when ctx.tool_stdout = errors
+    pre_publish_fix -> pre_publish_validate  restart: true
+    publish_output -> Done

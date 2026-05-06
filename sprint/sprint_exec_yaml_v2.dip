@@ -1,0 +1,1019 @@
+# ABOUTME: Sprint execution pipeline v2 with manager agents (Plan, Review, Recovery) and mechanical safety gates.
+# ABOUTME: Adds pre-execution complexity checks, scope fence enforcement, cross-validation, and pre-commit audit to the sprint lifecycle.
+workflow SprintExecYamlV2
+  goal: "Execute the next incomplete sprint from .ai/ledger.yaml through implementation, validation, multi-model review, and completion. v2 adds PlanManager (pre-execution gate), ReviewManager (evidence synthesis), and RecoveryManager (failure triage) with dedicated journals and selective cross-reading."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 25
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Acknowledge that the sprint execution pipeline is starting. Report ready status.
+
+      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start. If you do anything else, the pipeline fails.
+
+  agent Exit
+    label: Exit
+    prompt:
+      The sprint execution pipeline is complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT run tests. Do NOT debug anything. Your ONLY job is to acknowledge completion. If prior nodes left work undone, that is not your problem — the pipeline will handle retries.
+
+  tool EnsureLedger
+    label: "Ensure Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      mkdir -p .ai .ai/drafts .ai/sprints
+      if [ ! -f .ai/ledger.yaml ]; then
+        now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        printf 'project:\n  name: "Unknown"\n  stack:\n    lang: null\n    runner: null\n    test: null\n    lint: null\n    build: null\n  created_at: "%s"\n\nsprints:\n  - id: "000"\n    title: "Bootstrap sprint"\n    status: planned\n    bootstrap: true\n    depends_on: []\n    complexity: low\n    created_at: "%s"\n    updated_at: "%s"\n    attempts: 0\n    total_cost: "0.00"\n' "$now" "$now" "$now" > .ai/ledger.yaml
+      fi
+      printf 'ledger-ready'
+
+  tool EnsureManagerJournals
+    label: "Ensure Manager Journals"
+    timeout: 10s
+    command:
+      set -eu
+      mkdir -p .ai/managers
+      for journal in plan-journal.md review-journal.md recovery-journal.md; do
+        if [ ! -f ".ai/managers/$journal" ]; then
+          name=$(printf '%s' "$journal" | sed 's/-journal.md//' | sed 's/./\U&/')
+          printf '# %s Journal\n' "$name" > ".ai/managers/$journal"
+        fi
+      done
+      printf 'journals-ready'
+
+  tool CheckYq
+    label: "Check yq"
+    timeout: 5s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 0
+      fi
+      printf 'yq-ok'
+
+  agent YqMissing
+    label: "yq Not Found"
+    prompt:
+      The yq YAML processor is required but not installed.
+
+      Install it:
+        macOS:  brew install yq
+        Linux:  snap install yq  OR  wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+      After installing, re-run the pipeline.
+
+  tool FindNextSprint
+    label: "Find Next Sprint"
+    timeout: 15s
+    command:
+      set -eu
+      # If the runner already wrote a target, trust it
+      if [ -f .ai/current_sprint_id.txt ]; then
+        existing=$(cat .ai/current_sprint_id.txt)
+        if [ -n "$existing" ]; then
+          status=$(yq ".sprints[] | select(.id == \"$existing\") | .status" .ai/ledger.yaml 2>/dev/null)
+          if [ "$status" != "completed" ] && [ "$status" != "skipped" ]; then
+            printf 'found-%s' "$existing"
+            exit 0
+          fi
+        fi
+      fi
+      # Otherwise find the first eligible sprint with all deps met
+      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
+      if [ -z "$candidates" ]; then
+        printf 'all-done'
+        exit 0
+      fi
+      for cid in $candidates; do
+        deps=$(yq ".sprints[] | select(.id == \"$cid\") | .depends_on[]?" .ai/ledger.yaml 2>/dev/null)
+        if [ -z "$deps" ]; then
+          printf '%s' "$cid" > .ai/current_sprint_id.txt
+          printf 'found-%s' "$cid"
+          exit 0
+        fi
+        all_met=true
+        for dep in $deps; do
+          dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
+          if [ "$dep_status" != "completed" ]; then
+            all_met=false
+            break
+          fi
+        done
+        if [ "$all_met" = "true" ]; then
+          printf '%s' "$cid" > .ai/current_sprint_id.txt
+          printf 'found-%s' "$cid"
+          exit 0
+        fi
+      done
+      printf 'deps-blocked'
+
+  tool SetCurrentSprint
+    label: "Set Current Sprint"
+    timeout: 30s
+    command:
+      set -eu
+      if [ -f .ai/current_sprint_id.txt ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        if [ -n "$target" ]; then
+          printf 'current-%s' "$target"
+          exit 0
+        fi
+      fi
+      printf 'all-done'
+
+  agent ReadSprint
+    label: "Read Sprint"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read BOTH:
+      1. .ai/sprints/SPRINT-<id>.yaml — the structured contract (scope fence, validation commands, artifacts, dependencies, failure history)
+      2. .ai/sprints/SPRINT-<id>.md — the narrative description
+
+      Summarize: (1) what the sprint requires, (2) which DoD checklist items are done vs pending, (3) expected artifacts, (4) any prior failure history from the YAML.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT implement anything. Do NOT install dependencies. Your ONLY job is to read and summarize the sprint documents.
+
+  tool PreflightComplexity
+    label: "Preflight Complexity Check"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sf" ]; then printf 'preflight-ok'; exit 0; fi
+      is_bootstrap=$(yq '.bootstrap // false' "$sf")
+      if [ "$is_bootstrap" = "true" ]; then printf 'preflight-ok'; exit 0; fi
+      dod_count=$(yq '.dod | length' "$sf" 2>/dev/null || echo 0)
+      complexity=$(yq '.complexity // "low"' "$sf")
+      creates=$(yq '.artifacts.creates | length' "$sf" 2>/dev/null || echo 0)
+      modifies=$(yq '.artifacts.modifies | length' "$sf" 2>/dev/null || echo 0)
+      artifact_count=$((creates + modifies))
+      if [ "$complexity" = "high" ] && [ "$dod_count" -gt 8 ]; then
+        printf 'PREFLIGHT_FAIL: %s DoD items at high complexity (max 8 for high-complexity sprints)\n' "$dod_count"
+        printf 'Recommendation: redecompose this sprint into smaller units'
+        exit 1
+      fi
+      if [ "$complexity" = "medium" ] && [ "$dod_count" -gt 7 ]; then
+        printf 'PREFLIGHT_FAIL: %s DoD items at medium complexity (max 7 for medium-complexity sprints)\n' "$dod_count"
+        printf 'Recommendation: redecompose this sprint into smaller units'
+        exit 1
+      fi
+      if [ "$artifact_count" -gt 6 ]; then
+        printf 'PREFLIGHT_FAIL: %s total artifacts (max 6)\n' "$artifact_count"
+        printf 'Recommendation: redecompose this sprint into smaller units'
+        exit 1
+      fi
+      printf 'preflight-ok'
+
+  agent PlanManager
+    label: "Plan Manager"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the Plan Manager for sprint execution. Your job is to assess whether the current sprint is ready to execute and flag risks for the implementation agent.
+
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read:
+      1. .ai/sprints/SPRINT-<id>.yaml — the structured contract
+      2. .ai/sprints/SPRINT-<id>.md — the narrative description
+      3. .ai/managers/recovery-journal.md — check if RecoveryManager flagged risks for sprints related to this one (scan dependency chain)
+      4. .ai/ledger.yaml — check the last 3-5 sprint outcomes for patterns (repeated failures, skipped deps)
+
+      ## Assessment
+
+      For each item in entry_preconditions.files_must_exist, verify the file actually exists on disk. If any are missing, this is a HOLD.
+
+      Check if any sprint in depends_on has status "failed" or "skipped" in the ledger — if so, this sprint may be building on an unstable foundation. Flag it.
+
+      Check RecoveryManager's journal for entries on dependency sprints — did any of them fail with "dependency failure" root cause? If so, the gaps may cascade into this sprint.
+
+      ## Output
+
+      Write a plan brief to .ai/sprints/SPRINT-<id>-plan-brief.md with:
+      - Go/Hold recommendation
+      - Risk flags (specific, citing sprint IDs and file paths)
+      - Dependency health assessment
+      - Hints for ImplementSprint (what to watch out for)
+
+      Then append a section to .ai/managers/plan-journal.md using this format:
+
+      ## Sprint <id> — <title>
+      **Date:** <current ISO timestamp>
+      **Recommendation:** GO | HOLD
+      **Risk flags:** <list or "None">
+      **Dependency check:** <which preconditions verified>
+      **Recovery context:** <relevant RecoveryManager findings or "None">
+      **Notes:** <free-form observations>
+
+      After your analysis, end your response with exactly one of:
+        STATUS: success
+        STATUS: fail
+
+      Return STATUS: success if the sprint should proceed (GO).
+      Return STATUS: fail if the sprint should be deferred (HOLD).
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT implement anything. Do NOT modify the sprint YAML, ledger, or any source files. Your ONLY job is to assess readiness and write the brief and journal entry.
+
+  tool CheckBootstrap
+    label: "Check Bootstrap"
+    timeout: 5s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sprint_yaml" ]; then
+        printf 'bootstrap-false'
+        exit 0
+      fi
+      is_bootstrap=$(yq '.bootstrap // false' "$sprint_yaml")
+      if [ "$is_bootstrap" = "true" ]; then
+        printf 'bootstrap-true'
+      else
+        printf 'bootstrap-false'
+      fi
+
+  tool MarkInProgress
+    label: "Mark In Progress"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      # Guard: never downgrade a completed sprint back to in_progress
+      current_status=$(yq ".sprints[] | select(.id == \"$target\") | .status" .ai/ledger.yaml 2>/dev/null)
+      if [ "$current_status" = "completed" ]; then
+        printf 'already-completed-%s' "$target"
+        exit 0
+      fi
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      attempts=$(yq ".sprints[] | select(.id == \"$target\") | (.attempts // 0)" .ai/ledger.yaml)
+      attempts=$((attempts + 1))
+      printf '%s' "$now" > .ai/current_attempt_started_at.txt
+      printf '%s' "$attempts" > .ai/current_attempt_number.txt
+      yq -i "(.sprints[] | select(.id == \"$target\")).status = \"in_progress\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\" | (.sprints[] | select(.id == \"$target\")).attempts = $attempts" .ai/ledger.yaml
+      if [ -f ".ai/sprints/SPRINT-${target}.yaml" ]; then
+        yq -i ".status = \"in_progress\" | .history.attempts = (.history.attempts // [])" ".ai/sprints/SPRINT-${target}.yaml"
+      fi
+      printf 'in_progress-%s-attempt-%s' "$target" "$attempts"
+
+  tool SnapshotLedger
+    label: "Snapshot Ledger"
+    timeout: 5s
+    command:
+      set -eu
+      cp .ai/ledger.yaml .ai/ledger-snapshot.yaml
+      printf 'snapshot-saved'
+
+  agent ImplementSprint
+    label: "Implement Sprint"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    fidelity: summary:high
+    prompt:
+      Read .ai/current_sprint_id.txt to identify the target sprint.
+
+      Then read BOTH sprint documents:
+      1. .ai/sprints/SPRINT-<id>.yaml — structured contract
+      2. .ai/sprints/SPRINT-<id>.md — narrative description
+
+      Also read .ai/ledger.yaml for the project tech stack under `project.stack`.
+
+      ## Before writing any code
+
+      1. Check `entry_preconditions.files_must_exist` from the YAML — verify each file exists. If any are missing, something is wrong with prior sprints.
+      2. Check `history.attempts` from the YAML — if prior attempts failed, read the failure reasons and avoid repeating the same mistakes.
+      3. Check what already exists on disk. If prior implementation work is present from a previous attempt, continue from where it left off — do NOT start over or rewrite existing files that already work.
+
+      ## During implementation
+
+      4. Follow the `dod` checklist items from the YAML as your task list.
+      5. Use `validation.commands` from the YAML to self-test as you go.
+      6. Respect `scope_fence.off_limits` — do NOT do anything listed there.
+      7. If `scope_fence.touch_only` is present, only modify files in that list (plus new files in `artifacts.creates`).
+
+      ## After implementation
+
+      8. Run each command in `validation.commands`. All must pass.
+      9. Update the sprint .md checklist with completed items.
+      10. Provide a concrete summary of changes and validation evidence.
+
+      HARD CONSTRAINT: Implement ONLY the current sprint. Do NOT implement future sprints. Do NOT modify .ai/ledger.yaml. Do NOT mark sprints as completed — that is handled by a separate pipeline node. Do NOT read .next/, node_modules/, dist/, build/, or other generated directories — they waste your turn budget. If you finish early, stop and report what you did.
+
+  tool CheckLedgerIntegrity
+    label: "Check Ledger Integrity"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger-snapshot.yaml ]; then
+        printf 'no-snapshot-skipping'
+        exit 0
+      fi
+      target=$(cat .ai/current_sprint_id.txt)
+      before=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger-snapshot.yaml | sort)
+      after=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger.yaml | sort)
+      if [ "$before" != "$after" ]; then
+        printf 'LEDGER_TAMPERED — agent modified non-target sprints:\n'
+        printf 'before:\n%s\n' "$before"
+        printf 'after:\n%s\n' "$after"
+        cp .ai/ledger-snapshot.yaml .ai/ledger.yaml
+        printf 'Ledger restored from snapshot.\n'
+        rm -f .ai/ledger-snapshot.yaml
+        exit 1
+      fi
+      rm -f .ai/implement-resume-count.txt
+      printf 'ledger-ok'
+
+  tool CheckScopeFence
+    label: "Check Scope Fence"
+    timeout: 15s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sf" ]; then printf 'scope-ok'; exit 0; fi
+      # Compare ledger against the pre-implementation snapshot to detect
+      # agent-introduced changes (not pipeline tool changes like MarkInProgress).
+      count=$(yq '.scope_fence.off_limits | length' "$sf" 2>/dev/null || echo 0)
+      if [ "$count" -eq 0 ]; then printf 'scope-ok'; exit 0; fi
+      violations=""
+      i=0
+      while [ "$i" -lt "$count" ]; do
+        entry=$(yq ".scope_fence.off_limits[$i]" "$sf")
+        case "$entry" in
+          "do not modify "*)
+            file=$(printf '%s' "$entry" | sed 's/^do not modify //')
+            if [ -f ".ai/ledger-snapshot.yaml" ] && [ "$file" = ".ai/ledger.yaml" ]; then
+              # For ledger specifically, compare non-target sprint statuses
+              # against the snapshot (same logic as CheckLedgerIntegrity but
+              # also catches content edits the agent should not have made).
+              snap_hash=$(md5sum .ai/ledger-snapshot.yaml 2>/dev/null | cut -d' ' -f1 || true)
+              curr_hash=$(md5sum .ai/ledger.yaml 2>/dev/null | cut -d' ' -f1 || true)
+              if [ "$snap_hash" != "$curr_hash" ]; then
+                violations="${violations} ${file}"
+              fi
+            elif git diff HEAD --name-only 2>/dev/null | grep -qF "$file"; then
+              violations="${violations} ${file}"
+            fi
+            ;;
+        esac
+        i=$((i + 1))
+      done
+      if [ -n "$violations" ]; then
+        printf 'SCOPE_VIOLATION: modified off-limits files:%s\n' "$violations"
+        printf 'The implementation agent must undo these changes before proceeding.'
+        exit 1
+      fi
+      printf 'scope-ok'
+
+  tool ResumeCheck
+    label: "Resume Check"
+    timeout: 10s
+    command:
+      set -eu
+      if [ -f .ai/ledger-snapshot.yaml ]; then
+        target=$(cat .ai/current_sprint_id.txt)
+        before=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger-snapshot.yaml | sort)
+        after=$(yq ".sprints[] | select(.id != \"$target\") | .id + \"=\" + .status" .ai/ledger.yaml | sort)
+        if [ "$before" != "$after" ]; then
+          cp .ai/ledger-snapshot.yaml .ai/ledger.yaml
+          rm -f .ai/ledger-snapshot.yaml .ai/implement-resume-count.txt
+          printf 'ledger-tampered'
+          exit 1
+        fi
+      fi
+      count=0
+      if [ -f .ai/implement-resume-count.txt ]; then
+        count=$(cat .ai/implement-resume-count.txt)
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > .ai/implement-resume-count.txt
+      if [ "$count" -ge 3 ]; then
+        rm -f .ai/implement-resume-count.txt .ai/ledger-snapshot.yaml
+        printf 'max-resumes-reached-%s' "$count"
+        exit 1
+      fi
+      cp .ai/ledger.yaml .ai/ledger-snapshot.yaml
+      printf 'resume-%s' "$count"
+
+  tool ValidateBuild
+    label: "Validate Build and Tests"
+    timeout: 300s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sprint_yaml" ] && yq -e '.validation.commands' "$sprint_yaml" >/dev/null 2>&1; then
+        count=$(yq '.validation.commands | length' "$sprint_yaml")
+        i=0
+        while [ "$i" -lt "$count" ]; do
+          cmd_field=$(yq ".validation.commands[$i].cmd // \"\"" "$sprint_yaml" 2>/dev/null)
+          if [ -n "$cmd_field" ] && [ "$cmd_field" != "null" ]; then
+            cmd="$cmd_field"
+            expect=$(yq ".validation.commands[$i].expect // \"exit_0\"" "$sprint_yaml")
+          else
+            cmd=$(yq ".validation.commands[$i]" "$sprint_yaml")
+            expect="exit_0"
+          fi
+          printf '=== Validation %s/%s ===\n' "$((i+1))" "$count"
+          printf 'cmd: %s\n' "$cmd"
+          if [ "$expect" = "exit_0" ]; then
+            sh -c "$cmd" > /tmp/sprint-validate.log 2>&1 || { cat /tmp/sprint-validate.log; exit 1; }
+          elif printf '%s' "$expect" | grep -qE '^coverage >= [0-9]+%$'; then
+            threshold=$(printf '%s' "$expect" | sed 's/coverage >= //;s/%//')
+            sh -c "$cmd" > /tmp/sprint-validate.log 2>&1 || true
+            actual=$(grep -oE 'coverage: [0-9]+\.[0-9]+%' /tmp/sprint-validate.log | tail -1 | sed 's/coverage: //;s/%//')
+            if [ -z "$actual" ]; then
+              printf 'Could not parse coverage from output\n'
+              cat /tmp/sprint-validate.log
+              exit 1
+            fi
+            passes=$(awk "BEGIN {print ($actual >= $threshold) ? 1 : 0}")
+            if [ "$passes" -ne 1 ]; then
+              printf 'Coverage %.1f%% is below threshold %s%%\n' "$actual" "$threshold"
+              exit 1
+            fi
+            printf 'Coverage %.1f%% meets threshold %s%%\n' "$actual" "$threshold"
+          else
+            sh -c "$cmd" > /tmp/sprint-validate.log 2>&1 || true
+            if ! grep -q "$expect" /tmp/sprint-validate.log; then
+              printf 'Expected output containing: %s\n' "$expect"
+              printf 'Got:\n'
+              cat /tmp/sprint-validate.log
+              exit 1
+            fi
+          fi
+          printf 'PASS\n'
+          i=$((i+1))
+        done
+        printf 'validation-pass-yaml'
+        exit 0
+      fi
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        uv run ruff check . >/tmp/sprint-lint.log 2>&1 || { cat /tmp/sprint-lint.log; exit 1; }
+        printf 'validation-pass-python'
+        exit 0
+      fi
+      if [ -f package.json ]; then
+        npm test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-node'
+        exit 0
+      fi
+      if [ -f Package.swift ]; then
+        swift build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        swift test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-swift'
+        exit 0
+      fi
+      if [ -f Cargo.toml ]; then
+        cargo build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        cargo test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-rust'
+        exit 0
+      fi
+      if [ -f go.mod ]; then
+        go build ./... >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        go test ./... >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-go'
+        exit 0
+      fi
+      printf 'validation-pass-no-known-build-system'
+
+  tool CrossValidation
+    label: "Cross-Validation (Full Suite)"
+    timeout: 300s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      complexity=$(yq '.complexity // "low"' "$sf" 2>/dev/null || echo "low")
+      if [ "$complexity" != "high" ]; then
+        printf 'cross-validation-skip'
+        exit 0
+      fi
+      if [ -f go.mod ]; then
+        go build ./... > /tmp/cross-validate.log 2>&1 || { printf 'CROSS_VALIDATION_FAIL: full build failed\n'; cat /tmp/cross-validate.log; exit 1; }
+        go test ./... > /tmp/cross-validate.log 2>&1 || { printf 'CROSS_VALIDATION_FAIL: full test suite failed\n'; cat /tmp/cross-validate.log; exit 1; }
+      elif [ -f pyproject.toml ]; then
+        uv run pytest -v > /tmp/cross-validate.log 2>&1 || { printf 'CROSS_VALIDATION_FAIL: full test suite failed\n'; cat /tmp/cross-validate.log; exit 1; }
+      elif [ -f package.json ]; then
+        npm test > /tmp/cross-validate.log 2>&1 || { printf 'CROSS_VALIDATION_FAIL: full test suite failed\n'; cat /tmp/cross-validate.log; exit 1; }
+      elif [ -f Cargo.toml ]; then
+        cargo test > /tmp/cross-validate.log 2>&1 || { printf 'CROSS_VALIDATION_FAIL: full test suite failed\n'; cat /tmp/cross-validate.log; exit 1; }
+      elif [ -f Package.swift ]; then
+        swift test > /tmp/cross-validate.log 2>&1 || { printf 'CROSS_VALIDATION_FAIL: full test suite failed\n'; cat /tmp/cross-validate.log; exit 1; }
+      fi
+      printf 'cross-validation-pass'
+
+  tool PreCommitAudit
+    label: "Pre-Commit Audit"
+    timeout: 15s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sf" ]; then rm -f .ai/ledger-snapshot.yaml; printf 'audit-clean'; exit 0; fi
+      reverted=""
+      count=$(yq '.scope_fence.off_limits | length' "$sf" 2>/dev/null || echo 0)
+      i=0
+      while [ "$i" -lt "$count" ]; do
+        entry=$(yq ".scope_fence.off_limits[$i]" "$sf")
+        case "$entry" in
+          "do not modify "*)
+            file=$(printf '%s' "$entry" | sed 's/^do not modify //')
+            if [ "$file" = ".ai/ledger.yaml" ] && [ -f .ai/ledger-snapshot.yaml ]; then
+              # Restore ledger to pre-implementation state (preserves pipeline
+              # tool changes like MarkInProgress, removes agent-introduced edits)
+              snap_hash=$(md5sum .ai/ledger-snapshot.yaml 2>/dev/null | cut -d' ' -f1 || true)
+              curr_hash=$(md5sum .ai/ledger.yaml 2>/dev/null | cut -d' ' -f1 || true)
+              if [ "$snap_hash" != "$curr_hash" ]; then
+                cp .ai/ledger-snapshot.yaml .ai/ledger.yaml
+                reverted="${reverted} ${file}"
+              fi
+            elif git diff HEAD --name-only 2>/dev/null | grep -qF "$file"; then
+              git checkout HEAD -- "$file" 2>/dev/null || true
+              reverted="${reverted} ${file}"
+            fi
+            ;;
+        esac
+        i=$((i + 1))
+      done
+      rm -f .ai/ledger-snapshot.yaml
+      if [ -n "$reverted" ]; then
+        printf 'audit-reverted:%s' "$reverted"
+      else
+        printf 'audit-clean'
+      fi
+
+  agent CommitSprintWork
+    label: "Commit Sprint Work"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Prepare and execute a clean commit for sprint implementation changes.
+
+      Read .ai/current_sprint_id.txt, then read the sprint YAML at .ai/sprints/SPRINT-<id>.yaml to find the expected files under `artifacts.creates` and `artifacts.modifies`.
+
+      1. First, stage the files listed in the sprint YAML artifacts, plus any test files or config files they depend on
+      2. Then, run `git status --short` and stage ALL remaining modified tracked files (lines starting with " M"). The review gate checks committed code — anything left uncommitted will cause a review failure.
+      3. Do NOT stage untracked files in .next/, node_modules/, dist/, build/, .tracker/, or other generated directories
+      4. If there are no staged/unstaged changes, report that no commit was needed
+      5. Write a concise conventional commit message
+      6. Report the commit hash in your summary
+
+      IMPORTANT: The review gate will fail if ANY implementation code remains uncommitted. It is critical to commit all modified source files, not just those listed in the artifact spec. The artifact list is a minimum, not an exhaustive list.
+
+      HARD CONSTRAINT: Do NOT read large generated files. Do NOT explore the full project tree. Stage specific files, commit, done.
+
+  tool ValidateDoD
+    label: "Validate DoD"
+    timeout: 60s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sf" ]; then
+        printf 'dod-pass'
+        exit 0
+      fi
+      missing=""
+      for artifact in $(yq '.artifacts.creates[].path' "$sf" 2>/dev/null); do
+        if [ ! -e "$artifact" ]; then
+          missing="${missing} ${artifact}"
+        fi
+      done
+      if [ -n "$missing" ]; then
+        printf 'dod-fail-missing:%s' "$missing"
+        exit 0
+      fi
+      fail_cmd=""
+      for idx in $(yq '.validation.commands | length' "$sf" 2>/dev/null | xargs seq 0 2>/dev/null | head -20); do
+        cmd=$(yq ".validation.commands[$idx].cmd" "$sf" 2>/dev/null)
+        expect=$(yq ".validation.commands[$idx].expect" "$sf" 2>/dev/null)
+        if [ "$cmd" = "null" ] || [ -z "$cmd" ]; then continue; fi
+        case "$cmd" in *curl*) continue ;; esac
+        if [ "$expect" = "exit_0" ]; then
+          if ! eval "$cmd" >/dev/null 2>&1; then
+            fail_cmd="$cmd"
+            break
+          fi
+        fi
+      done
+      if [ -n "$fail_cmd" ]; then
+        printf 'dod-fail-cmd:%s' "$fail_cmd"
+        exit 0
+      fi
+      printf 'dod-pass'
+
+  tool CompleteSprint
+    label: "Complete Sprint"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      started_at=$(cat .ai/current_attempt_started_at.txt 2>/dev/null || printf '%s' "$now")
+      attempt_no=$(cat .ai/current_attempt_number.txt 2>/dev/null || printf '1')
+      run_id=$(date -u +%Y%m%dT%H%M%SZ)
+      yq -i "(.sprints[] | select(.id == \"$target\")).status = \"completed\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sf" ]; then
+        hist_type=$(yq '.history | type' "$sf" 2>/dev/null || printf 'null')
+        if [ "$hist_type" = "!!seq" ]; then
+          yq -i '.history = {"attempts": []}' "$sf"
+        elif [ "$hist_type" = "null" ] || [ "$hist_type" = "" ]; then
+          yq -i '.history.attempts = []' "$sf"
+        else
+          has_att=$(yq '.history.attempts | type' "$sf" 2>/dev/null || printf 'null')
+          if [ "$has_att" != "!!seq" ]; then
+            yq -i '.history.attempts = []' "$sf"
+          fi
+        fi
+        yq -i ".status = \"completed\" | .history.attempts += [{\"date\": \"$now\", \"run_id\": \"$run_id\", \"outcome\": \"success\", \"reason\": \"completed\", \"attempt\": $attempt_no, \"started_at\": \"$started_at\"}]" "$sf"
+      fi
+      rm -f .ai/current_attempt_started_at.txt .ai/current_attempt_number.txt
+      printf 'completed-%s' "$target"
+
+  tool MarkFailed
+    label: "Mark Failed"
+    timeout: 30s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      started_at=$(cat .ai/current_attempt_started_at.txt 2>/dev/null || printf '%s' "$now")
+      attempt_no=$(cat .ai/current_attempt_number.txt 2>/dev/null || printf '1')
+      run_id=$(date -u +%Y%m%dT%H%M%SZ)
+      yq -i "(.sprints[] | select(.id == \"$target\")).status = \"failed\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
+      sf=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sf" ]; then
+        hist_type=$(yq '.history | type' "$sf" 2>/dev/null || printf 'null')
+        if [ "$hist_type" = "!!seq" ]; then
+          yq -i '.history = {"attempts": []}' "$sf"
+        elif [ "$hist_type" = "null" ] || [ "$hist_type" = "" ]; then
+          yq -i '.history.attempts = []' "$sf"
+        else
+          has_att=$(yq '.history.attempts | type' "$sf" 2>/dev/null || printf 'null')
+          if [ "$has_att" != "!!seq" ]; then
+            yq -i '.history.attempts = []' "$sf"
+          fi
+        fi
+        yq -i ".status = \"failed\" | .history.attempts += [{\"date\": \"$now\", \"run_id\": \"$run_id\", \"outcome\": \"fail\", \"reason\": \"pipeline_failed\", \"attempt\": $attempt_no, \"started_at\": \"$started_at\"}]" "$sf"
+      fi
+      rm -f .ai/current_attempt_started_at.txt .ai/current_attempt_number.txt
+      printf 'failed-%s' "$target"
+
+  human HumanBootstrapGate
+    label: "Bootstrap Failed — Human Intervention"
+    mode: choice
+
+  agent RecoveryManager
+    label: "Recovery Manager"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      You are the Recovery Manager for sprint execution. Your job is to perform root-cause analysis on a failed sprint and recommend a recovery strategy.
+
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read:
+      1. .ai/sprints/SPRINT-<id>.yaml — check history.attempts for prior failure patterns
+      2. .ai/sprints/SPRINT-<id>.md — the narrative description
+      3. .ai/managers/plan-journal.md — find PlanManager's entry for this sprint. Were its risk flags the cause?
+      4. .ai/ledger.yaml — check this sprint's attempt count and dependency sprint outcomes
+
+      ## Root Cause Analysis
+
+      Classify the failure into one of three categories:
+      - **Implementation failure:** The code was wrong but the sprint scope is sound. A retry with better implementation guidance could succeed.
+      - **Scope failure:** The sprint is too large, too vague, or mixes unrelated concerns. It needs to be broken into smaller sub-sprints via re-decomposition.
+      - **Dependency failure:** A prior sprint left gaps (missing APIs, incomplete types, broken tests) that make this sprint impossible as-written.
+
+      ## Signals for REDECOMPOSE
+
+      Recommend redecomposition when:
+      - The sprint has failed 2+ attempts with different root causes each time (scope is too broad)
+      - The sprint touches more than 3 subsystems
+      - The sprint DoD has more than 10 items
+      - Multiple reviewers flagged "sprint is too large" or "mixed concerns"
+
+      ## Output
+
+      Write a recovery analysis to .ai/sprints/SPRINT-<id>-recovery-analysis.md with:
+      - Root cause category (implementation / scope / dependency)
+      - Specific failure detail
+      - Whether PlanManager's risk flags predicted this
+      - Recommendation: RETRY, REDECOMPOSE, or ABANDON
+      - If REDECOMPOSE: write .ai/redecompose-request.yaml with this format:
+        mode: redecompose
+        failed_sprint_id: "<id>"
+        failed_sprint_title: "<title>"
+        scope: "<original scope from sprint YAML>"
+        failure_reason: "<your root cause analysis>"
+        recovery_recommendation: "<how to split>"
+        depends_on_from_original: [<dep list from sprint YAML>]
+        original_dependents: [<dependents list from sprint YAML>]
+
+      Then append a section to .ai/managers/recovery-journal.md using this format:
+
+      ## Sprint <id> — <title>
+      **Date:** <current ISO timestamp>
+      **Root cause:** implementation | scope | dependency
+      **Failure detail:** <specific description>
+      **PlanManager alignment:** <did risk flags predict this?>
+      **Recommendation:** RETRY | REDECOMPOSE | ABANDON
+      **Recovery notes:** <what should change>
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT fix the implementation. Do NOT modify the sprint YAML status or ledger. Your ONLY job is to analyze and recommend. The runner pipeline handles the actual retry/redecompose/abandon decision.
+
+  agent FailureSummary
+    label: "Failure Summary"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Summarize why sprint execution failed, what remains unresolved, and concrete next steps for recovery.
+
+  parallel ReviewParallel -> ReviewClaude, ReviewCodex, ReviewGemini
+
+  agent ReviewClaude
+    label: "Claude Review"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Review sprint execution thoroughly: sprint doc checklist completion, implementation correctness, and validation evidence. Return clear PASS/FAIL reasoning and required fixes.
+
+  agent ReviewCodex
+    label: "Codex Review"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Review sprint execution for implementation quality, regression risk, and checklist completeness. Return clear PASS/FAIL reasoning and required fixes.
+
+  agent ReviewGemini
+    label: "Gemini Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Review sprint execution for delivery robustness, test coverage, and checklist completeness. Return clear PASS/FAIL reasoning and required fixes.
+
+  fan_in ReviewsJoin <- ReviewClaude, ReviewCodex, ReviewGemini
+
+  parallel CritiquesParallel -> CritiqueClaudeOnCodex, CritiqueClaudeOnGemini, CritiqueCodexOnClaude, CritiqueCodexOnGemini, CritiqueGeminiOnClaude, CritiqueGeminiOnCodex
+
+  agent CritiqueClaudeOnCodex
+    label: "Claude Critique of Codex Review"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Critique the Codex review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueClaudeOnGemini
+    label: "Claude Critique of Gemini Review"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Critique the Gemini review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueCodexOnClaude
+    label: "Codex Critique of Claude Review"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Critique the Claude review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueCodexOnGemini
+    label: "Codex Critique of Gemini Review"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      Critique the Gemini review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueGeminiOnClaude
+    label: "Gemini Critique of Claude Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Critique the Claude review for missing checks, weak evidence, or mistaken conclusions.
+
+  agent CritiqueGeminiOnCodex
+    label: "Gemini Critique of Codex Review"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    prompt:
+      Critique the Codex review for missing checks, weak evidence, or mistaken conclusions.
+
+  fan_in CritiquesJoin <- CritiqueClaudeOnCodex, CritiqueClaudeOnGemini, CritiqueCodexOnClaude, CritiqueCodexOnGemini, CritiqueGeminiOnClaude, CritiqueGeminiOnCodex
+
+  agent ReviewManager
+    label: "Review Manager"
+    model: gpt-5.5
+    provider: openai
+    reasoning_effort: high
+    prompt:
+      You are the Review Manager for sprint execution. Your job is to synthesize the 3 independent reviews and 6 cross-critiques into a structured evidence brief for the final verdict agent.
+
+      Read .ai/current_sprint_id.txt to get the sprint ID. Then read:
+      1. .ai/managers/plan-journal.md — find the entry for this sprint to see what PlanManager flagged as risks
+      2. The review and critique outputs from the current pipeline run (available in your context)
+
+      ## Synthesis
+
+      Organize the evidence into:
+      - **Agreements:** What all 3 reviewers agree on (pass or fail items)
+      - **Disagreements:** Where reviewers diverge, and which side has stronger evidence (cite specific code, test output, or DoD items)
+      - **Scope fence violations:** Did any reviewer flag work outside scope_fence.off_limits?
+      - **PlanManager risk check:** Did any risks flagged by PlanManager actually materialize? List each flagged risk and whether it was confirmed or not.
+      - **Evidence quality:** Are the reviews thorough or superficial? Did critiques add substance or just agree?
+
+      ## Output
+
+      Write a review brief to .ai/sprints/SPRINT-<id>-review-brief.md with the synthesis above.
+
+      Then append a section to .ai/managers/review-journal.md using this format:
+
+      ## Sprint <id> — <title>
+      **Date:** <current ISO timestamp>
+      **Reviewer consensus:** PASS | MIXED | FAIL
+      **Key agreements:** <bullet list>
+      **Key disagreements:** <bullet list with evidence assessment>
+      **PlanManager risk check:** <which flagged risks materialized>
+      **Scope fence violations:** <any detected, or "None">
+      **Evidence quality:** <assessment>
+
+      HARD CONSTRAINT: Do NOT render a verdict. Do NOT write STATUS: success or STATUS: fail. Do NOT write code. Do NOT modify any source files. Your ONLY job is to organize evidence for the ReviewAnalysis agent.
+
+  agent ReviewAnalysis
+    label: "Review Analysis"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    max_retries: 3
+    retry_target: ImplementSprint
+    fallback_target: MarkFailed
+    prompt:
+      Synthesize all reviews and critiques into one verdict.
+
+      After your analysis, you MUST end your response with exactly one of these lines (no other text after it):
+        STATUS: success
+        STATUS: fail
+
+      Return "STATUS: success" ONLY if ALL of these are true:
+        1. All validation commands in the sprint YAML pass on committed code
+        2. Every item in the Definition of Done checklist is verifiably met
+        3. No reviewer identified material defects that remain unfixed
+        4. Code is committed to git (not just in the working tree)
+
+      Return "STATUS: fail" if ANY of these are true:
+        1. Any validation command fails
+        2. Any DoD item is not met, partially implemented, or stubbed
+        3. Any reviewer identified a material defect that was not addressed
+        4. Code changes exist only in working tree but are not committed
+        5. Tests are missing for implemented functionality
+
+      Be strict. "Tests pass" is necessary but not sufficient. Stubbed implementations, unimplemented methods, missing wiring, and partial features all mean STATUS: fail. When in doubt, fail.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete project files. Do NOT implement fixes. Your ONLY job is to analyze and render a verdict.
+
+  tool CheckBootstrapOnFailure
+    label: "Check Bootstrap On Failure"
+    timeout: 5s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sprint_yaml" ]; then
+        is_bootstrap=$(yq '.bootstrap // false' "$sprint_yaml")
+        if [ "$is_bootstrap" = "true" ]; then
+          printf 'bootstrap-failed'
+          exit 0
+        fi
+      fi
+      printf 'normal-failed'
+
+  tool CheckBootstrapSkip
+    label: "Check Bootstrap Skip"
+    timeout: 5s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ -f "$sprint_yaml" ]; then
+        is_bootstrap=$(yq '.bootstrap // false' "$sprint_yaml")
+        if [ "$is_bootstrap" = "true" ]; then
+          printf 'bootstrap-skip-reviews'
+          exit 0
+        fi
+      fi
+      printf 'normal-reviews'
+
+  edges
+    Start -> EnsureLedger
+    EnsureLedger -> EnsureManagerJournals
+    EnsureManagerJournals -> CheckYq
+    CheckYq -> FindNextSprint          when ctx.tool_stdout = yq-ok         label: yq_ok
+    CheckYq -> YqMissing               when ctx.tool_stdout = yq-not-found  label: yq_missing
+    CheckYq -> YqMissing
+    YqMissing -> Exit
+    FindNextSprint -> SetCurrentSprint  when ctx.tool_stdout startswith found-  label: sprint_found
+    FindNextSprint -> Exit             when ctx.tool_stdout = all-done         label: all_done
+    FindNextSprint -> Exit             when ctx.tool_stdout = deps-blocked     label: deps_blocked
+    FindNextSprint -> Exit
+    SetCurrentSprint -> ReadSprint  when ctx.tool_stdout startswith current-  label: sprint_found
+    SetCurrentSprint -> Exit        when ctx.tool_stdout = all-done           label: all_done
+    SetCurrentSprint -> Exit
+    ReadSprint -> PreflightComplexity
+    PreflightComplexity -> PlanManager      when ctx.outcome = success  label: preflight_ok
+    PreflightComplexity -> MarkFailed       when ctx.outcome = fail     label: too_complex
+    PreflightComplexity -> MarkFailed
+    PlanManager -> CheckBootstrap  when ctx.outcome = success  label: go
+    PlanManager -> MarkFailed      when ctx.outcome = fail     label: hold
+    PlanManager -> MarkFailed
+    CheckBootstrap -> MarkInProgress
+    MarkInProgress -> Exit             when ctx.tool_stdout startswith already-completed  label: skip_completed
+    MarkInProgress -> SnapshotLedger
+    SnapshotLedger -> ImplementSprint
+    ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
+    ImplementSprint -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
+    ImplementSprint -> MarkFailed
+    CheckLedgerIntegrity -> CheckScopeFence  when ctx.outcome = success  label: ledger_ok
+    CheckLedgerIntegrity -> MarkFailed      when ctx.outcome = fail     label: ledger_tampered
+    CheckLedgerIntegrity -> MarkFailed
+    CheckScopeFence -> ValidateBuild        when ctx.outcome = success  label: scope_ok
+    CheckScopeFence -> SnapshotLedger        when ctx.outcome = fail     label: scope_violation  restart: true
+    CheckScopeFence -> MarkFailed
+    ResumeCheck -> ImplementSprint          when ctx.tool_stdout startswith resume-            label: resume              restart: true
+    ResumeCheck -> CheckBootstrapOnFailure  when ctx.tool_stdout startswith max-resumes-       label: max_exhausted
+    ResumeCheck -> MarkFailed               when ctx.outcome = fail                            label: resume_failed
+    ResumeCheck -> MarkFailed
+    CheckBootstrapOnFailure -> HumanBootstrapGate  when ctx.tool_stdout = bootstrap-failed  label: bootstrap_gate
+    CheckBootstrapOnFailure -> MarkFailed         when ctx.tool_stdout = normal-failed     label: normal_exit
+    CheckBootstrapOnFailure -> MarkFailed
+    HumanBootstrapGate -> SnapshotLedger  label: "[S] Retry"  restart: true
+    HumanBootstrapGate -> MarkFailed      label: "[A] Abort"
+    ValidateBuild -> CrossValidation    when ctx.outcome = success  label: validated
+    ValidateBuild -> ImplementSprint   when ctx.outcome = fail     label: fix_validation  restart: true
+    ValidateBuild -> MarkFailed
+    CrossValidation -> PreCommitAudit  when ctx.outcome = success  label: cross_ok
+    CrossValidation -> ImplementSprint when ctx.outcome = fail     label: fix_cross  restart: true
+    CrossValidation -> MarkFailed
+    PreCommitAudit -> CommitSprintWork
+    CommitSprintWork -> CheckBootstrapSkip
+    CheckBootstrapSkip -> ValidateDoD      when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
+    CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
+    CheckBootstrapSkip -> ReviewParallel
+    ReviewParallel -> ReviewClaude
+    ReviewParallel -> ReviewCodex
+    ReviewParallel -> ReviewGemini
+    ReviewClaude -> ReviewsJoin
+    ReviewCodex -> ReviewsJoin
+    ReviewGemini -> ReviewsJoin
+    ReviewsJoin -> CritiquesParallel
+    CritiquesParallel -> CritiqueClaudeOnCodex
+    CritiquesParallel -> CritiqueClaudeOnGemini
+    CritiquesParallel -> CritiqueCodexOnClaude
+    CritiquesParallel -> CritiqueCodexOnGemini
+    CritiquesParallel -> CritiqueGeminiOnClaude
+    CritiquesParallel -> CritiqueGeminiOnCodex
+    CritiqueClaudeOnCodex -> CritiquesJoin
+    CritiqueClaudeOnGemini -> CritiquesJoin
+    CritiqueCodexOnClaude -> CritiquesJoin
+    CritiqueCodexOnGemini -> CritiquesJoin
+    CritiqueGeminiOnClaude -> CritiquesJoin
+    CritiqueGeminiOnCodex -> CritiquesJoin
+    CritiquesJoin -> ReviewManager
+    ReviewManager -> ReviewAnalysis
+    ReviewAnalysis -> ValidateDoD       when ctx.outcome = success  label: pass
+    ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
+    ReviewAnalysis -> MarkFailed
+    ValidateDoD -> CompleteSprint       when ctx.tool_stdout = dod-pass           label: dod_verified
+    ValidateDoD -> ImplementSprint      when ctx.tool_stdout startswith dod-fail label: dod_rework  restart: true
+    ValidateDoD -> CompleteSprint
+    CompleteSprint -> Exit              when ctx.outcome = success  label: done
+    CompleteSprint -> MarkFailed         when ctx.outcome = fail     label: complete_failed
+    CompleteSprint -> Exit
+    MarkFailed -> RecoveryManager
+    RecoveryManager -> FailureSummary
+    FailureSummary -> Exit

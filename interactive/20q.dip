@@ -4,6 +4,8 @@ workflow twenty_questions
   exit: Exit
 
   defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
     max_retries: 1
     fidelity: summary:high
     max_restarts: 50
@@ -38,7 +40,7 @@ workflow twenty_questions
 
   human HumanReady
     label: "Ready to play?"
-    mode: yes_no
+    mode: choice
 
   agent ThinkQuestion
     label: Think
@@ -75,7 +77,7 @@ workflow twenty_questions
 
   human AskQuestion
     label: "Answer the Question"
-    mode: yes_no
+    mode: choice
 
   tool LogYes
     label: Yes
@@ -103,7 +105,7 @@ workflow twenty_questions
 
   human HumanJudge
     label: "Did I get it right?"
-    mode: yes_no
+    mode: choice
 
   agent WrongGuess
     label: "Wrong Guess"
@@ -126,7 +128,7 @@ workflow twenty_questions
 
   human HumanJudgeFinal
     label: "Final guess — correct?"
-    mode: yes_no
+    mode: choice
 
   agent Victory
     label: "Victory!"
@@ -146,16 +148,15 @@ workflow twenty_questions
 
   human PlayAgain
     label: "Play Again?"
-    mode: yes_no
+    mode: choice
 
   edges
     Start -> ResetGame
     ResetGame -> Welcome
     Welcome -> HumanReady
-    HumanReady -> ThinkQuestion  when ctx.outcome = success  label: "[Y] Ready"  weight: 2
-    HumanReady -> HumanReady  label: "[N] Not yet"  restart: true
-    ThinkQuestion -> AskQuestion  label: asking  weight: 2
-    ThinkQuestion -> MakeGuess  label: guessing
+    HumanReady -> ThinkQuestion  label: "[Y] Ready"  weight: 2
+    ThinkQuestion -> AskQuestion  when ctx.outcome = success  label: "asking"  weight: 2
+    ThinkQuestion -> MakeGuess  label: "guessing"
     AskQuestion -> LogYes  label: "[Y] Yes"  weight: 2
     AskQuestion -> LogNo  label: "[N] No"
     LogYes -> ThinkQuestion  restart: true

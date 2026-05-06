@@ -1,0 +1,192 @@
+# ABOUTME: Batch verification runner — iterates through all completed sprints and runs verify_sprint.dip on each.
+# ABOUTME: Produces per-sprint verification reports and a final VERIFICATION-SUMMARY.md with overall project health.
+workflow VerifySprintsRunner
+  goal: "Iterate through all completed sprints in .ai/ledger.yaml, run verify_sprint.dip on each, track results, and produce a final verification summary."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 200
+    fidelity: summary:medium
+
+  tool Start
+    label: "Start Verification Runner"
+    timeout: 5s
+    command:
+      set -eu
+      rm -f .ai/verification-results.txt .ai/verify-queue.txt
+      printf 'verification-runner-starting'
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      Verification runner pipeline complete. Report final status.
+
+      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+
+  tool CheckYq
+    label: "Check yq"
+    timeout: 5s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 1
+      fi
+      printf 'yq-ok'
+
+  agent YqMissing
+    label: "yq Not Found"
+    max_turns: 1
+    prompt:
+      The yq YAML processor is required but not installed.
+
+      Install it:
+        macOS:  brew install yq
+        Linux:  snap install yq
+
+      After installing, re-run the pipeline.
+
+  tool FindCompletedSprints
+    label: "Find Completed Sprints"
+    timeout: 15s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.yaml ]; then
+        printf 'no-ledger'
+        exit 1
+      fi
+      # Collect completed sprints that are not yet verified
+      queue=""
+      for sid in $(yq '.sprints[] | select(.status == "completed") | .id' .ai/ledger.yaml); do
+        sf=".ai/sprints/SPRINT-${sid}.yaml"
+        if [ -f "$sf" ]; then
+          verified=$(yq '.verified // false' "$sf")
+          if [ "$verified" != "true" ]; then
+            queue="${queue}${sid}\n"
+          fi
+        else
+          queue="${queue}${sid}\n"
+        fi
+      done
+      if [ -z "$queue" ]; then
+        printf 'all-verified'
+        exit 0
+      fi
+      printf '%b' "$queue" | sed '/^$/d' > .ai/verify-queue.txt
+      count=$(wc -l < .ai/verify-queue.txt | tr -d ' ')
+      printf 'found-%s-sprints-to-verify' "$count"
+
+  tool PickNext
+    label: "Pick Next Sprint"
+    timeout: 5s
+    command:
+      set -eu
+      if [ ! -f .ai/verify-queue.txt ] || [ ! -s .ai/verify-queue.txt ]; then
+        rm -f .ai/verify-queue.txt
+        printf 'all-done'
+        exit 0
+      fi
+      next=$(head -1 .ai/verify-queue.txt)
+      tail -n +2 .ai/verify-queue.txt > .ai/verify-queue-tmp.txt
+      mv .ai/verify-queue-tmp.txt .ai/verify-queue.txt
+      printf '%s' "$next" > .ai/current_verify_id.txt
+      printf 'next-%s' "$next"
+
+  subgraph verify_sprint
+    ref: verify_sprint.dip
+
+  tool RecordResult
+    label: "Record Verification Result"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_verify_id.txt 2>/dev/null || echo "unknown")
+      report=".ai/sprints/SPRINT-${target}-verification.md"
+      if [ -f "$report" ]; then
+        verdict=$(grep -F '**Verdict:**' "$report" | sed 's/.*\*\*Verdict:\*\* //')
+      else
+        verdict="no-report-generated"
+      fi
+      printf '%s | %s\n' "$target" "$verdict" >> .ai/verification-results.txt
+      # Count progress
+      total=$(wc -l < .ai/verification-results.txt 2>/dev/null | tr -d ' ')
+      remaining=0
+      if [ -f .ai/verify-queue.txt ]; then
+        remaining=$(wc -l < .ai/verify-queue.txt | tr -d ' ')
+      fi
+      printf 'recorded-%s-%s-verified-%s-remaining' "$target" "$total" "$remaining"
+
+  agent FinalReport
+    label: "Final Verification Report"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      You are the final report generator for the sprint verification sweep.
+
+      ## Your Inputs
+
+      1. Read `.ai/verification-results.txt` — contains one line per verified sprint: `{id} | {verdict}`
+      2. Read `.ai/ledger.yaml` for overall project context
+      3. Scan `.ai/sprints/SPRINT-*-verification.md` for detailed findings on any `failed-verification` sprints
+      4. Check for any remediation sprints (sprints with `remediation_for` field in their YAML)
+
+      ## Output
+
+      Write `VERIFICATION-SUMMARY.md` in the project root with:
+
+      ```markdown
+      # Verification Summary
+
+      **Run date:** {current UTC timestamp}
+      **Sprints verified:** {count}
+      **Verdicts:** {X verified, Y verified-with-concerns, Z failed-verification}
+
+      ## Results
+
+      | Sprint | Title | Verdict | Key Findings |
+      |--------|-------|---------|--------------|
+      | {per sprint from results file} |
+
+      ## Remediation Sprints Created
+
+      | ID | Remediates | Description |
+      |----|-----------|-------------|
+      | {list any remediation sprints found in the ledger} |
+
+      ## Overall Health Assessment
+
+      {2-3 paragraphs: project health, systemic patterns in failures, recommendations}
+      ```
+
+      ## Rules
+      - Write ONLY the VERIFICATION-SUMMARY.md file
+      - Do NOT modify sprint YAMLs, the ledger, or any source code
+
+  edges
+    Start -> CheckYq
+    CheckYq -> FindCompletedSprints   when ctx.outcome = success      label: yq_ok
+    CheckYq -> YqMissing              when ctx.outcome = fail         label: yq_missing
+    CheckYq -> Exit
+
+    YqMissing -> Exit
+
+    FindCompletedSprints -> PickNext  when ctx.tool_stdout startswith found-  label: has_sprints
+    FindCompletedSprints -> PickNext  when ctx.tool_stdout = all-verified     label: nothing_to_verify
+    FindCompletedSprints -> Exit      when ctx.outcome = fail                 label: no_ledger
+    FindCompletedSprints -> Exit
+
+    PickNext -> verify_sprint         when ctx.tool_stdout startswith next-   label: verify_next
+    PickNext -> FinalReport           when ctx.tool_stdout = all-done         label: all_done
+    PickNext -> FinalReport
+
+    verify_sprint -> RecordResult     when ctx.outcome = success              label: verified
+    verify_sprint -> RecordResult     when ctx.outcome = fail                 label: failed_verification
+    verify_sprint -> RecordResult
+
+    RecordResult -> PickNext          restart: true
+
+    FinalReport -> Exit

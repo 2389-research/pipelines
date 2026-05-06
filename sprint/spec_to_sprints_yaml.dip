@@ -1,0 +1,960 @@
+# ABOUTME: Spec-to-sprints decomposition pipeline producing YAML ledger and dual YAML+md sprint files.
+# ABOUTME: Fork of spec_to_sprints.dip — adds bootstrap sprint generation and per-sprint YAML contracts.
+workflow SpecToSprintsYaml
+  goal: "Decompose a specification into .ai/ledger.yaml and SPRINT-*.md + SPRINT-*.yaml files ready for sprint_exec_yaml.dip execution, using multi-model tournament decomposition with human approval."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Begin spec-to-sprints decomposition pipeline.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Spec-to-sprints pipeline complete.
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+
+  tool check_resume
+    label: "Check Resume Point"
+    timeout: 10s
+    command:
+      set -eu
+      has_ledger=false
+      has_sprint_yamls=false
+      has_sprint_mds=false
+      has_plan=false
+      has_drafts=false
+      has_analysis=false
+      if [ -f .ai/ledger.yaml ] && yq -e '.sprints[0].id' .ai/ledger.yaml >/dev/null 2>&1; then
+        has_ledger=true
+      fi
+      yaml_count=$(ls .ai/sprints/SPRINT-*.yaml 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$yaml_count" -gt 0 ]; then
+        has_sprint_yamls=true
+      fi
+      md_count=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$md_count" -gt 0 ]; then
+        has_sprint_mds=true
+      fi
+      if [ -f .ai/sprint_plan.md ] && grep -q '^### Sprint' .ai/sprint_plan.md; then
+        has_plan=true
+      fi
+      draft_count=$(ls .ai/drafts/decomposition_*.md 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$draft_count" -ge 2 ]; then
+        has_drafts=true
+      fi
+      if [ -f .ai/spec_analysis.md ] && [ "$(wc -c < .ai/spec_analysis.md | tr -d ' ')" -gt 100 ]; then
+        has_analysis=true
+      fi
+      if [ "$has_ledger" = "true" ] && [ "$has_sprint_yamls" = "true" ] && [ "$has_sprint_mds" = "true" ]; then
+        printf 'resume-validate ledger:%s yamls:%s mds:%s' "$has_ledger" "$yaml_count" "$md_count"
+        exit 0
+      fi
+      if [ "$has_sprint_yamls" = "true" ] && [ "$has_sprint_mds" = "true" ]; then
+        printf 'resume-ledger yamls:%s mds:%s' "$yaml_count" "$md_count"
+        exit 0
+      fi
+      if [ "$has_plan" = "true" ]; then
+        printf 'resume-write-docs plan:true'
+        exit 0
+      fi
+      if [ "$has_drafts" = "true" ] && [ "$has_analysis" = "true" ]; then
+        printf 'resume-merge drafts:%s' "$draft_count"
+        exit 0
+      fi
+      if [ "$has_analysis" = "true" ]; then
+        printf 'resume-decompose analysis:true'
+        exit 0
+      fi
+      printf 'fresh-start'
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    writes: spec_analysis
+    goal_gate: true
+    retry_target: analyze_spec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file found by the previous step and produce a structured analysis for sprint decomposition.
+
+      ## Process
+      1. Read the spec file thoroughly
+      2. Write .ai/spec_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      Name, purpose, one-paragraph description.
+
+      ### Tech Stack
+      Language, framework, database, test framework, linter, package manager — extracted from the spec or inferred from its requirements.
+
+      ### Functional Requirements (numbered)
+      Every discrete functional requirement extracted from the spec, numbered FR1-FRn. Each entry:
+      - ID (e.g., FR1)
+      - Spec section reference (e.g., "Section 5, FR1")
+      - One-line description
+      - Acceptance criteria if specified
+
+      ### Architectural Layers / Components (numbered)
+      For each component or layer the spec defines:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can be built in parallel, which must be sequential, and why.
+
+      ### Complexity Assessment
+      For each component: low / medium / high complexity with one-line justification.
+
+      ### Rollout Phases
+      If the spec defines phases (v0, v1, v2), list what belongs in each. If not, note "no phases defined."
+
+      ### Open Questions
+      Ambiguities, unresolved decisions, or contradictions found in the spec.
+
+      ## Output
+      Write the analysis to .ai/spec_analysis.md. Create the .ai directory if it does not exist.
+
+      ## Critical Rules
+      - Only extract requirements explicitly stated in the spec. Do not invent, infer, or add requirements.
+      - If the spec is ambiguous, note the ambiguity in Open Questions rather than guessing.
+      - Every FR must have a direct spec section reference.
+
+      ## Success Criteria
+      - .ai/spec_analysis.md exists with ALL sections filled in
+      - Every functional requirement is numbered
+      - Every component dependency is mapped
+
+  parallel decompose_parallel -> decompose_claude, decompose_gpt, decompose_gemini
+
+  agent decompose_claude
+    label: "Claude Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_claude
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Thoroughness
+      Focus on dependency ordering, risk sequencing, and DoD traceability. Every functional requirement (FR1-FRn) must be covered by at least one sprint. No requirement should be orphaned.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer well-scoped sprints over kitchen-sink sprints. Each sprint should have ONE clear theme.
+      - Target 12-20 sprints for a typical project. Fewer than 12 usually means sprints are too large.
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - SPRINT SIZE LIMIT: No sprint should have more than 10 DoD items or touch more than 3 subsystems. If it does, split it.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+      - Do NOT include bootstrap/scaffold sprints — those are generated separately. Start numbering at 001 for the first FEATURE sprint.
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_claude.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  agent decompose_gpt
+    label: "GPT Decomposition"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gpt
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Implementation Pragmatism
+      Focus on execution order, what can be parallelized, and build/test feasibility. Think about what a developer actually needs working first before the next piece can start.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer well-scoped sprints over kitchen-sink sprints. Each sprint should have ONE clear theme.
+      - Target 12-20 sprints for a typical project. Fewer than 12 usually means sprints are too large.
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - SPRINT SIZE LIMIT: No sprint should have more than 10 DoD items or touch more than 3 subsystems. If it does, split it.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+      - Do NOT include bootstrap/scaffold sprints — those are generated separately. Start numbering at 001 for the first FEATURE sprint.
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gpt.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  agent decompose_gemini
+    label: "Gemini Decomposition"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gemini
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Delivery Robustness
+      Focus on scope discipline, sprint size consistency, validation checkpoints, and risk mitigation. Flag any sprint that seems too large or has unclear validation criteria.
+
+      ## Output Format
+      For each sprint, provide:
+      - Sprint number (sequential, starting at 001)
+      - Title (short, descriptive)
+      - Scope: what this sprint delivers (2-3 sentences)
+      - Non-goals: what is explicitly excluded
+      - Requirements covered: list FR IDs from the spec analysis
+      - Dependencies: which sprint numbers must complete first (empty for first sprint)
+      - Expected artifacts: specific files, modules, or configurations produced
+      - DoD items: 5-10 checkable items that prove the sprint is complete
+      - Complexity: low / medium / high
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer well-scoped sprints over kitchen-sink sprints. Each sprint should have ONE clear theme.
+      - Target 12-20 sprints for a typical project. Fewer than 12 usually means sprints are too large.
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - SPRINT SIZE LIMIT: No sprint should have more than 10 DoD items or touch more than 3 subsystems. If it does, split it.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+      - Do NOT include bootstrap/scaffold sprints — those are generated separately. Start numbering at 001 for the first FEATURE sprint.
+
+      ## Output
+      Write your complete decomposition to .ai/drafts/decomposition_gemini.md.
+      Create the .ai/drafts directory if it does not exist.
+
+  fan_in decompose_join <- decompose_claude, decompose_gpt, decompose_gemini
+
+  parallel critique_parallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent critique_claude_on_gpt
+    label: "Claude Critique of GPT"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_claude_on_gemini
+    label: "Claude Critique of Gemini"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_claude
+    label: "GPT Critique of Claude"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_gemini
+    label: "GPT Critique of Gemini"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_claude
+    label: "Gemini Critique of Claude"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_gpt
+    label: "Gemini Critique of GPT"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (>10 DoD items or >3 subsystems = must split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  fan_in critique_join <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent merge_decomposition
+    label: "Merge Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_claude, decomposition_gpt, decomposition_gemini, spec_analysis
+    writes: sprint_plan
+    goal_gate: true
+    retry_target: merge_decomposition
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize the three decompositions and six cross-critiques into one final sprint plan, with bootstrap sprints prepended.
+
+      ## Process
+      Read the three decomposition files:
+      - .ai/drafts/decomposition_claude.md
+      - .ai/drafts/decomposition_gpt.md
+      - .ai/drafts/decomposition_gemini.md
+      And the spec analysis: .ai/spec_analysis.md
+
+      1. Compare the three decompositions side by side
+      2. Incorporate valid critique findings — fix ordering errors, fill coverage gaps, adjust sprint sizes
+      3. SPLIT ANY KITCHEN-SINK SPRINT: If a sprint has >10 DoD items, touches >3 subsystems, or mixes unrelated concerns (e.g., "Polish, Dashboard & Migration"), it MUST be split into separate sprints with clear single themes
+      4. Produce a single merged sprint list
+
+      ## Bootstrap Sprint Generation
+
+      BEFORE the feature sprints, you MUST prepend bootstrap sprints:
+
+      ### Sprint 000 — Project Scaffold & Toolchain (ALWAYS)
+      - bootstrap: true, complexity: low
+      - Scope: Initialize repo, package manager, test harness, linter config, CI skeleton
+      - Derive specifics from the Tech Stack section of .ai/spec_analysis.md
+      - DoD: project builds, linter passes, test harness runs (even with zero tests), CI config exists
+
+      ### Sprint 001 — External Services & Dev Environment (IF services detected)
+      - bootstrap: true, complexity: low
+      - Only include this sprint if the spec analysis mentions databases, message brokers, caches, or other external services
+      - Scope: docker-compose, database migrations, service health checks, env var documentation
+      - DoD: services start, health checks pass, connection from app code works
+
+      ### Sprint 002 — Hello World End-to-End Proof (ALWAYS)
+      - bootstrap: true, complexity: low
+      - Scope: One endpoint/function, one test, full stack round-trip proving the scaffold works
+      - DoD: one passing integration test that exercises the full stack
+      - depends_on: ["000"] or ["001"] if Sprint 001 exists
+
+      Then renumber feature sprints starting at 003 (or 002 if Sprint 001 was skipped). All feature sprints must depends_on at minimum the last bootstrap sprint.
+
+      ## Output Format (.ai/sprint_plan.md)
+      Start with a summary: total sprint count, overall approach, key decisions made during merge.
+
+      Then for each sprint:
+      ### Sprint NNN — Title
+
+      **Scope:** What this sprint delivers (2-3 sentences)
+
+      **Non-goals:** What is explicitly excluded
+
+      **Requirements:** FR IDs covered (e.g., FR1, FR3, FR7)
+
+      **Dependencies:** Sprint numbers that must complete first
+
+      **Bootstrap:** true/false
+
+      **Expected Artifacts:**
+      - file/module paths this sprint produces
+
+      **DoD:**
+      - [ ] Checkable item 1
+      - [ ] Checkable item 2
+      ...
+
+      **Validation:**
+      - Exact build/test commands to verify completion
+
+      **Complexity:** low / medium / high
+
+      ## Capstone Sprint (MANDATORY)
+
+      The LAST sprint in the plan MUST be a capstone sprint titled "Integration Verification & Launch Readiness".
+      - Its `depends_on` MUST list every other sprint ID in the plan (bootstrap and feature)
+      - Scope: full integration test, end-to-end smoke test, build verification, no new features
+      - DoD: all build/lint/test commands pass, app starts and serves traffic, no regressions
+      - Complexity: low
+      - This ensures the runner cannot declare success while any sprint remains failed or skipped
+
+      ## Rules
+      - Every FR from .ai/spec_analysis.md must appear in at least one sprint
+      - No dependency cycles
+      - Sprint IDs are sequential zero-padded 3-digit (000, 001, ...)
+      - Bootstrap sprints come first, feature sprints follow, capstone sprint is always last
+      - The capstone sprint must depend on ALL other sprints — no orphans allowed
+      - Create .ai directory if it does not exist
+
+  agent present_plan
+    label: "Present Sprint Plan"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reads: sprint_plan
+    reasoning_effort: medium
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/sprint_plan.md and present a concise review summary for human approval:
+
+      1. Total sprint count (noting how many are bootstrap vs feature)
+      2. Sprint titles listed in order with dependencies noted
+      3. Requirement coverage: any FRs not covered?
+      4. Risk flags: any sprints that seem too large, too vague, or have unclear validation?
+
+      Keep the summary scannable. The human needs to decide: approve as-is, or request changes.
+
+  human approval_gate
+    label: "Approve Sprint Plan"
+
+  agent apply_feedback
+    label: "Apply Feedback"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan
+    writes: sprint_plan
+    prompt:
+      You are working in `run.working_dir`.
+
+      The human has provided feedback on the sprint plan. Read .ai/sprint_plan.md, incorporate the feedback, and rewrite .ai/sprint_plan.md with the changes applied.
+
+      Preserve the same format. Update sprint numbers if sprints are added, removed, or reordered. Ensure dependency references remain consistent after renumbering. Bootstrap sprints (000-002) should generally not be removed unless explicitly requested.
+
+  tool skip_approval
+    label: "Skip Approval"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      count="unknown"
+      if [ -f .ai/sprint_plan.md ]; then
+        count=$(grep -c '^### Sprint' .ai/sprint_plan.md || true)
+      fi
+      printf 'approved\t%s\t%s\tauto-skipped\n' "$count" "$now"
+
+  tool setup_workspace
+    label: "Setup .ai Workspace"
+    timeout: 10s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 0
+      fi
+      mkdir -p .ai/sprints .ai/drafts
+      printf 'ready'
+
+  human yq_install_gate
+    label: "Install yq — then press [S] to retry"
+    mode: choice
+
+  agent write_sprint_docs
+    label: "Write Sprint Docs"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan, spec_analysis
+    fallback_target: Exit
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/sprint_plan.md and .ai/spec_analysis.md. For each sprint in the plan, write TWO files under .ai/sprints/:
+
+      ### 1. SPRINT-<id>.md (narrative — same format as before)
+      ```
+      # Sprint NNN — Title
+
+      ## Scope
+      What this sprint delivers (2-3 sentences).
+
+      ## Non-goals
+      - What is explicitly excluded
+
+      ## Requirements
+      - FR IDs covered, with one-line descriptions
+
+      ## Dependencies
+      - Sprint numbers that must complete first (or "None")
+
+      ## Expected Artifacts
+      - Specific file paths
+
+      ## DoD
+      - [ ] Checkable item 1
+      - [ ] Checkable item 2
+
+      ## Validation
+      - Exact commands
+      ```
+
+      ### 2. SPRINT-<id>.yaml (structured contract)
+      ```yaml
+      id: "NNN"
+      title: "Sprint Title"
+      status: planned
+      bootstrap: true/false
+      complexity: low/medium/high
+
+      depends_on: ["000", "001"]
+      dependents: ["004", "005"]
+
+      stack:
+        lang: python|javascript|swift|rust|go|null
+        runner: uv|npm|swiftpm|cargo|go|null
+        test: pytest|vitest|jest|swift-test|cargo-test|go-test|null
+        lint: ruff|eslint|swiftlint|clippy|golangci-lint|null
+        build: null
+        services: []
+
+      scope_fence:
+        off_limits:
+          - "do not modify .ai/ledger.yaml"
+          - "do not implement sprint NNN+1 or later"
+          - "do not add features beyond scope"
+        touch_only: []
+
+      entry_preconditions:
+        files_must_exist: []
+        sprints_must_be_complete: ["000"]
+
+      artifacts:
+        creates:
+          - path: "path/to/file"
+            type: module
+        modifies: []
+
+      validation:
+        commands:
+          - cmd: "exact command here"
+            expect: exit_0
+
+      dod:
+        - "First checkable item"
+        - "Second checkable item"
+
+      history:
+        attempts: []
+      ```
+
+      ## Rules
+      - CRITICAL: All files MUST be written to .ai/sprints/ — NEVER to the project root
+      - File paths: .ai/sprints/SPRINT-000.md, .ai/sprints/SPRINT-000.yaml, etc.
+      - IDs MUST be zero-padded 3-digit: 000, 001, ... 016
+      - The YAML must have ALL fields shown above — no missing sections
+      - `stack.lang`, `stack.runner`, `stack.test`, `stack.lint`, and `stack.build` must be populated from the Tech Stack section of .ai/spec_analysis.md. Use `null` only when the spec analysis truly does not provide enough information.
+      - `scope_fence.off_limits` must always include "do not modify .ai/ledger.yaml"
+      - `entry_preconditions.sprints_must_be_complete` must match `depends_on`
+      - `dependents` is the reverse index of `depends_on` — compute it from the full sprint list
+      - `validation.commands` must have exact, runnable commands — not pseudocode
+      - `stack.services` should list any external services this sprint introduces (database, message broker, etc.)
+      - Bootstrap sprints (000-002) must have `bootstrap: true`
+      - Write ALL sprint docs in one pass for cross-sprint consistency
+      - Do NOT write or modify .ai/ledger.yaml — a separate tool handles that
+
+  tool write_ledger
+    label: "Write Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      stack_lang=$(yq '.stack.lang // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_runner=$(yq '.stack.runner // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_test=$(yq '.stack.test // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_lint=$(yq '.stack.lint // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      stack_build=$(yq '.stack.build // "null" | @json' .ai/sprints/SPRINT-000.yaml 2>/dev/null || echo '"null"')
+      printf 'project:\n  name: "Unknown"\n  stack:\n    lang: %s\n    runner: %s\n    test: %s\n    lint: %s\n    build: %s\n  created_at: "%s"\n\nsprints:\n' "$stack_lang" "$stack_runner" "$stack_test" "$stack_lint" "$stack_build" "$now" > .ai/ledger.yaml
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        id=$(yq '.id' "$f")
+        title=$(yq '.title | @json' "$f")
+        bootstrap=$(yq '.bootstrap // false' "$f")
+        complexity=$(yq '.complexity // "medium"' "$f")
+        deps=$(yq '.depends_on // [] | @json' "$f")
+        printf '  - id: "%s"\n    title: %s\n    status: planned\n    bootstrap: %s\n    depends_on: %s\n    complexity: %s\n    created_at: "%s"\n    updated_at: "%s"\n    attempts: 0\n    total_cost: "0.00"\n' "$id" "$title" "$bootstrap" "$deps" "$complexity" "$now" "$now" >> .ai/ledger.yaml
+      done
+      count=$(yq '.sprints | length' .ai/ledger.yaml)
+      printf 'wrote-%s-sprints' "$count"
+
+  tool validate_output
+    label: "Validate Output"
+    timeout: 30s
+    command:
+      set -eu
+      errors=""
+      stray=$(ls SPRINT-*.md SPRINT-*.yaml 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$stray" -gt 0 ]; then
+        errors="${errors}sprint-files-in-root "
+      fi
+      ledger_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
+      yaml_ids=$(ls .ai/sprints/SPRINT-*.yaml 2>/dev/null | sed 's|.*/SPRINT-||;s|\.yaml||' | sort)
+      md_ids=$(ls .ai/sprints/SPRINT-*.md 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
+      if [ "$ledger_ids" != "$yaml_ids" ]; then
+        errors="${errors}ledger-yaml-mismatch "
+      fi
+      if [ "$ledger_ids" != "$md_ids" ]; then
+        errors="${errors}ledger-md-mismatch "
+      fi
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        if ! yq -e '.' "$f" >/dev/null 2>&1; then
+          errors="${errors}invalid-yaml-${base} "
+          continue
+        fi
+        if ! yq -e '.id' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-id-${base} "
+        fi
+        if ! yq -e '.title' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-title-${base} "
+        fi
+        if ! yq -e '.status' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-status-${base} "
+        fi
+        if ! yq -e '.stack.lang' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-lang-${base} "
+        fi
+        if ! yq -e '.stack.runner' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-runner-${base} "
+        fi
+        if ! yq -e '.stack.test' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-test-${base} "
+        fi
+        if ! yq -e '.stack.lint' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-lint-${base} "
+        fi
+        if ! yq -e '.stack.build' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-stack-build-${base} "
+        fi
+        if [ "$base" = "SPRINT-000.yaml" ]; then
+          for field in lang runner test lint; do
+            value=$(yq ".stack.${field}" "$f" 2>/dev/null || printf 'null')
+            if [ "$value" = "null" ]; then
+              errors="${errors}null-stack-${field}-${base} "
+            fi
+          done
+        fi
+        if ! yq -e '.validation.commands' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-validation-${base} "
+        fi
+        if ! yq -e '.dod' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-dod-${base} "
+        fi
+        if ! yq -e '.scope_fence' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-scope-fence-${base} "
+        fi
+        if ! yq -e '.artifacts' "$f" >/dev/null 2>&1; then
+          errors="${errors}missing-artifacts-${base} "
+        fi
+      done
+      for f in .ai/sprints/SPRINT-*.md; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        for section in "## Scope" "## Requirements" "## Dependencies" "## Expected Artifacts" "## DoD" "## Validation"; do
+          if ! grep -q "$section" "$f"; then
+            tag=$(printf '%s' "$section" | sed 's/## //' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+            errors="${errors}missing-${tag}-${base} "
+          fi
+        done
+      done
+      if [ -z "$(yq '.sprints[]' .ai/ledger.yaml 2>/dev/null)" ]; then
+        errors="${errors}empty-ledger "
+      fi
+      bootstrap_count=$(yq '[.sprints[] | select(.bootstrap == true)] | length' .ai/ledger.yaml)
+      if [ "$bootstrap_count" -lt 2 ]; then
+        errors="${errors}insufficient-bootstrap-sprints "
+      fi
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        dod_count=$(yq '.dod | length' "$f" 2>/dev/null || echo 0)
+        if [ "$dod_count" -gt 15 ]; then
+          errors="${errors}oversized-sprint-${base}-${dod_count}-dod-items "
+        fi
+      done
+      # Capstone check: last sprint must depend on all other sprints — auto-fix if wrong
+      all_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
+      last_id=$(yq '.sprints[-1].id' .ai/ledger.yaml)
+      other_ids=$(printf '%s' "$all_ids" | grep -v "^${last_id}$" | sort)
+      capstone_deps=$(yq ".sprints[-1].depends_on[]" .ai/ledger.yaml 2>/dev/null | sort)
+      if [ "$other_ids" != "$capstone_deps" ]; then
+        # Auto-fix: set capstone depends_on to all other sprint IDs
+        yq -i "(.sprints[-1]).depends_on = []" .ai/ledger.yaml
+        for dep_id in $other_ids; do
+          yq -i "(.sprints[-1]).depends_on += [\"$dep_id\"]" .ai/ledger.yaml
+        done
+        # Also fix the sprint YAML file on disk
+        capstone_yaml=".ai/sprints/SPRINT-${last_id}.yaml"
+        if [ -f "$capstone_yaml" ]; then
+          yq -i ".depends_on = []" "$capstone_yaml"
+          for dep_id in $other_ids; do
+            yq -i ".depends_on += [\"$dep_id\"]" "$capstone_yaml"
+          done
+        fi
+      fi
+      if [ -n "$errors" ]; then
+        printf 'invalid-%s' "$errors"
+        exit 0
+      fi
+      printf 'valid'
+
+  tool commit_output
+    label: "Commit Output"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -d .git ]; then
+        printf 'no-git-skipped'
+        exit 0
+      fi
+      for f in .ai/ledger.yaml .ai/sprints .ai/spec_analysis.md .ai/sprint_plan.md; do
+        [ -e "$f" ] && git add "$f"
+      done
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+        exit 0
+      fi
+      count=$(yq '.sprints | length' .ai/ledger.yaml)
+      git commit -m "feat(sprints): decompose spec into ${count} sprints (YAML format)"
+      printf 'committed-%s-sprints' "$count"
+
+  edges
+    Start -> find_spec
+    find_spec -> setup_workspace  when ctx.tool_stdout != no_spec_found  label: spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found   label: no_spec
+    find_spec -> no_spec_exit
+    no_spec_exit -> Exit
+    setup_workspace -> check_resume       when ctx.tool_stdout = ready          label: workspace_ready
+    setup_workspace -> yq_install_gate    when ctx.tool_stdout = yq-not-found   label: yq_missing
+    setup_workspace -> Exit
+    check_resume -> validate_output       when ctx.tool_stdout startswith resume-validate    label: resume_validate
+    check_resume -> write_ledger          when ctx.tool_stdout startswith resume-ledger      label: resume_ledger
+    check_resume -> write_sprint_docs     when ctx.tool_stdout startswith resume-write-docs  label: resume_docs
+    check_resume -> merge_decomposition   when ctx.tool_stdout startswith resume-merge       label: resume_merge
+    check_resume -> decompose_parallel    when ctx.tool_stdout startswith resume-decompose   label: resume_decompose
+    check_resume -> analyze_spec          when ctx.tool_stdout = fresh-start                 label: fresh
+    check_resume -> analyze_spec
+    analyze_spec -> decompose_parallel
+    decompose_parallel -> decompose_claude
+    decompose_parallel -> decompose_gpt
+    decompose_parallel -> decompose_gemini
+    decompose_claude -> decompose_join
+    decompose_gpt -> decompose_join
+    decompose_gemini -> decompose_join
+    decompose_join -> critique_parallel
+    critique_parallel -> critique_claude_on_gpt
+    critique_parallel -> critique_claude_on_gemini
+    critique_parallel -> critique_gpt_on_claude
+    critique_parallel -> critique_gpt_on_gemini
+    critique_parallel -> critique_gemini_on_claude
+    critique_parallel -> critique_gemini_on_gpt
+    critique_claude_on_gpt -> critique_join
+    critique_claude_on_gemini -> critique_join
+    critique_gpt_on_claude -> critique_join
+    critique_gpt_on_gemini -> critique_join
+    critique_gemini_on_claude -> critique_join
+    critique_gemini_on_gpt -> critique_join
+    critique_join -> merge_decomposition
+    merge_decomposition -> present_plan
+    present_plan -> approval_gate
+    approval_gate -> apply_feedback  label: "[A] Revise plan"
+    approval_gate -> skip_approval   label: "[S] Approve / Skip"
+    apply_feedback -> approval_gate  restart: true
+    skip_approval -> write_sprint_docs
+    yq_install_gate -> setup_workspace  label: "[S] Retry"  restart: true
+    yq_install_gate -> Exit             label: "[A] Abort"
+    write_sprint_docs -> write_ledger
+    write_ledger -> validate_output
+    validate_output -> commit_output       when ctx.tool_stdout = valid     label: valid
+    validate_output -> write_sprint_docs   when ctx.tool_stdout != valid    label: fix_validation  restart: true
+    validate_output -> write_sprint_docs   restart: true
+    commit_output -> Exit

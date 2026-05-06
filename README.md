@@ -12,52 +12,96 @@ go install github.com/2389-research/tracker/cmd/tracker@latest
 tracker setup
 
 # Run a pipeline
-tracker speedrun.dip
+tracker build-and-ship/speedrun.dip
 ```
 
 You will need API keys for the LLM providers used in each pipeline (Anthropic, OpenAI, Gemini). See the [tracker docs](https://github.com/2389-research/tracker#configuration) for details.
 
-## Pipelines
+## Projects
 
-### Build & Ship
+### [Build & Ship](build-and-ship/)
 
-| Pipeline | Description |
-|----------|-------------|
-| `speedrun.dip` | Ultra-minimal build pipeline — fastest path from spec to shipped code. Read spec, plan, implement, test, ship. Fully headless. |
-| `build_from_superpowers.dip` | Builds a project from a superpowers spec and plan — finds the spec, executes every task, and commits with passing tests. |
-| `bug-hunter.dip` | Autonomous bug fix — reads a bug report, reproduces, diagnoses, fixes via TDD, and ships a PR. |
-| `refactor-express.dip` | Incremental refactoring — analyzes code, plans steps where tests stay green at every step, executes with rollback on failure. |
-| `doc-writer.dip` | Documentation generator — explores a codebase and produces README, API reference, architecture guide, and tutorials. |
-
-### Sprint Execution
+Single-pass build pipelines — fastest path from spec or bug report to shipped code.
 
 | Pipeline | Description |
 |----------|-------------|
-| `spec_to_sprints.dip` | Decomposes a spec into `SPRINT-*.md` files and a `.ai/ledger.tsv` using multi-model tournament decomposition with human approval. |
-| `sprint_exec.dip` | Executes the next incomplete sprint from the ledger through implementation, validation, multi-model review, and completion. |
-| `sprint_runner.dip` | Runs all sprints in sequence, looping until every sprint is completed. Inlines full sprint execution with review tournament and human gates. |
-| `sprint_exec-cheap.dip` | Budget variant of sprint execution using smaller models (Haiku/Nano/Flash-Lite) with escalation. |
-| `sprint_runner-cheap.dip` | Budget variant of the sprint runner with the same loop-and-escalation pattern. |
-| `megaplan.dip` | Creates a sprint plan using multi-model orientation, drafting, critique, and merge stages. |
-| `sprint_exec_local_gen_qwen.dip` | Local-first sprint execution using **qwen3.6:35b-a3b-q8_0** via Ollama for both generation and fixing. Language auto-detected (Go, Node.js, Python). Escalates to gpt-5.4 cloud only if local model exhausts 4 fix attempts. Happy path costs $0.00. |
-| `sprint_exec_local_gen_gemma.dip` | Same local-first pipeline using **gemma4:26b** via Ollama. Faster generation than qwen (~2x), slightly noisier output. Same language detection and cloud escalation. |
+| [`speedrun.dip`](build-and-ship/speedrun.dip) | Ultra-minimal build pipeline — read spec, plan, implement, test, ship. Fully headless. |
+| [`build_from_superpowers.dip`](build-and-ship/build_from_superpowers.dip) | Builds from a superpowers spec — finds the spec, executes every task, commits with passing tests. |
+| [`bug-hunter.dip`](build-and-ship/bug-hunter.dip) | Autonomous bug fix — reproduces, diagnoses, fixes via TDD, and ships a PR. |
+| [`refactor-express.dip`](build-and-ship/refactor-express.dip) | Incremental refactoring — tests stay green at every step, rollback on failure. |
+| [`doc-writer.dip`](build-and-ship/doc-writer.dip) | Documentation generator — README, API reference, architecture guide, and tutorials. |
 
-### Pipeline Generation
+### [Sprint](sprint/)
 
-| Pipeline | Description |
-|----------|-------------|
-| `spec_to_dip.dip` | Generates a validated `.dip` pipeline from a spec using multi-model tournament with domain-specific review panels. |
-| `pipeline_from_spec.dip` | Generates a pipeline `.dip` file from a spec, scoring against objective pattern and coverage metrics. |
-| `pipeline_from_spec_v2.dip` | Revised pipeline-from-spec with updated quality gates. |
-| `pipeline_from_superpowers.dip` | Generates a pipeline from a superpowers-format spec. |
-
-### Interactive
+Sprint decomposition and execution with budget and YAML variants.
 
 | Pipeline | Description |
 |----------|-------------|
-| `20q.dip` | 20 Questions game — the AI asks yes/no questions to guess what you're thinking of. |
-| `story-engine.dip` | Choose-your-own-adventure — AI writes branching narrative scenes, you make choices that shape the plot. |
-| `model-debate.dip` | Multi-model debate arena — Claude, GPT, and Gemini argue positions on a topic across rounds, then you judge. |
+| [`spec_to_sprints.dip`](sprint/spec_to_sprints.dip) | Decomposes a spec into `SPRINT-*.md` files via multi-model tournament with human approval. |
+| [`sprint_exec.dip`](sprint/sprint_exec.dip) | Executes the next incomplete sprint through implementation, validation, and review. |
+| [`sprint_runner.dip`](sprint/sprint_runner.dip) | Runs all sprints in sequence until every sprint is completed. |
+| [`sprint_exec-cheap.dip`](sprint/sprint_exec-cheap.dip) | Budget variant using smaller models with escalation. |
+| [`sprint_runner-cheap.dip`](sprint/sprint_runner-cheap.dip) | Budget variant of the sprint runner. |
+| [`megaplan.dip`](sprint/megaplan.dip) | Multi-model orientation, drafting, critique, and merge for sprint planning. |
+
+YAML variants: `spec_to_sprints_yaml`, `spec_to_sprints_yaml_v2`, `sprint_exec_yaml`, `sprint_exec_yaml_v2`, `sprint_runner_yaml`, `sprint_runner_yaml_v2`, `spec_to_ship_yaml`
+
+### [Local Code Gen](local_code_gen/)
+
+Sprint pipeline that uses Opus/Sonnet for architecture and a local **qwen3.6:35b-a3b** (via Ollama) for code generation, with cloud (gpt-5.4) escalation only when local fix attempts are exhausted. Architect emits enriched `SPRINT-*.md` files via the `dispatch_sprints` tool; runner uses 4-strategy SR-block matching with rollback. Happy path costs $0.00 for codegen.
+
+| Pipeline | Description |
+|----------|-------------|
+| [`architect_only.dip`](local_code_gen/architect_only.dip) | Just the architect step — produces contract, sprint plan JSONL, and `SPRINT-*.md` files. Skips upstream decomposition tournament. |
+| [`spec_to_sprints.dip`](local_code_gen/spec_to_sprints.dip) | Full upstream tournament + the architect step end-to-end. |
+| [`sprint_runner.dip`](local_code_gen/sprint_runner.dip) | Per-sprint loop: qwen Generate → SR-block LocalFix → CloudFix escalation → Audit → Commit. |
+
+See [`local_code_gen/README.md`](local_code_gen/README.md) for setup, model config, and the design principles in [`local_code_gen/principles/`](local_code_gen/principles/).
+
+### [Pipeline Generation](pipeline-gen/)
+
+Meta-pipelines that generate `.dip` files from specs via multi-model tournament.
+
+| Pipeline | Description |
+|----------|-------------|
+| [`spec_to_dip.dip`](pipeline-gen/spec_to_dip.dip) | Generates a validated `.dip` pipeline with domain-specific review panels. |
+| [`pipeline_from_spec.dip`](pipeline-gen/pipeline_from_spec.dip) | Generates a pipeline scoring against objective pattern and coverage metrics. |
+| [`pipeline_from_spec_v2.dip`](pipeline-gen/pipeline_from_spec_v2.dip) | Revised with updated quality gates. |
+| [`pipeline_from_superpowers.dip`](pipeline-gen/pipeline_from_superpowers.dip) | Generates a pipeline from a superpowers-format spec. |
+
+### [Greenfield](greenfield/)
+
+New project validation — discovery, synthesis, review, and validation stages.
+
+| Pipeline | Description |
+|----------|-------------|
+| [`greenfield.dip`](greenfield/greenfield.dip) | Orchestrator — runs the full greenfield validation flow. |
+| [`greenfield_discovery.dip`](greenfield/greenfield_discovery.dip) | Explores the problem space, identifies constraints and opportunities. |
+| [`greenfield_synthesis.dip`](greenfield/greenfield_synthesis.dip) | Generates candidate architectures and approaches. |
+| [`greenfield_review.dip`](greenfield/greenfield_review.dip) | Multi-model evaluation of synthesized candidates. |
+| [`greenfield_validation.dip`](greenfield/greenfield_validation.dip) | Final feasibility and risk assessment. |
+
+### [Iterative](iterative/)
+
+Incremental development with PAR (Parallel Adversarial Review) gates.
+
+| Pipeline | Description |
+|----------|-------------|
+| [`iter_dev.dip`](iterative/iter_dev.dip) | Orchestrator — coordinates scope → extract → run → audit cycle. |
+| [`iter_scope.dip`](iterative/iter_scope.dip) | Scopes work from a behavior corpus with structural/risk PAR review. |
+| [`iter_extract.dip`](iterative/iter_extract.dip) | Extracts actionable tasks with coverage/intent PAR review. |
+| [`iter_run.dip`](iterative/iter_run.dip) | Implements a task with spec/quality PAR reviews and failure loops. |
+| [`iter_audit.dip`](iterative/iter_audit.dip) | Three-tier audit — traceability, execution verification, drift detection. |
+
+### [Interactive](interactive/)
+
+Human-in-the-loop games and debates.
+
+| Pipeline | Description |
+|----------|-------------|
+| [`20q.dip`](interactive/20q.dip) | 20 Questions — AI asks yes/no questions to guess what you're thinking of. |
+| [`story-engine.dip`](interactive/story-engine.dip) | Choose-your-own-adventure with branching narrative. |
+| [`model-debate.dip`](interactive/model-debate.dip) | Multi-model debate arena — Claude, GPT, and Gemini argue, you judge. |
 
 ## How It Works
 

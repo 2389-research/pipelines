@@ -1,6 +1,13 @@
 # macOS
 .DS_Store
 
+# Pipeline runtime artifacts
+.private-journal/
+.tracker/
+output.txt
+runs/
+.ai/
+
 # Throwaway experiment workdirs — generated artifacts (sprint specs, contracts,
 # ledgers, runner outputs) live here during iteration. The reproducible
 # inputs are checked into experiments/<project>/.ai/ on the source branches;

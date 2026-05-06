@@ -1,0 +1,698 @@
+# ABOUTME: Three-tier PAR audit pipeline verifying behavior evidence quality after each iteration.
+# ABOUTME: Reads artifacts from iter_extract and iter_scope, audits deep evidence/impacted behavior/sentinel regression, outputs "clean" or "gaps".
+workflow IterAudit
+  goal: "Three-tier PAR audit verifying behavior evidence quality: deep evidence for current iteration, impacted behavior for touched scenarios, sentinel corpus regression check"
+  start: Start
+  exit: Exit
+
+  defaults
+    model: claude-sonnet-4-6
+    provider: anthropic
+    max_retries: 3
+    max_restarts: 20
+
+  agent Start
+    label: Start
+    prompt:
+      Begin iteration audit pipeline. Acknowledging pipeline start — do not read or write any files.
+
+  agent Exit
+    label: Exit
+    prompt:
+      Iteration audit pipeline complete.
+
+  tool read_iteration_state
+    label: "Read Iteration State"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-audit-temp
+      if [ ! -f .ai/iter-current-iteration.txt ]; then
+        printf 'state-missing-.ai/iter-current-iteration.txt'
+        exit 0
+      fi
+      iter_id=$(cat .ai/iter-current-iteration.txt | tr -d '[:space:]')
+      if [ -z "$iter_id" ]; then
+        printf 'state-missing-iter-id-empty'
+        exit 0
+      fi
+      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+        printf 'state-missing-roadmap.md'
+        exit 0
+      fi
+      if [ ! -d docs/superpowers/iterations/requirements ] || [ -z "$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null)" ]; then
+        printf 'state-missing-requirements-directory'
+        exit 0
+      fi
+      if [ ! -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+        printf 'state-missing-behavior-scenarios.md'
+        exit 0
+      fi
+      has_baseline=false
+      if [ -f .ai/iter-sentinel-baseline.txt ]; then
+        has_baseline=true
+      fi
+      printf 'state-ready-%s baseline:%s' "$iter_id" "$has_baseline"
+
+  agent no_state_exit
+    label: "No State Found"
+    auto_status: true
+    prompt:
+      The iteration audit pipeline cannot proceed — required state files are missing.
+
+      Required files:
+      - .ai/iter-current-iteration.txt — the current iteration ID (e.g. ITER-0001)
+      - docs/superpowers/iterations/roadmap.md — the iteration roadmap
+      - docs/superpowers/iterations/requirements/ — per-epic story files
+      - docs/superpowers/iterations/behavior-scenarios.md — scenario registry
+
+      Optional but recommended:
+      - .ai/iter-sentinel-baseline.txt — pre-iteration sentinel baseline (tier 3 audit will skip regression comparison without it)
+
+      STATUS: fail
+
+      To produce these files:
+      1. Run iter_extract.dip to extract requirements and scenarios
+      2. Run iter_scope.dip to define the roadmap
+      3. Set .ai/iter-current-iteration.txt to the iteration being audited
+      4. Run sentinel scenarios and capture baseline to .ai/iter-sentinel-baseline.txt before starting work
+
+  tool check_tbd_scenarios
+    label: "Check for TBD Scenarios on Done Stories"
+    timeout: 15s
+    command:
+      set -euo pipefail
+      corpus="docs/superpowers/iterations/behavior-corpus.md"
+      roadmap="docs/superpowers/iterations/roadmap.md"
+      if [ ! -f "$corpus" ]; then
+        printf 'tbd-check-no-corpus'
+        exit 0
+      fi
+      done_stories=""
+      if [ -f "$roadmap" ]; then
+        done_stories=$(grep -B5 '^\*\*Status:\*\* done' "$roadmap" | grep -oE 'STORY-[0-9]+' | sort -u || true)
+      fi
+      if [ -z "$done_stories" ]; then
+        printf 'tbd-check-ok-no-done-stories'
+        exit 0
+      fi
+      tbd_count=0
+      tbd_list=""
+      while IFS= read -r line; do
+        case "$line" in
+          *"| TBD |"*|*"| TBD"*)
+            for story_id in $done_stories; do
+              if printf '%s' "$line" | grep -qF "$story_id"; then
+                tbd_count=$((tbd_count + 1))
+                scenario_id=$(printf '%s' "$line" | grep -oE '(SCENARIO|JOURNEY)-[0-9]+' | head -1)
+                tbd_list="${tbd_list}${scenario_id:-unknown}:${story_id} "
+              fi
+            done
+            ;;
+        esac
+      done < "$corpus"
+      if [ "$tbd_count" -gt 0 ]; then
+        printf 'tbd-check-fail-%d %s' "$tbd_count" "$tbd_list"
+        exit 0
+      fi
+      printf 'tbd-check-ok'
+
+  agent tbd_gate_fail
+    label: "TBD Gate Failed"
+    auto_status: true
+    prompt:
+      The TBD scenario gate has FAILED. There are done stories with scenarios that still have "TBD" as their test command in behavior-corpus.md.
+
+      This means the pipeline declared stories complete without actual test evidence. This is a hard stop.
+
+      Report the TBD scenarios found (from the tool output) and instruct that real test commands must be written before the audit can proceed.
+
+      STATUS: fail
+
+  parallel par_tier1_dispatch -> par_tier1_auditor_a, par_tier1_auditor_b
+
+  agent par_tier1_auditor_a
+    label: "Tier 1 Auditor A — AC Traceability"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      ## Competitive Context
+
+      You are Auditor A (AC Traceability Specialist). A parallel auditor with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: For each AC, does implementing code exist?
+
+      You trace TOP-DOWN from story cards into the codebase. Your question: "Is each AC actually implemented?"
+
+      Read .ai/iter-current-iteration.txt for the current iteration ID. Read docs/superpowers/iterations/roadmap.md to identify stories marked done for this iteration. For each story, read its full card from docs/superpowers/iterations/requirements/.
+
+      ### Method
+
+      For EACH story marked done in this iteration:
+      1. Read every AC and its proof obligation (behavioral_impact, proof_seam)
+      2. SEARCH the codebase for the implementing code — grep for key terms from the AC
+      3. Read the implementing file:line — does the code actually do what the AC says?
+      4. Flag: AC where no implementing code can be found
+      5. Flag: AC where code exists but does something different than specified
+      6. Flag: AC where implementation is a stub/TODO/placeholder
+
+      Also scan for UNREQUESTED features:
+      - Run `git diff HEAD~1 --name-only` to see all changed files
+      - For each changed file, can you trace the change to a specific AC?
+      - Flag changes that don't trace to any AC (scope creep)
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
+
+      ## Report Format
+
+      ### Tier 1: AC Traceability
+      For each story:
+      - STORY-NNNN: PASS | FAIL
+        - AC-N: IMPLEMENTED at [file:line] | MISSING | WRONG — [explanation]
+
+      Unrequested features: [file:line changes not traceable to any AC] or "none"
+
+  agent par_tier1_auditor_b
+    label: "Tier 1 Auditor B — Evidence Seam Adequacy"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      ## Competitive Context
+
+      You are Auditor B (Evidence Seam Specialist). A parallel auditor with a DIFFERENT analytical lens is evaluating the same work. You will NOT see each other's findings. Score 5 points per serious/critical finding. False positives cost 3 points.
+
+      ---
+
+      ## Your Lens: Is the test evidence at the right proof seam?
+
+      You trace BOTTOM-UP from tests into the story cards. Your question: "Does each test prove what the AC claims at the declared seam?"
+
+      Read .ai/iter-current-iteration.txt for the current iteration ID. Read docs/superpowers/iterations/behavior-scenarios.md. Read docs/superpowers/iterations/behavior-corpus.md.
+
+      ### Method
+
+      For EACH scenario added or updated this iteration:
+      1. Read the scenario definition (preconditions, steps, final_observables)
+      2. Find its test command in behavior-corpus.md
+      3. Run the test command — do NOT skip this step
+      4. Read the test code: what does it ACTUALLY verify?
+      5. Compare declared proof_seam vs actual test scope:
+         - unit: tests a single function/method in isolation
+         - integration: tests multiple components working together
+         - app-level: tests through the application's interface
+         - process-level: tests cross-process communication
+         - e2e: tests the full user-visible journey
+      6. REJECT: declared seam is "app-level" but test only calls internal functions (unit)
+      7. REJECT: declared seam is "e2e" but test doesn't run the full application
+      8. Flag: scenario with no test command (TBD) — this is NOT acceptable for a done story
+
+      Also check corpus completeness:
+      - Every scenario in behavior-scenarios.md for done stories has a corpus entry
+      - Every corpus entry has a non-TBD command
+      - Observable behavior in code without a corpus entry
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
+
+      ## Report Format
+
+      ### Tier 1: Evidence Seam Analysis
+      For each scenario:
+      - SCENARIO-NNNN: ADEQUATE | WEAK | MISSING
+        - Declared seam: [seam] | Actual seam: [seam] | MATCH | MISMATCH
+        - Test runs: PASS | FAIL | ERROR | TBD
+
+      Corpus gaps: [scenarios without entries or with TBD commands] or "none"
+
+  fan_in par_tier1_join <- par_tier1_auditor_a, par_tier1_auditor_b
+
+  agent par_tier1_aggregate
+    label: "Tier 1 Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    auto_status: true
+    prompt:
+      Read both Tier 1 PAR reviewer outputs from par_tier1_auditor_a and par_tier1_auditor_b.
+
+      Aggregate the findings:
+      - Same finding from both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      Write the aggregated findings to .ai/iter-audit-temp/tier1_findings.md. Include:
+      - Per-story verdict (PASS/FAIL) with AC breakdown
+      - Consolidated list of weak evidence findings
+      - Unrequested features found
+      - Observable behavior without corpus entries
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when all stories have adequate evidence for all ACs.
+      Use STATUS: fail when any story has a failing AC or weak evidence at wrong seam.
+
+  parallel par_tier2_dispatch -> par_tier2_auditor_a, par_tier2_auditor_b
+
+  agent par_tier2_auditor_a
+    label: "Tier 2 Auditor A — Execution Verifier"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+
+      Rules:
+      - Findings must be real and justified with file:line references
+      - Nitpicks don't count toward scoring
+      - False positives are worse than missing things
+      - Be thorough — your competitor is being thorough too
+
+      ---
+
+      ## Tier 2A: Test Execution & Result Verification
+
+      Your lens: **Run every impacted scenario command and verify the actual outputs match expected observables.** You are the execution engine — your job is ground truth from real test runs.
+
+      Read .ai/iter-current-iteration.txt to get the current iteration ID.
+      Read docs/superpowers/iterations/roadmap.md to identify stories committed this iteration.
+      Read docs/superpowers/iterations/behavior-scenarios.md for the scenario registry.
+      Read docs/superpowers/iterations/behavior-corpus.md for test commands.
+
+      Build the impact chain:
+      1. Run git diff --name-only against the pre-iteration baseline to get changed files
+      2. For each changed file, identify which story it implements (from roadmap task-to-file mapping)
+      3. For each affected story, find scenarios with that story in owning_stories
+
+      For EACH impacted scenario:
+      1. Read the scenario definition (preconditions, steps, final_observables)
+      2. Locate the test command in behavior-corpus.md
+      3. Run the command. Capture: exit code, stdout, stderr, wall time
+      4. Compare actual output against final_observables:
+         - Does each observable have corresponding output evidence?
+         - Are assertion messages consistent with the scenario description?
+         - Did the test exercise the documented preconditions or skip setup?
+      5. For commands that ERROR (not FAIL): diagnose whether the error is infrastructure (flaky) vs. real breakage
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
+
+      ## Report Format
+
+      ### Tier 2A: Execution Verification
+      Changed files: list files from git diff
+      Impact chain: file → story → scenario mapping
+
+      For each impacted scenario:
+      - SCENARIO-NNNN / JOURNEY-NNNN: PASS | FAIL | ERROR
+        - Command: exact command run
+        - Exit code: N
+        - Wall time: Ns
+        - Observable coverage: N/M observables verified by output
+        - Missing observables: list any not evidenced in output
+        - Error diagnosis: infrastructure | real-breakage (if ERROR)
+
+  agent par_tier2_auditor_b
+    label: "Tier 2 Auditor B — Drift Detector"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+
+      Rules:
+      - Findings must be real and justified with file:line references
+      - Nitpicks don't count toward scoring
+      - False positives are worse than missing things
+      - Be thorough — your competitor is being thorough too
+
+      ---
+
+      ## Tier 2B: Behavioral Drift & Semantic Analysis
+
+      Your lens: **Read the code diffs and scenario definitions side by side to detect semantic drift — cases where behavior changed in meaning even though tests still pass.** You do NOT run tests. You analyze whether the scenario descriptions still truthfully describe what the code does.
+
+      Read .ai/iter-current-iteration.txt to get the current iteration ID.
+      Read docs/superpowers/iterations/roadmap.md to identify stories committed this iteration.
+      Read docs/superpowers/iterations/behavior-scenarios.md for the scenario registry.
+
+      Build the impact chain (same as Auditor A — file → story → scenario).
+
+      For EACH impacted scenario, perform semantic analysis:
+      1. Read the full git diff for each file implementing the scenario's owning stories
+      2. Read the scenario's preconditions, steps, and final_observables
+      3. Check for semantic drift categories:
+         a. **Precondition erosion**: Did the code remove or weaken a setup step that the scenario assumes? (e.g., scenario says "given an authenticated user" but auth middleware was refactored)
+         b. **Step divergence**: Do the scenario steps still match the actual code path? (e.g., scenario says "user clicks submit" but the endpoint was renamed/moved)
+         c. **Observable shift**: Did the meaning of an output change even if the format is the same? (e.g., a "total" field that used to include tax now excludes it)
+         d. **Hidden dependency**: Did the change introduce a new dependency that the scenario doesn't account for? (e.g., new cache layer that affects behavior under cold-start)
+         e. **Scope creep**: Did the change add behavior that no scenario covers? (new error paths, new edge cases)
+      4. For each drift finding, cite the specific diff hunk and scenario line that conflict
+
+      ### Mandatory TBD Check
+      For every scenario in behavior-corpus.md associated with done stories: if the test command is "TBD", report it as a CRITICAL finding. A TBD command on a done story means there is NO test evidence — this is an automatic failure regardless of all other results.
+
+      ## Report Format
+
+      ### Tier 2B: Drift Analysis
+      Impact chain: file → story → scenario mapping
+
+      For each impacted scenario:
+      - SCENARIO-NNNN / JOURNEY-NNNN: NO-DRIFT | DRIFTED
+        - Precondition erosion: NONE | description with diff reference
+        - Step divergence: NONE | description with diff reference
+        - Observable shift: NONE | description with diff reference
+        - Hidden dependency: NONE | description with diff reference
+        - Scope creep: NONE | list of uncovered new behaviors
+        - Recommendation: keep as-is | update preconditions | update steps | update observables | rewrite | add new scenario
+
+  fan_in par_tier2_join <- par_tier2_auditor_a, par_tier2_auditor_b
+
+  agent par_tier2_aggregate
+    label: "Tier 2 Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    auto_status: true
+    prompt:
+      Read both Tier 2 PAR reviewer outputs from par_tier2_auditor_a and par_tier2_auditor_b.
+
+      Aggregate the findings:
+      - Same finding from both reviewers = high confidence, must be addressed
+      - Unique finding from one reviewer = still actionable, include it
+      - Severity disagreement between reviewers = take the worst (higher) severity
+
+      Write the aggregated findings to .ai/iter-audit-temp/tier2_findings.md. Include:
+      - List of impacted scenarios examined
+      - Per-scenario verdict (PASS/FAIL/NEEDS-UPDATE)
+      - Behavioral drift descriptions for any scenario that needs updating
+      - Recommended actions for each flagged scenario
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when all impacted scenarios still correctly represent system behavior.
+      Use STATUS: fail when any scenario fails its test or has unaddressed behavioral drift.
+
+  parallel par_tier3_dispatch -> par_tier3_auditor_a, par_tier3_auditor_b
+
+  agent par_tier3_auditor_a
+    label: "Tier 3 Auditor A — Command Executor"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer A. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+
+      Rules:
+      - Findings must be real and justified with file:line references
+      - Nitpicks don't count toward scoring
+      - False positives are worse than missing things
+      - Be thorough — your competitor is being thorough too
+
+      ---
+
+      ## Tier 3A: Sentinel Execution & Raw Results
+
+      Your lens: **Run every sentinel test command and produce a faithful record of exactly what happened.** You are the execution engine. Your job is to generate ground-truth results that the aggregator can trust. Do NOT interpret or classify results — just run and report.
+
+      Read docs/superpowers/iterations/behavior-corpus.md to get the complete sentinel corpus table.
+
+      For EACH scenario in the corpus with cadence "sentinel":
+      1. Extract the exact test command from the corpus table
+      2. Validate the command is safe to run (no rm, no write operations outside test dirs)
+      3. Run the command
+      4. Capture with full fidelity:
+         - Exit code (0 = pass, non-zero = fail/error)
+         - Stdout (last 100 lines if truncated)
+         - Stderr (last 50 lines if truncated)
+         - Wall clock time
+      5. If the command fails to execute (not found, permission denied, timeout): record as EXEC-ERROR with the system error message. Do NOT retry — record the failure faithfully.
+      6. If the command takes longer than 60 seconds, record as TIMEOUT
+
+      Do NOT read the baseline file. Do NOT classify results as regression/improvement. That is Auditor B's job. You produce raw execution data only.
+
+      ### Mandatory TBD Check
+      Before running sentinels: scan the corpus for any sentinel scenario with "TBD" as its test command. Report each as a CRITICAL finding — a sentinel with no command cannot be executed and represents a gap in the regression safety net.
+
+      ## Report Format
+
+      ### Tier 3A: Sentinel Execution Results
+      Total sentinels found: N
+      Total executed: N
+      Total EXEC-ERROR: N
+      Total TIMEOUT: N
+
+      For each sentinel scenario:
+      - SCENARIO-NNNN / JOURNEY-NNNN:
+        - Command: exact command run
+        - Exit code: N
+        - Result: PASS (exit 0) | FAIL (exit non-zero) | EXEC-ERROR | TIMEOUT
+        - Wall time: Ns
+        - Stdout summary: first/last few lines or "empty"
+        - Stderr summary: first/last few lines or "empty"
+
+  agent par_tier3_auditor_b
+    label: "Tier 3 Auditor B — Regression Classifier"
+    model: claude-opus-4-7
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      ## Competitive Context
+
+      You are Reviewer B. Score 5 points per serious/critical finding. A parallel reviewer is evaluating the same work right now. You will NOT see each other's findings.
+
+      Rules:
+      - Findings must be real and justified with file:line references
+      - Nitpicks don't count toward scoring
+      - False positives are worse than missing things
+      - Be thorough — your competitor is being thorough too
+
+      ---
+
+      ## Tier 3B: Baseline Comparison & Regression Classification
+
+      Your lens: **Run every sentinel, read the baseline, and classify each result against prior state.** You are the regression detector. Your job is to determine what changed, whether it matters, and how severe it is.
+
+      Read docs/superpowers/iterations/behavior-corpus.md for the sentinel corpus table.
+      Read .ai/iter-sentinel-baseline.txt if it exists — this contains pre-iteration results.
+
+      For EACH scenario in the corpus with cadence "sentinel":
+      1. Extract the test command from the corpus table
+      2. Run the command and capture exit code + output
+      3. Look up the scenario in the baseline file (match by scenario ID)
+      4. Classify the result:
+         - **REGRESSION**: passed in baseline, fails now — CRITICAL severity
+         - **IMPROVEMENT**: failed in baseline, passes now — INFO
+         - **STABLE-PASS**: passed before and after — INFO
+         - **STABLE-FAIL**: failed before and after — IMPORTANT (known debt)
+         - **NEW**: not in baseline (new sentinel added this iteration) — INFO
+         - **FLAKY**: inconsistent with baseline but test output suggests non-determinism (timing, ordering) — IMPORTANT, needs investigation
+      5. For each REGRESSION, perform root cause triage:
+         a. Read the git diff for files related to the scenario's owning stories
+         b. Identify the most likely change that caused the regression
+         c. Assess: is this a real functional regression or a test environment issue?
+
+      If no baseline file exists, run all sentinels and classify every result as either PASS-NO-BASELINE or FAIL-NO-BASELINE. Note the absence of baseline prominently — the aggregator needs to know regression detection was not possible.
+
+      ### Mandatory TBD Check
+      Before running sentinels: scan the corpus for any sentinel scenario with "TBD" as its test command. Report each as a CRITICAL finding — a sentinel with no command cannot be executed and represents a gap in the regression safety net.
+
+      ## Report Format
+
+      ### Tier 3B: Regression Classification
+      Baseline available: YES | NO
+      Baseline scenarios: N (if available)
+      Current sentinels: N
+
+      For each sentinel scenario:
+      - SCENARIO-NNNN / JOURNEY-NNNN: REGRESSION | IMPROVEMENT | STABLE-PASS | STABLE-FAIL | NEW | FLAKY
+        - Current result: PASS | FAIL | ERROR
+        - Baseline result: PASS | FAIL | "not in baseline"
+        - Severity: CRITICAL | IMPORTANT | INFO
+        - Root cause (regressions only): likely change + assessment
+
+      Summary:
+      - Total regressions: N (CRITICAL)
+      - Total flaky: N (IMPORTANT)
+      - Total stable-fail: N (IMPORTANT — known debt)
+      - Total improvements: N
+      - Total stable-pass: N
+
+  fan_in par_tier3_join <- par_tier3_auditor_a, par_tier3_auditor_b
+
+  agent par_tier3_aggregate
+    label: "Tier 3 Aggregate"
+    model: gemini-3-flash-preview
+    provider: gemini
+    prompt:
+      Read both Tier 3 PAR reviewer outputs from par_tier3_auditor_a and par_tier3_auditor_b.
+
+      Aggregate the findings:
+      - Regression found by either reviewer = confirmed CRITICAL regression (do not require both to agree)
+      - Improvement found by both = confirmed improvement
+      - Discrepancies in test results between reviewers = flag as UNCERTAIN, treat as CRITICAL
+
+      Write the aggregated findings to .ai/iter-audit-temp/tier3_findings.md. Include:
+      - Baseline availability
+      - Per-sentinel verdict
+      - Total confirmed regressions (CRITICAL count)
+      - Total confirmed improvements
+      - Uncertain results requiring manual verification
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when there are zero confirmed regressions and zero uncertain results.
+      Use STATUS: fail when any regression is confirmed or any result is uncertain.
+
+  agent synthesize_audit
+    label: "Synthesize Audit"
+    model: claude-opus-4-6
+    reasoning_effort: high
+    auto_status: true
+    prompt:
+      Read all three tier findings files:
+      - .ai/iter-audit-temp/tier1_findings.md
+      - .ai/iter-audit-temp/tier2_findings.md
+      - .ai/iter-audit-temp/tier3_findings.md
+
+      Determine the overall audit verdict:
+      - ALL tiers pass → verdict is CLEAN
+      - ANY tier fails → verdict is GAPS FOUND
+
+      For a CLEAN verdict: summarize what was verified and confirm the iteration is complete.
+
+      For a GAPS FOUND verdict: for each failing tier, specify exactly what gap stories need to be created:
+      - Tier 1 AC failures → one gap story per failing AC, type: evidence-gap
+      - Tier 1 weak evidence → one gap story per weak seam, type: evidence-improvement
+      - Tier 1 unrequested feature → one gap story to document or remove, type: scope-violation
+      - Tier 2 scenario failures → one gap story per failing scenario, type: scenario-fix
+      - Tier 2 behavioral drift → one gap story per drifted scenario, type: scenario-update
+      - Tier 3 regressions → one CRITICAL gap story per regression, type: regression-fix
+
+      For each gap story, provide:
+      - Title
+      - Type (evidence-gap | evidence-improvement | scope-violation | scenario-fix | scenario-update | regression-fix)
+      - Which tier finding triggered it
+      - Which story/scenario/AC is affected
+      - Severity (CRITICAL for regressions, HIGH for failing ACs, MEDIUM for weak evidence/drift)
+
+      End your response with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when verdict is CLEAN (all tiers pass).
+      Use STATUS: fail when verdict is GAPS FOUND (any tier fails).
+
+  agent write_gap_stories
+    label: "Write Gap Stories"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    prompt:
+      Read the audit synthesis from synthesize_audit. Create gap stories for every failing finding.
+
+      Read:
+      1. .ai/iter-audit-temp/tier1_findings.md
+      2. .ai/iter-audit-temp/tier2_findings.md
+      3. .ai/iter-audit-temp/tier3_findings.md
+      4. docs/superpowers/iterations/roadmap.md (to determine the next follow-up iteration ID)
+      5. All epic files in docs/superpowers/iterations/requirements/ (to find where to append gap stories)
+
+      For each gap story specified by the synthesis:
+      - Append to the appropriate epic file in docs/superpowers/iterations/requirements/
+      - Use the next available STORY-NNNN ID in that epic
+      - Status: pending
+      - Mark CRITICAL stories prominently in the title with [CRITICAL]
+
+      Story format:
+      ## STORY-NNNN — [CRITICAL] <Title>
+      **As a** developer, **I want** <capability>, **so that** <benefit>
+      **Type:** <evidence-gap | evidence-improvement | scope-violation | scenario-fix | scenario-update | regression-fix>
+      **Triggered by:** Tier <1|2|3> audit finding — <description>
+      **Affects:** <STORY-NNNN | SCENARIO-NNNN | AC reference>
+      **Severity:** CRITICAL | HIGH | MEDIUM
+      **Acceptance criteria:**
+      - AC-1: <specific testable criterion that closes the gap> · impact:<impact> · seam:<seam>
+      **Status:** pending
+
+      After writing all gap stories, update docs/superpowers/iterations/roadmap.md:
+      - Add a new follow-up iteration section (ITER-XXXX-gap-remediation or similar) containing all gap story IDs
+      - Set its status to pending
+
+      Write .ai/iter-audit-result.txt with the single word:
+      gaps
+
+  tool commit_gaps
+    label: "Commit Gaps"
+    timeout: 30s
+    command:
+      set -euo pipefail
+      git add docs/superpowers/iterations/
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+      else
+        git commit -m "docs: add gap stories from iteration audit"
+        printf 'committed'
+      fi
+
+  tool report_gaps
+    label: "Report Gaps"
+    timeout: 5s
+    command:
+      printf 'gaps'
+
+  tool report_clean
+    label: "Report Clean"
+    timeout: 5s
+    command:
+      # Overwrite stale gaps from prior iterations so orchestrator sees clean state
+      printf 'AUDIT_CLEAN' > .ai/iter-audit-result.txt
+      printf 'clean'
+
+  edges
+    Start -> read_iteration_state
+    read_iteration_state -> no_state_exit          when ctx.tool_stdout startswith state-missing  label: no_state
+    read_iteration_state -> check_tbd_scenarios     when ctx.tool_stdout startswith state-ready    label: ready
+    read_iteration_state -> check_tbd_scenarios
+    check_tbd_scenarios -> par_tier1_dispatch      when ctx.tool_stdout startswith tbd-check-ok   label: no_tbds
+    check_tbd_scenarios -> tbd_gate_fail           when ctx.tool_stdout startswith tbd-check-fail label: has_tbds
+    check_tbd_scenarios -> par_tier1_dispatch
+    tbd_gate_fail -> Exit
+    no_state_exit -> Exit
+    par_tier1_dispatch -> par_tier1_auditor_a
+    par_tier1_dispatch -> par_tier1_auditor_b
+    par_tier1_auditor_a -> par_tier1_join
+    par_tier1_auditor_b -> par_tier1_join
+    par_tier1_join -> par_tier1_aggregate
+    par_tier1_aggregate -> par_tier2_dispatch
+    par_tier2_dispatch -> par_tier2_auditor_a
+    par_tier2_dispatch -> par_tier2_auditor_b
+    par_tier2_auditor_a -> par_tier2_join
+    par_tier2_auditor_b -> par_tier2_join
+    par_tier2_join -> par_tier2_aggregate
+    par_tier2_aggregate -> par_tier3_dispatch
+    par_tier3_dispatch -> par_tier3_auditor_a
+    par_tier3_dispatch -> par_tier3_auditor_b
+    par_tier3_auditor_a -> par_tier3_join
+    par_tier3_auditor_b -> par_tier3_join
+    par_tier3_join -> par_tier3_aggregate
+    par_tier3_aggregate -> synthesize_audit
+    synthesize_audit -> report_clean              when ctx.outcome = success   label: clean
+    synthesize_audit -> write_gap_stories         when ctx.outcome = fail      label: gaps_found
+    write_gap_stories -> commit_gaps
+    commit_gaps -> report_gaps
+    report_gaps -> Exit
+    report_clean -> Exit

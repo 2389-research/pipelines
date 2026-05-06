@@ -1,0 +1,187 @@
+# ABOUTME: End-to-end pipeline: decompose a spec into YAML sprints, then execute them all.
+# ABOUTME: Chains spec_to_sprints_yaml.dip → sprint_runner_yaml.dip autonomously.
+workflow SpecToShipYaml
+  goal: "Full soup-to-nuts pipeline: decompose a spec into YAML-based sprints, get human approval, then execute every sprint in sequence until the project is built."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 50
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    prompt:
+      Begin full spec-to-ship pipeline. This will:
+      1. Decompose the spec into sprints (multi-model tournament with human approval)
+      2. Execute every sprint in sequence until done or failure
+
+  agent Exit
+    label: Exit
+    prompt:
+      Spec-to-ship pipeline complete.
+
+  tool check_yq
+    label: "Check yq"
+    timeout: 5s
+    command:
+      set -eu
+      if ! command -v yq >/dev/null 2>&1; then
+        printf 'yq-not-found'
+        exit 0
+      fi
+      printf 'yq-ok'
+
+  agent yq_missing
+    label: "yq Not Found"
+    prompt:
+      The yq YAML processor is required but not installed. The pipeline cannot proceed.
+
+      Install it and re-run:
+        macOS:  brew install yq
+        Linux:  snap install yq  OR  wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+  subgraph decompose
+    ref: spec_to_sprints_yaml.dip
+
+  tool verify_decomposition
+    label: "Verify Decomposition"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.yaml ]; then
+        printf 'no-ledger'
+        exit 0
+      fi
+      ledger_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
+      yaml_ids=$(find .ai/sprints -maxdepth 1 -type f -name 'SPRINT-*.yaml' 2>/dev/null | sed 's|.*/SPRINT-||;s|\.yaml||' | sort)
+      md_ids=$(find .ai/sprints -maxdepth 1 -type f -name 'SPRINT-*.md' 2>/dev/null | sed 's|.*/SPRINT-||;s|\.md||' | sort)
+      total=$(yq '.sprints | length' .ai/ledger.yaml)
+      bootstrap=$(yq '[.sprints[] | select(.bootstrap == true)] | length' .ai/ledger.yaml)
+      feature=$((total - bootstrap))
+      if [ "$total" -eq 0 ]; then
+        printf 'empty-ledger'
+        exit 0
+      fi
+      if [ "$ledger_ids" != "$yaml_ids" ]; then
+        printf 'ledger-yaml-mismatch'
+        exit 0
+      fi
+      if [ "$ledger_ids" != "$md_ids" ]; then
+        printf 'ledger-md-mismatch'
+        exit 0
+      fi
+      printf 'ready-%s-sprints-%s-bootstrap-%s-feature' "$total" "$bootstrap" "$feature"
+
+  tool verify_execution_complete
+    label: "Verify Execution Complete"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.yaml ]; then
+        printf 'no-ledger-found'
+        exit 0
+      fi
+      remaining=$(yq '[.sprints[] | select(.status != "completed" and .status != "skipped")] | length' .ai/ledger.yaml)
+      if [ "$remaining" -eq 0 ]; then
+        printf 'all-done'
+        exit 0
+      fi
+      printf 'paused-%s-remaining' "$remaining"
+
+  subgraph run_sprints
+    ref: sprint_runner_yaml.dip
+
+  tool final_report
+    label: "Final Report"
+    timeout: 10s
+    command:
+      set -eu
+      if [ ! -f .ai/ledger.yaml ]; then
+        printf 'no-ledger-found'
+        exit 0
+      fi
+      total=$(yq '.sprints | length' .ai/ledger.yaml)
+      done=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
+      skipped=$(yq '[.sprints[] | select(.status == "skipped")] | length' .ai/ledger.yaml)
+      failed=$(yq '[.sprints[] | select(.status == "failed")] | length' .ai/ledger.yaml)
+      in_prog=$(yq '[.sprints[] | select(.status == "in_progress")] | length' .ai/ledger.yaml)
+      planned=$(yq '[.sprints[] | select(.status == "planned")] | length' .ai/ledger.yaml)
+      printf 'total:%s completed:%s skipped:%s failed:%s in_progress:%s planned:%s' "$total" "$done" "$skipped" "$failed" "$in_prog" "$planned"
+
+  agent decompose_failed
+    label: "Decomposition Failed"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: medium
+    prompt:
+      The spec decomposition phase failed. Read any files in .ai/ that exist and summarize what went wrong. Suggest concrete next steps for recovery.
+
+  agent execution_failed
+    label: "Execution Failed"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      Sprint execution failed partway through the project build.
+
+      Read .ai/ledger.yaml and .ai/current_sprint_id.txt. Report:
+      1. Which sprint failed
+      2. How many sprints completed before the failure
+      3. Whether the project is in a usable partial state
+      4. Concrete next steps (re-run pipeline, fix manually, etc.)
+
+  agent execution_paused
+    label: "Execution Paused"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: medium
+    prompt:
+      Sprint execution exited without completing all sprints.
+
+      Read .ai/ledger.yaml and .ai/current_sprint_id.txt if it exists. Report:
+      1. How many sprints remain incomplete
+      2. The last completed or active sprint
+      3. That the project is paused or partial, not fully shipped
+      4. The exact next action to resume execution
+
+  agent ship_summary
+    label: "Ship Summary"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    prompt:
+      The full spec-to-ship pipeline has completed. Read .ai/ledger.yaml and summarize:
+      1. Total sprints executed
+      2. Final status of each sprint
+      3. Whether the project appears fully built
+      4. Any recommended post-build actions (manual testing, deployment, etc.)
+
+  edges
+    Start -> check_yq
+    check_yq -> decompose          when ctx.tool_stdout = yq-ok         label: yq_ok
+    check_yq -> yq_missing         when ctx.tool_stdout = yq-not-found  label: yq_missing
+    check_yq -> yq_missing
+    yq_missing -> Exit
+    decompose -> verify_decomposition  when ctx.outcome = success  label: decomposed
+    decompose -> decompose_failed      when ctx.outcome = fail     label: decompose_fail
+    decompose -> decompose_failed
+    verify_decomposition -> run_sprints            when ctx.tool_stdout startswith ready-        label: sprints_ready
+    verify_decomposition -> decompose_failed       when ctx.tool_stdout = no-ledger              label: no_ledger
+    verify_decomposition -> decompose_failed       when ctx.tool_stdout = empty-ledger           label: empty_ledger
+    verify_decomposition -> decompose_failed       when ctx.tool_stdout = ledger-yaml-mismatch   label: yaml_mismatch
+    verify_decomposition -> decompose_failed       when ctx.tool_stdout = ledger-md-mismatch     label: md_mismatch
+    verify_decomposition -> decompose_failed
+    run_sprints -> verify_execution_complete   when ctx.outcome = success  label: runner_done
+    run_sprints -> execution_failed            when ctx.outcome = fail     label: exec_fail
+    run_sprints -> execution_failed
+    verify_execution_complete -> final_report       when ctx.tool_stdout = all-done            label: fully_complete
+    verify_execution_complete -> execution_paused   when ctx.tool_stdout startswith paused-     label: paused
+    verify_execution_complete -> execution_failed   when ctx.tool_stdout = no-ledger-found      label: missing_ledger
+    verify_execution_complete -> execution_failed
+    final_report -> ship_summary
+    ship_summary -> Exit
+    decompose_failed -> Exit
+    execution_paused -> Exit
+    execution_failed -> Exit
