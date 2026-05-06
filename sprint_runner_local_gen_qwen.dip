@@ -515,7 +515,7 @@ workflow SprintRunnerLocalGenQwen
     model: gpt-5.4
     provider: openai
     max_turns: 5
-    reasoning_effort: high
+    reasoning_effort: low
     retry_target: RunTests
     max_retries: 6
     fallback_target: Escalate
