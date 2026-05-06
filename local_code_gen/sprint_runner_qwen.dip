@@ -1,4 +1,4 @@
-workflow SprintRunnerLocalGenQwenSR
+workflow SprintRunnerLocalGenQwen
   goal: "Loop through .ai/ledger.tsv executing every pending sprint with the local-gen pattern. Each sprint: qwen3.6:35b-a3b-q8_0 generates files, runs tests, fixes locally, escalates to gpt-5.4 only on local exhaustion. Per-sprint commit. Stops on first sprint that does not converge."
   start: Start
   exit: Exit
