@@ -1,0 +1,293 @@
+workflow BenchLocalFixSR
+  goal: "Minimal dip that exercises the SR + rollback LocalFix logic against a pre-broken Python project. No generation, no ledger, no audit. Used to validate the LocalFix tool body in isolation against the local_llm_patch_bench fixtures."
+  start: Setup
+  exit: Done
+
+  defaults
+    provider: openai
+    fidelity: summary:low
+    max_restarts: 30
+
+  tool Setup
+    label: "Detect proj_root + install deps + initial test"
+    timeout: 300s
+    command:
+      set +e
+      WORKDIR_ABS=$(pwd)
+      mkdir -p .ai
+      rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/passing_pre.txt .ai/escalation.txt
+      rm -rf .ai/snapshot_pre_local .ai/snapshot_round_pre
+
+      proj_root="."
+      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
+        proj_root="backend"
+      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
+        proj_root="frontend"
+      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
+        proj_root="server"
+      elif [ -f api/pyproject.toml ] || [ -f api/go.mod ]; then
+        proj_root="api"
+      fi
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+      echo "Setup: proj_root=$proj_root cwd=$WORKDIR_ABS" >&2
+
+      cd "$proj_root"
+      if [ -f pyproject.toml ]; then
+        uv sync --all-extras > "$WORKDIR_ABS/.ai/install.log" 2>&1 || uv sync >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
+      elif [ -f go.mod ]; then
+        go mod tidy 2>/dev/null || true
+      elif [ -f package.json ]; then
+        npm install 2>/dev/null || true
+      fi
+
+      printf 'setup-done'
+
+  tool RunTests
+    label: "Run tests"
+    timeout: 600s
+    command:
+      set +e
+      mkdir -p .ai
+      WORKDIR_ABS=$(pwd)
+      proj_root=$(cat .ai/proj_root.txt 2>/dev/null)
+      if [ -z "$proj_root" ]; then
+        proj_root="."
+        if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
+          proj_root="backend"
+        elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
+          proj_root="frontend"
+        elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
+          proj_root="server"
+        fi
+        printf '%s' "$proj_root" > .ai/proj_root.txt
+      fi
+      cd "$proj_root"
+      code=0
+      if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        uv run pytest -v > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      elif [ -f go.mod ]; then
+        go test ./... > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      elif [ -f package.json ]; then
+        npm test > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
+      else
+        echo "no test runner detected" > "$WORKDIR_ABS/.ai/last_test_output.txt"; code=1
+      fi
+      cd "$WORKDIR_ABS"
+      tail -10 .ai/last_test_output.txt
+      if [ $code -eq 0 ]; then
+        printf 'tests-pass'
+      elif [ -f .ai/local_exhausted ]; then
+        printf 'tests-fail-cloud'
+      else
+        printf 'tests-fail'
+      fi
+
+  tool LocalFix
+    label: "Local fix (qwen3.6:35b-a3b-q8_0, SR + rollback)"
+    timeout: 600s
+    command:
+      set +e
+      mkdir -p .ai
+      OLLAMA=http://localhost:11434/api/chat
+      WORKDIR_ABS=$(pwd)
+      proj_root=$(cat .ai/proj_root.txt 2>/dev/null)
+      if [ -z "$proj_root" ]; then
+        proj_root="."
+        if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
+          proj_root="backend"
+        fi
+      fi
+      PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
+
+      MAX_ROUNDS=8
+      MAX_ROLLBACKS=3
+
+      # Locate merge_sr.py: prefer .ai/merge_sr.py (bench wrapper drops it here),
+      # fallback to $PIPELINES_REPO/lib/merge_sr.py if env var set.
+      MERGE_SR=""
+      if [ -f .ai/merge_sr.py ]; then
+        MERGE_SR="$WORKDIR_ABS/.ai/merge_sr.py"
+      elif [ -n "${PIPELINES_REPO:-}" ] && [ -f "$PIPELINES_REPO/lib/merge_sr.py" ]; then
+        MERGE_SR="$PIPELINES_REPO/lib/merge_sr.py"
+      else
+        echo "ERROR: merge_sr.py not found. Place it at .ai/merge_sr.py or set PIPELINES_REPO."
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      snapshot_state() {
+        local snap_dir="$1"
+        rm -rf "$snap_dir"; mkdir -p "$snap_dir"
+        cd "$PROJ_ROOT_ABS"
+        [ -d app ] && cp -R app "$snap_dir/" || true
+        [ -d tests ] && cp -R tests "$snap_dir/" || true
+        [ -d scripts ] && cp -R scripts "$snap_dir/" || true
+        [ -d src ] && cp -R src "$snap_dir/" || true
+        cd "$WORKDIR_ABS"
+      }
+      restore_state() {
+        local snap_dir="$1"
+        cd "$PROJ_ROOT_ABS"
+        [ -d app ] && rm -rf app
+        [ -d tests ] && rm -rf tests
+        [ -d scripts ] && rm -rf scripts
+        [ -d src ] && rm -rf src
+        [ -d "$snap_dir/app" ] && cp -R "$snap_dir/app" .
+        [ -d "$snap_dir/tests" ] && cp -R "$snap_dir/tests" .
+        [ -d "$snap_dir/scripts" ] && cp -R "$snap_dir/scripts" .
+        [ -d "$snap_dir/src" ] && cp -R "$snap_dir/src" .
+        cd "$WORKDIR_ABS"
+      }
+      extract_passing() {
+        grep -E "::[a-zA-Z_][a-zA-Z0-9_]* PASSED " "$1" 2>/dev/null | awk '{print $1}' | sort -u
+      }
+
+      attempts=$(cat .ai/local_fix_attempts 2>/dev/null || echo 0)
+      consecutive_rollbacks=$(cat .ai/consecutive_rollbacks 2>/dev/null || echo 0)
+
+      # Layer 1: regression check (only meaningful from round 2+)
+      if [ "$attempts" -gt 0 ] && [ -f .ai/passing_pre.txt ]; then
+        POST_PASSING=$(mktemp)
+        extract_passing .ai/last_test_output.txt > "$POST_PASSING"
+        DROPPED=$(comm -23 .ai/passing_pre.txt "$POST_PASSING")
+        if [ -n "$DROPPED" ]; then
+          DROPPED_COUNT=$(echo "$DROPPED" | grep -c .)
+          echo "REGRESSION: $DROPPED_COUNT previously-passing test(s) now fail"
+          echo "dropped: $(echo "$DROPPED" | tr '\n' ',' | sed 's/,$//')"
+          echo "rolling back to pre-round snapshot"
+          restore_state .ai/snapshot_round_pre
+          consecutive_rollbacks=$((consecutive_rollbacks + 1))
+          echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+        else
+          echo 0 > .ai/consecutive_rollbacks
+          consecutive_rollbacks=0
+        fi
+        rm -f "$POST_PASSING"
+      fi
+
+      attempts=$((attempts + 1))
+      echo $attempts > .ai/local_fix_attempts
+      echo "local fix round $attempts/$MAX_ROUNDS (consecutive_rollbacks=$consecutive_rollbacks/$MAX_ROLLBACKS)"
+
+      # Exhaustion → restore pre-local for cloud handoff
+      if [ "$attempts" -gt "$MAX_ROUNDS" ] || [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ] || [ -f .ai/local_exhausted ]; then
+        if [ -d .ai/snapshot_pre_local ]; then
+          echo "restoring pre-local snapshot for cloud handoff"
+          restore_state .ai/snapshot_pre_local
+        fi
+        touch .ai/local_exhausted
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      # First round: snapshot pre-local
+      if [ "$attempts" -eq 1 ]; then
+        snapshot_state .ai/snapshot_pre_local
+        echo "saved pre-local snapshot"
+      fi
+
+      # Snapshot pre-round + capture pre-round passing set
+      snapshot_state .ai/snapshot_round_pre
+      extract_passing .ai/last_test_output.txt > .ai/passing_pre.txt
+      PRE_PASS_COUNT=$(wc -l < .ai/passing_pre.txt | tr -d ' ')
+      echo "pre-round passing tests: $PRE_PASS_COUNT"
+
+      # Build context: full app/ source + failing test files
+      cd "$PROJ_ROOT_ABS"
+      FAILING_TESTS=$( { grep -oE 'FAILED [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; \
+                        grep -oE 'ERROR [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; } | sort -u)
+
+      find app -name "*.py" -not -path "*/__pycache__/*" 2>/dev/null | sort > /tmp/lf_app_files.txt
+      printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
+      : > /tmp/lf_context.txt
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
+        cat "$f" >> /tmp/lf_context.txt
+        printf '\n\n' >> /tmp/lf_context.txt
+      done < /tmp/lf_app_files.txt
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        if [ -f "$f" ]; then
+          printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
+          cat "$f" >> /tmp/lf_context.txt
+          printf '\n\n' >> /tmp/lf_context.txt
+        fi
+      done < /tmp/lf_failing_tests.txt
+      CONTEXT=$(cat /tmp/lf_context.txt)
+      rm -f /tmp/lf_app_files.txt /tmp/lf_failing_tests.txt /tmp/lf_context.txt
+
+      FAIL_BLOCKS=$(awk '/^=+ FAILURES =+$/{f=1;next} f && /^=+ short test summary/{exit} f' "$WORKDIR_ABS/.ai/last_test_output.txt")
+      FAIL_SUMMARY=$(grep -E "^(FAILED|ERROR) " "$WORKDIR_ABS/.ai/last_test_output.txt" || true)
+      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || echo 0)
+
+      cd "$WORKDIR_ABS"
+
+      # Optional sprint context (if a spec exists)
+      SPRINT=""
+      if [ -f .ai/sprints/SPRINT-001.md ]; then
+        SPRINT=$(cat .ai/sprints/SPRINT-001.md)
+      fi
+
+      SYS_SR=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s' "You are a code editor that produces SEARCH/REPLACE blocks. Each block looks EXACTLY like this:" "" "app/models.py" "<<<<<<< SEARCH" "    foo: Mapped[int]" "=======" "    foo: Mapped[int] = mapped_column(default=0)" ">>>>>>> REPLACE" "" "Rules: filepath on its own line; SEARCH must match file content EXACTLY (whitespace, indentation, every character); output ONLY SEARCH/REPLACE blocks - no prose, no markdown fences, no explanation; multiple bugs require multiple blocks (each with its own filepath, SEARCH, REPLACE, and markers); each block targets one small change; the replacement must be syntactically valid; do not output entire files - only the lines you are changing with enough surrounding context to be unique.")
+
+      USER_SR=$(printf '%s\n%s\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
+        "There are ${FAIL_COUNT} failing test(s). Read the project context, diagnose the cause(s), and emit SEARCH/REPLACE blocks to fix them." \
+        "IMPORTANT: when a test asserts something the code does not provide (e.g. assert obj.foo raises AttributeError), the FIX is in the source file (add the field), NOT in the test (don't remove the assertion). Tests describe what the code SHOULD do." \
+        "FAILURES SUMMARY:" \
+        "${FAIL_SUMMARY}" \
+        "---" \
+        "DETAILED TRACEBACKS:" \
+        "${FAIL_BLOCKS}" \
+        "---" \
+        "PROJECT CONTEXT (paths relative to project root):" \
+        "${CONTEXT}" \
+        "---SPRINT SPEC---")
+      USER_SR=$(printf '%s\n%s\n%s\n%s' "$USER_SR" "$SPRINT" "---" "Emit SEARCH/REPLACE blocks. Each block's filepath line must use a path relative to the project root (e.g. app/models.py). Do NOT prefix paths with the project root directory name. Address every failure.")
+
+      RESPONSE=$(curl -sf "$OLLAMA" \
+        -H 'Content-Type: application/json' \
+        --data "$(jq -n --arg sys "$SYS_SR" --arg msg "$USER_SR" \
+          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+            messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
+            options:{temperature:0.2,top_p:0.95,top_k:64,num_ctx:32768,num_predict:4096}}')" \
+        | jq -r '.message.content')
+
+      echo "$RESPONSE" > .ai/last_qwen_response.txt
+
+      MERGE_OUT=$(echo "$RESPONSE" | python3 "$MERGE_SR" "$PROJ_ROOT_ABS" 2>&1)
+      echo "$MERGE_OUT" > .ai/last_merge.json
+      APPLIED=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("applied",0))' 2>/dev/null || echo 0)
+      FAILED_BLOCKS=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("failed",0))' 2>/dev/null || echo 0)
+      FILES_TOUCHED=$(echo "$MERGE_OUT" | python3 -c 'import sys,json; r=json.load(sys.stdin).get("results",[]); print(",".join(sorted(set(x["file"] for x in r if x.get("ok")))))' 2>/dev/null || echo "")
+      echo "merger: applied=$APPLIED failed=$FAILED_BLOCKS files=[$FILES_TOUCHED]"
+
+      if [ "$APPLIED" = "0" ]; then
+        consecutive_rollbacks=$((consecutive_rollbacks + 1))
+        echo $consecutive_rollbacks > .ai/consecutive_rollbacks
+        echo "no blocks applied; consecutive failures: $consecutive_rollbacks"
+        if [ "$consecutive_rollbacks" -ge "$MAX_ROLLBACKS" ]; then
+          if [ -d .ai/snapshot_pre_local ]; then
+            restore_state .ai/snapshot_pre_local
+          fi
+          touch .ai/local_exhausted
+          printf 'local-exhausted'
+          exit 0
+        fi
+      fi
+
+      printf 'local-fixed'
+
+  tool Done
+    label: "Done"
+    timeout: 5s
+    command:
+      printf 'bench-complete'
+
+  edges
+    Setup -> RunTests
+    RunTests -> LocalFix       when ctx.tool_stdout contains tests-fail
+    RunTests -> Done           when ctx.tool_stdout contains tests-pass
+    RunTests -> Done           when ctx.tool_stdout contains tests-fail-cloud
+    LocalFix -> RunTests       when ctx.tool_stdout contains local-fixed       restart: true
+    LocalFix -> Done           when ctx.tool_stdout contains local-exhausted

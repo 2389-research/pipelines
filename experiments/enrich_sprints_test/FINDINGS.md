@@ -124,3 +124,224 @@ Goal: diagnose where the fragility lives by reducing to one sprint at a time and
 | V2 runner — 5 sprints | 1/5 complete, halt at sprint 002 | ~$0.50 | 70 min |
 
 Total session burn: ~$10. Cheap relative to a single human-day on this work.
+
+---
+
+## Update — Apr 29 session: Phase 1 isolation probe (qwen-only, no CloudFix)
+
+Rebuilt the test methodology to isolate single-sprint behavior. Workdir: `qwen_probe/runs/03_full_cycle/`. Spec: `architect_v2/.ai/sprints/SPRINT-001.md` (front-loaded foundation, 1253 lines).
+
+### Pipeline shape (`probe_full.sh`)
+
+1. Parse `## New files` from sprint spec
+2. **Touch (no LLM)** files whose description bullet contains `empty|blank|placeholder|marker` — 4 of 4 init files
+3. **Generate** the remaining 16 via qwen (one Ollama call per file, `temperature=1.0, top_p=0.95, top_k=64`, no `presence_penalty`)
+4. `uv sync --all-extras` then `pytest`
+5. While failing and rounds < 8: ask qwen which file is broken → ask qwen to rewrite that file → re-test
+
+### Result: ✅ 21/21 tests pass, 5 patch rounds, ~26 min, $0
+
+| Round | qwen picked | bytes pre→post | pass / fail / err | Δ pass |
+|---|---|---|---|---|
+| 0 | (initial gen, all 16 files) | — | 17 / 4 / 0 | baseline |
+| 1 | tests/test_models.py | 13302 → 13324 | 17 / 4 / 0 | 0 |
+| 2 | app/models.py | 13473 → 13809 | 2 / 16 / 3 | **−15** ⚠️ |
+| 3 | app/models.py | 13809 → 14393 | 18 / 3 / 0 | **+16** ↑ |
+| 4 | tests/test_models.py | 13324 → 14059 | 18 / 3 / 0 | 0 |
+| 5 | tests/test_models.py | 14059 → 14010 | **21 / 0 / 0** ✅ | +3 |
+
+### Round 2 regression mechanism (the textbook case for surgical edits)
+
+Round 2 was full-file rewrite of `app/models.py` to address two `MissingGreenlet` failures (async lazy-load on relationships). qwen added `back_populates="X"` to the **forward side** of 5 relationships across `Station`, `Registration`, `Group`, `GroupMember`, `Assignment` — but did NOT touch the reverse-side classes (`Volunteer`, `Location`, `Shift`). SQLAlchemy requires both sides declare matching `back_populates`; half-declared metadata throws on the first session use → 15 previously-passing tests broke instantly.
+
+Plus a cross-class typo: `Shift.location → relationship(back_populates="stations")`. Should reference `Location.shifts`. Round 3 corrected it.
+
+Round 3 (full-file rewrite again of `models.py`) added 8 matching list relationships:
+- Volunteer: `registrations`, `groups`, `group_members`, `assignments`
+- Location: `shifts`
+- Shift: `assignments`
+- Station: `assignments`
+- Plus the back_populates typo fix
+
+That's the recovery: qwen had to make a coherent multi-class change and only saw it all at once via full-file rewrite.
+
+### Hyperparam exploration
+
+Tested vendor-recommended Qwen3.6 settings against current. No improvement on the empty-init failure mode.
+
+| Pass | Settings | syntax-pass | failure |
+|---|---|---|---|
+| 01 baseline | `top_k=64` | 19/20 | `routers/__init__.py` ` ```python ``` ` (fenced empty file) |
+| 02 recommended | `top_k=20`, `presence_penalty=1.5` | 18/20 | same fence + new docstring quote bug in `exceptions.py` |
+
+Conclusion: empty-file generation is invariant to hyperparams. It's a spec/runner architecture issue. Reverted to `top_k=64`. Probe 03 used the **runner-level** fix (touch the file, skip the LLM call entirely when description marks it empty).
+
+### Validated design principles
+
+1. **"Empty file" detection works generically.** Description-tail keyword match (`empty|blank|placeholder|marker`) caught all 4 init files in this sprint. Architect prompt should emit empty files into a dedicated `## Empty files` section for zero-ambiguity parsing — runner-side change is `: > "$path"` per entry.
+
+2. **Single-sprint isolation eliminates the catastrophic failure mode.** Every prior multi-sprint run hit some form of cross-sprint state corruption (V1 wiped models.py mid-stream, V2 sprint 002 ate max_restarts). Sprint 001 alone converges cleanly with pure qwen.
+
+3. **Full-file rewrite is recoverable but expensive.** Round 2's −15 regression cost 3 min wall time and required round 3's coordinated multi-class rewrite to recover. SEARCH/REPLACE-style surgical edits would strictly dominate: changes scale with edit size not file size, partial changes can't half-corrupt metadata, and failed merges fail loudly (block doesn't match) instead of silently breaking unrelated tests.
+
+4. **Don't escalate to CloudFix prematurely.** The v2 runner kicked CloudFix in after 4 LocalFix attempts. The probe needed 5 rounds to converge — escalating mid-recovery (after the round-2 disaster) would have given cloud a corrupted baseline and triggered the "CloudFix oscillates without spec context" failure we saw in the v2 sprint 002 hang. Recommendation: bump local attempt budget to ≥8 before cloud handoff, OR detect "regression then partial recovery" and trust the local loop to finish.
+
+5. **qwen self-corrects across rounds.** Despite picking the wrong file in round 1 (test instead of source) and producing a regressing rewrite in round 2, qwen recovered without any external nudge. The fix-then-test feedback loop is the actual signal that drives convergence — not the in-prompt feedback.
+
+### What's still on the table
+
+| Issue | Status |
+|---|---|
+| `## Empty files` spec section + runner support | Designed, not built |
+| SEARCH/REPLACE patch format with fuzzy merger (Aider-style) | Researched (Aider has empirical wins on local models); not built |
+| CloudFix prompt missing spec + pre-edit baseline | Identified earlier; still unbuilt |
+| Architect-side: define `back_populates` pairs explicitly so qwen doesn't infer them | New finding from round 2 — spec underspecified the relationship symmetry |
+| Two-sprint chain test (Phase 3 from original plan) | Not yet run; should validate single-sprint isolation extends across additive sprints |
+
+### Apr 29 dollar/time tally
+
+| Phase | Wall time | Cost |
+|---|---|---|
+| Probe 01 baseline (gen-only, 20 files) | 10 min | $0 |
+| Probe 02 recommended (gen-only, 20 files) | 10 min | $0 |
+| Probe 03 full cycle (gen + 5 patch rounds + tests) | 26 min | $0 |
+
+All-local. Comparison point: the v2 runner_test_v2 multi-sprint run earlier this week burned ~$0.50 OpenAI on CloudFix and still didn't converge on sprint 002.
+
+---
+
+## Update — Apr 30 session: pipeline-validated speedrun spec format + 14 defect classes
+
+End-to-end pipeline validation. The v2 front-loaded design works. The local-only execution with one LocalFix round suffices. The CloudFix-loop failure mode from earlier (V2 sprint 002 oscillation) is closed by spec-side rules, not by smarter cloud diagnosis.
+
+### Result: 21/21 + 47/47 cumulative on first generation pass (sprint 001 + 002 through the production runner)
+
+| Sprint | Generate | LocalFix needed | CloudFix needed | Final |
+|---|---|---|---|---|
+| 001 | 5m56s, 20 files | No | No | 21/21 first try |
+| 002 | 2m28s, 8 files | **Yes — 1 round, 2 SR blocks (test phone-collision)** | No | 47/47 cumulative |
+| 003 | (pending pipeline run; specced and manually validated 14/14) | - | - | - |
+
+LocalFix on sprint 002 caught a real qwen mistake: the test seeded N volunteers with the same hardcoded phone (`"1234567890"`) which violates `unique=True`. qwen's SR call diagnosed the duplicate-phone IntegrityError and emitted two SR blocks changing it to `f"1234567890_{uuid.uuid4().hex}"`. Single round, clean merge, RunTests passed. **First time the patch loop has converted a real production-shape failure to passing in production-runner mode** (bench had only synthetic breaks before).
+
+### Spec format: speedrun-style validated to scale
+
+Three sprints designed in this format, each generated cleanly. The format is:
+
+- `## Scope`, `## Non-goals`, `## Dependencies` — terse, factual
+- `## Conventions` — project-wide rules inherited from sprint 001 in later sprints
+- `## Tricky semantics` — load-bearing rules read FIRST. Lists conventions that without explicit pinning would force the local model to guess (async loading strategy, fixture closure scope, response-shape convention, etc.)
+- `## Data contract` — every Pydantic model + ORM model with **full field signatures** but no method bodies (no `def`/`async def` bodies). Relationships pinned with `lazy="selectin"` and `back_populates` on both sides.
+- `## API contract` — route table: method, path, request schema, response schema (status), errors (status + error_code).
+- `## Algorithm` — per-route step-by-step prose. Numbered steps, explicit error raises with status_code/error_code/message. Not code, not pseudocode — natural language constrained to the contract types.
+- `## Test contract` — per-test table: action, asserts. Includes fixture parameters explicitly.
+- `## Verbatim files` (small, data-shaped files where exact text matters): `pyproject.toml`, `main.py` (the auto-discovery factory), `app/exceptions.py` (small AppError + error code constants), `init_db.py`. Full text fenced.
+- `## New files` — bullet per file with EXACT imports list (full Python statements, never bare module names) + a one-line role summary referencing the contract sections.
+- `## Modified files` — empty for sprint 002+ (additive only).
+- `## Rules` — negative constraints + positive reinforcements of tricky-semantic rules (so they appear in two places, not just once).
+- `## DoD` — machine-verifiable check items (exact bash invocations or "X passing tests").
+- `## Validation` — exact bash sequence to verify the sprint.
+
+Sprint sizes hit:
+- SPRINT-001 (foundation, 18 entities, all schemas, full conftest): ~825 lines
+- SPRINT-002 (additive: 4 routers + 4 test files): ~196 lines  
+- SPRINT-003 (additive: 3 routers + 3 test files): ~239 lines
+
+### Architect_v2 design (front-loading + auto-discovery + FROZEN files) — VALIDATED
+
+The pattern works. Sprint 001 carries every model + every schema + every error code constant + the FastAPI app factory with `pkgutil.iter_modules` router auto-discovery. Sprints 002+ drop a single new file in `app/routers/<feature>.py` and it gets registered automatically — zero `## Modified files`. Cumulatively across 3 sprints: **0 modifications to any sprint 001 file**. This is what eliminates the V1 patch-fragility we hit earlier.
+
+Sprint 001's FROZEN file list (declared in its Rules section, enforced as architect-level invariant):
+- `app/main.py` — auto-discovers routers, never edited
+- `app/models.py` — every entity, never edited
+- `app/schemas.py` — every Pydantic schema, never edited
+- `app/exceptions.py` — AppError + error code constants
+- `app/database.py` — Base + lazy `get_engine()` + `get_session_factory()` + `get_db`
+- `app/config.py` — Settings + cached `get_settings()`
+
+Only foundation file later sprints may modify: `pyproject.toml` (to append new deps).
+
+### 14 defect classes — runtime errors that map directly to spec gaps
+
+These are the categories of "qwen makes a reasonable inference that breaks at runtime" we hit and closed during this session. Each one has: a category name, a runtime symptom, and a spec rule that closes it.
+
+| # | Defect | Symptom | Spec rule that closes it |
+|---|---|---|---|
+| 1 | Hatchling build-system block missing `[tool.hatch.build.targets.wheel]` when project name ≠ package dir name | `uv sync` crashes during editable install before any test runs | Build-system blocks must enumerate per-backend config explicitly. For hatchling: `packages = ["<dir>"]`. |
+| 2 | Bare module name in imports list (`datetime` instead of `from datetime import datetime`) | `MappedAnnotationError: ... is not a Python type, it's the object <module 'datetime'>` at SQLAlchemy mapping time | Imports are full Python statements. For class-vs-module collisions (`datetime`, `date`, `time`, `decimal.Decimal`), use `from X import Y` form. |
+| 3 | Test references `Settings.OTP_BYPASS_CODE` (class-attr access on Pydantic v2 `BaseSettings`) | `AttributeError: OTP_BYPASS_CODE` (Pydantic stores fields on instances, not class attrs) | Tests use literal values for config-derived constants. If a test must read live config, instantiate `Settings()` and read the instance attribute. Class-attr access (`Settings.X`) on BaseSettings is forbidden. |
+| 4 | Test constructs its own `AsyncClient`/engine/session inline | Various — broken httpx API kwargs, per-test isolation violations, stale state | Tests take fixtures (`client`, `db_session`, `volunteer_factory`) as function parameters. `conftest.py` is the single point of test setup; per-test self-sufficiency is forbidden. |
+| 5 | Async ORM collection-side relationship missing `lazy="selectin"` | `sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called` on `obj.collection` access | Every collection-side `relationship(...)` MUST include `lazy="selectin"`. List the affected relationships explicitly so qwen can't omit any. |
+| 6 | Fixture-dependent helper defined at module level (e.g., `override_get_db` outside the `client` fixture) | `sqlalchemy.exc.ArgumentError: AsyncEngine expected, got <pytest_fixture(...)>` (helper bound to fixture decorator instead of resolved value) | Helpers that reference fixture-resolved values must be defined as nested closures INSIDE the consuming fixture. Spec must explicitly say "defined inside the fixture body, NOT at module level." |
+| 7 | Path/query parameter typed as `str` instead of the actual Python type | `AttributeError: 'str' object has no attribute 'hex'` from SQLAlchemy's UUID column bind processor | API contract must specify each path/query param's Python type explicitly: `location_id: uuid.UUID`, `on_date: date \| None = None`. Don't rely on the path pattern alone. |
+| 8 | qwen invents schema/model fields based on "reasonable" pattern-matching (`Shift.station_id`) | `AttributeError: 'Shift' object has no attribute 'station_id'` | Algorithm steps that construct a Read schema explicitly MUST list the **exact** field set with "do NOT pass any other field." Plus a Rule: Pydantic Read schemas have EXACTLY the fields declared in sprint 001's data contract. |
+| 9 | In-memory SQLite test engine missing `StaticPool` + `connect_args` | Cross-session writes invisible (commit on session A, read on session B sees nothing — different in-memory DBs per connection) | Test conftest's async engine MUST be: `create_async_engine("sqlite+aiosqlite:///:memory:", echo=False, connect_args={"check_same_thread": False}, poolclass=StaticPool)` plus `from sqlalchemy.pool import StaticPool`. |
+| 10 | Trailing-slash on collection routes (`@router.post("/", ...)` under prefix `/locations`) | `assert 307 == 200` (FastAPI emits 307; httpx AsyncClient doesn't follow redirects by default) | Spec rule: collection-level routes use empty-string path `""` (not `"/"`) so the route URL exactly matches the router prefix. |
+| 11 | Route declaration order — parameterized path before static path | `422 Unprocessable Entity` on a static path that should match cleanly (e.g., `/shifts/browse` swallowed by `/shifts/{shift_id}`) | Within a router, declare static-path routes BEFORE parameterized routes that share their prefix. List the order explicitly in the API contract — qwen follows the structure of the spec, not its prose rules. |
+| 12 | Test uses raw string UUID from `response.json()["id"]` in an ORM filter (`Registration.id == reg_id`) | `AttributeError: 'str' object has no attribute 'hex'` from SQLAlchemy's UUID bind processor in the test's own `db_session.execute(select(...))` call | Spec rule for tests: parse string ids back to UUID with `uuid.UUID(...)` before using in ORM queries. |
+| 13 | Test passes Python `date`/`time`/`datetime`/`uuid.UUID` objects in an httpx `json=` body | `TypeError: Object of type date is not JSON serializable` at httpx's request build step | Spec rule for tests: serialize non-primitive values with `.isoformat()` (date/time/datetime) or `str(...)` (UUID) before passing to `json=`. |
+| 14 | Test asserts on the wrong path of an error response — uses FastAPI default-HTTPException nested form (`body["detail"]["error_code"]`) when the custom `AppError` handler returns flat (`body["error_code"]`) | `TypeError: string indices must be integers, not 'str'` on the dict indexing in tests | Architect must (a) state the exception handler's exact JSON shape in Tricky Semantics, and (b) write all test assertions for error responses using the matching path. The test contract must match the handler. |
+
+#### The meta-pattern (across all 14)
+
+> spec leaves a gap → qwen fills it with a "reasonable-looking" choice → fails at runtime
+
+The architect's job is to close gaps, not to write reasonable-looking sketches. A 30-token rule in the spec prevents an entire class of failure. **Each class would normally cost minutes of LocalFix iteration + paid CloudFix calls + manual debugging; closing it preemptively in the spec is dramatically cheaper.**
+
+#### Bonus meta-rule — structural sections must match structural rules (defect 11-bis)
+
+A prose rule in `## Rules` saying "declare static routes before parameterized" does NOT override an API contract table that lists routes in the wrong order. qwen replicates the structure of the spec, not its prose. **When you state a rule, the structural sections (tables, signatures, algorithm subsections) must embody the rule.** This is a discipline check the architect runs: are the structural sections internally consistent with the rules section?
+
+### Two-pass review process — caught 4 ambiguities sprint 003 would have failed on
+
+Pass 1: convert architect output to speedrun format with all 14 defect-class rules pre-applied.
+
+Pass 2: scrutinize for ambiguities and conflicts. Specifically check:
+- Where could qwen reasonably interpret two ways?
+- Are there conflicts between sections (e.g., Rule says X, table says Y)?
+- Do imports cover everything the algorithm references?
+- Do test fixtures' dependencies match what they call?
+- Does each test assertion path match the actual API response shape?
+- Are there fields/values left unspecified that have unique constraints (collision risk)?
+- Does the algorithm reference symbols whose values aren't pinned (e.g., "construct the second volunteer with different unique fields" — but no exact values given)?
+
+Sprint 003 round 2 caught: (a) `req.accepted` field semantics ambiguous, (b) second volunteer values not pinned (collision risk), (c) `add_member` return shape (qwen could "improve" the response). Round 2 missed defect 14 (assertion path mismatch) — that one only surfaced at runtime. Worth tightening Round 2 to also explicitly check assertion-path-to-handler-shape correspondence.
+
+### Pipeline mechanics fixes (in `sprint_runner_local_gen_qwen_sr.dip`)
+
+Independent of spec quality, the dip itself had bugs we closed:
+
+1. **RunTests routing collision**: `tests-fail-cloud` substring contained `tests-fail`, so the LocalFix edge swallowed post-exhaustion runs that should have routed to CloudFix → infinite LocalFix↔CloudFix pingpong with Layer 2 snapshot clobbering CloudFix's edits. Renamed emit token to `cloud-handoff` (no substring overlap).
+
+2. **Strict-pass requirement**: pytest exit code 0 was insufficient — `2 passed, 8 skipped` exits 0. Added: `tests-pass` requires `passed > 0 AND failed == 0 AND errors == 0`. Skips don't count as success.
+
+3. **Anti-mask rules in CloudFix prompt**: explicit forbidden patterns (no `try/except ImportError` shims, no `pytest.skip` markers, no commented-out code, no hand-rolled fallback classes for missing libs). Plus env-escalation channel: write to `.ai/escalation.txt` if env looks broken, don't patch around it.
+
+4. **Lazy uv-sync in RunTests**: Setup runs before pyproject.toml exists (sprint 001 starts empty). `uv sync --all-extras` moved into RunTests as an idempotent precondition.
+
+5. **CloudFix capability upgrade** (this session, not yet pipeline-validated):
+   - `reasoning_effort: high` → `medium` (less deliberation, faster action)
+   - `max_turns: 5` → `12` (headroom for multi-file edits)
+   - Reads the sprint spec as input #2 (was: never saw the spec)
+   - Bash includes `grep -rn` for cross-file symbol lookup (was: cat-only)
+   - Drops "ONE error class, ONE edit" rule (was rigid; replaced with "fix every affected file in this session")
+   - Framing: "you are debugging — find the bug, fix it, return. NOT exploring."
+
+6. **qwen3.6:35b-a3b hyperparameters** (Generate + LocalFix in the dip):
+   - `top_k: 64 → 20` everywhere (Qwen team's official recipe; default override)
+   - Generate-initial: `temp=1.0, top_p=0.95, top_k=20, min_p=0, presence_penalty=1.5` — exploration with anti-repetition. The `presence_penalty=1.5` specifically prevents the "qwen writes its chain-of-thought as Python comments inside generated files" failure mode we observed without it.
+   - Generate-modify / Syntax-retry / LocalFix: `temp=0.6, top_p=0.95, top_k=20, min_p=0, presence_penalty=0.0` — precision for code edits.
+
+### What's next: bake principles into `write_sprint_docs` (Opus architect) + `write_enriched_sprint` (Sonnet writer)
+
+Two prompt locations need updating:
+
+1. `pipelines/spec_to_sprints.dip:537` — `agent write_sprint_docs` (Opus). Currently authors `.ai/contract.md` + iterates `write_enriched_sprint` per sprint. Needs:
+   - The 14 defect classes as a pre-shipping checklist
+   - The architect_v2 design pattern (front-loaded foundation + FROZEN files + auto-discovery main.py) as the default architecture
+   - The speedrun spec format as the section structure (vs full-file-bodies which we'd previously gravitated to)
+   - The two-pass review process as part of the architect's job
+
+2. `tracker` repo, branch `feat/write-enriched-sprint-tool` — `write_enriched_sprint` Sonnet system prompt (out-of-tree from this repo). Needs the same 14-class checklist, plus the within-sprint subset of rules, plus structural-section consistency check.
+
+The candidate baseline at `pipelines/docs/simmer/write-sprint-docs/result.md` already encodes "zero ambiguity" + "exact syntax" + the section structure. Update it with the 14 classes and the architect_v2 design and it becomes the new architect prompt.

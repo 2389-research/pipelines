@@ -338,24 +338,77 @@ workflow SprintRunnerLocalGenQwen
         FILE_LIST=$(find . -type f -not -path "*/.git/*" -not -path "*/.ai/*" 2>/dev/null | sort)
       fi
 
-      WHICH_FILE=$(curl -sf "$OLLAMA" \
-        -H 'Content-Type: application/json' \
-        --data "$(jq -n \
-          --arg sprint "$SPRINT" \
-          --arg test_out "$TEST_OUT" \
-          --arg files "$FILE_LIST" \
-          '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
-            messages:[
-              {role:"system",content:"You are a code debugger. Output ONLY the relative file path of the source file that needs to be fixed. One path only. No explanation, no punctuation."},
-              {role:"user",content:("TEST FAILURE:\n\n"+$test_out+"\n\nAVAILABLE SOURCE FILES:\n"+$files+"\n\nSPRINT SPEC:\n\n"+$sprint+"\n\nWhich source file needs to be fixed? Output only the relative file path.")}
-            ],
-            options:{temperature:0.1,num_ctx:32768}}')" \
-        | jq -r '.message.content' | tr -d ' \n')
+      MANIFEST_FULL="$WORKSPACE_ROOT/.ai/scaffolding_manifest.txt"
+      MANIFEST_LOCAL_TMP=""
+      if [ -f "$MANIFEST_FULL" ] && [ -s "$MANIFEST_FULL" ]; then
+        MANIFEST_LOCAL_TMP=$(mktemp -t scaffolding_local.XXXXXX)
+        if [ "$PROJ_ROOT" = "." ] || [ -z "$PROJ_ROOT" ]; then
+          sed 's|^|./|' "$MANIFEST_FULL" > "$MANIFEST_LOCAL_TMP"
+        else
+          sed -E "s|^${PROJ_ROOT}/||" "$MANIFEST_FULL" | sed 's|^|./|' > "$MANIFEST_LOCAL_TMP"
+        fi
+        FILE_LIST=$(echo "$FILE_LIST" | grep -vxFf "$MANIFEST_LOCAL_TMP" || true)
+        FORBIDDEN_BLOCK=$(cat "$MANIFEST_LOCAL_TMP")
+      else
+        FORBIDDEN_BLOCK=""
+      fi
 
-      echo "model identified: $WHICH_FILE"
+      pick_file() {
+        local extra_forbidden="$1"
+        local sysmsg="You are a code debugger. Output ONLY the relative file path of the source file that needs to be fixed. One path only. No explanation, no punctuation."
+        if [ -n "$FORBIDDEN_BLOCK" ] || [ -n "$extra_forbidden" ]; then
+          sysmsg="${sysmsg}\n\nThe following files are SCAFFOLDING and are pinned by the architect. You MUST NOT pick any of them under any circumstance:\n${FORBIDDEN_BLOCK}\n${extra_forbidden}\n\nIf the failure appears to involve a scaffolding file, pick the test file or the closest non-scaffolding caller instead."
+        fi
+        curl -sf "$OLLAMA" \
+          -H 'Content-Type: application/json' \
+          --data "$(jq -n \
+            --arg sprint "$SPRINT" \
+            --arg test_out "$TEST_OUT" \
+            --arg files "$FILE_LIST" \
+            --arg sysmsg "$sysmsg" \
+            '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
+              messages:[
+                {role:"system",content:$sysmsg},
+                {role:"user",content:("TEST FAILURE:\n\n"+$test_out+"\n\nAVAILABLE SOURCE FILES (scaffolding files have been removed):\n"+$files+"\n\nSPRINT SPEC:\n\n"+$sprint+"\n\nWhich source file needs to be fixed? Output only the relative file path.")}
+              ],
+              options:{temperature:0.1,num_ctx:32768}}')" \
+          | jq -r '.message.content' | tr -d ' \n'
+      }
+
+      is_manifest_path() {
+        local p="$1"
+        [ -z "$MANIFEST_LOCAL_TMP" ] && return 1
+        [ ! -s "$MANIFEST_LOCAL_TMP" ] && return 1
+        grep -Fxq "$p" "$MANIFEST_LOCAL_TMP" 2>/dev/null
+      }
+
+      WHICH_FILE=""
+      EXTRA_FORBIDDEN=""
+      for picker_try in 1 2; do
+        WHICH_FILE=$(pick_file "$EXTRA_FORBIDDEN")
+        echo "picker attempt $picker_try: model identified: $WHICH_FILE"
+        if [ -z "$WHICH_FILE" ] || [ ! -f "$WHICH_FILE" ]; then
+          break
+        fi
+        if is_manifest_path "$WHICH_FILE"; then
+          echo "qwen picked manifest file $WHICH_FILE — re-prompting with extended forbidden list"
+          EXTRA_FORBIDDEN="${EXTRA_FORBIDDEN}${WHICH_FILE}\n"
+          WHICH_FILE=""
+          continue
+        fi
+        break
+      done
 
       if [ -z "$WHICH_FILE" ] || [ ! -f "$WHICH_FILE" ]; then
-        echo "invalid file path returned: '$WHICH_FILE', escalating"
+        echo "picker failed to identify a non-scaffolding target, escalating"
+        [ -n "$MANIFEST_LOCAL_TMP" ] && rm -f "$MANIFEST_LOCAL_TMP"
+        printf 'local-exhausted'
+        exit 0
+      fi
+
+      if is_manifest_path "$WHICH_FILE"; then
+        echo "BLOCKED: qwen attempted to write to manifest file $WHICH_FILE — refusing, escalating"
+        [ -n "$MANIFEST_LOCAL_TMP" ] && rm -f "$MANIFEST_LOCAL_TMP"
         printf 'local-exhausted'
         exit 0
       fi
@@ -382,9 +435,17 @@ workflow SprintRunnerLocalGenQwen
         exit 0
       fi
 
+      if is_manifest_path "$WHICH_FILE"; then
+        echo "BLOCKED at write: $WHICH_FILE is a manifest file — refusing, escalating"
+        [ -n "$MANIFEST_LOCAL_TMP" ] && rm -f "$MANIFEST_LOCAL_TMP"
+        printf 'local-exhausted'
+        exit 0
+      fi
+
       echo "$FIXED" | sed '/^```/d' > "$WHICH_FILE"
       echo "wrote fix to $WHICH_FILE ($(wc -l < "$WHICH_FILE") lines)"
       validate_and_retry "$WHICH_FILE"
+      [ -n "$MANIFEST_LOCAL_TMP" ] && rm -f "$MANIFEST_LOCAL_TMP"
       printf 'local-fixed'
 
   tool Audit
