@@ -62,9 +62,12 @@ workflow SprintExecLocalGenQwen
       cd "$WORKDIR_ABS"
 
       # Stage merge_sr.py in .ai/ so LocalFix has a self-contained reference
-      # (independent of $PIPELINES_REPO env). Copy from a few likely homes.
+      # (independent of $PIPELINES_REPO env). Try the in-tree sibling first
+      # (works for any clean checkout where this dip is run from the repo root)
+      # before the env var and hardcoded fallbacks.
       if [ ! -f .ai/merge_sr.py ]; then
         for src in \
+          "local_code_gen/merge_sr.py" \
           "${PIPELINES_REPO:-}/local_code_gen/merge_sr.py" \
           "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/merge_sr.py" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/merge_sr.py"; do
@@ -89,6 +92,15 @@ workflow SprintExecLocalGenQwen
       OLLAMA=http://localhost:11434/api/chat
       SYS="You are a code generator. Output only the raw file content. No explanation, no markdown fences, no commentary."
 
+      # Validate Ollama response before writing — piping `.message.content`
+      # straight to the target file silently overwrites with empty content
+      # when curl fails or Ollama returns no message field.
+      ollama_content() {
+        local raw
+        raw=$(cat) || return 1
+        printf '%s' "$raw" | jq -r 'if (has("message") and (.message.content | length > 0)) then .message.content else empty end' 2>/dev/null
+      }
+
       gen_file() {
         local filepath="$1"
         local description="$2"
@@ -96,7 +108,8 @@ workflow SprintExecLocalGenQwen
         local user_msg="CONTRACT (full spec):\n\n${SPRINT}\n\nGENERATE THIS FILE: ${filepath}\n${description}\n\nOutput ONLY the raw file content. Nothing else."
         echo "generating ${filepath}..."
         mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
-        curl -sf "${OLLAMA}" \
+        local raw content
+        raw=$(curl -sf "${OLLAMA}" \
           -H 'Content-Type: application/json' \
           --data "$(jq -n \
             --arg sys "${SYS}" \
@@ -104,9 +117,17 @@ workflow SprintExecLocalGenQwen
             --argjson tokens "${max_tokens}" \
             '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
               messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
-              options:{temperature:1.0,top_p:0.95,top_k:20,min_p:0,presence_penalty:1.5,num_ctx:32768,num_predict:$tokens}}')" \
-          | jq -r '.message.content' \
-          > "${filepath}"
+              options:{temperature:1.0,top_p:0.95,top_k:20,min_p:0,presence_penalty:1.5,num_ctx:32768,num_predict:$tokens}}')") || {
+          echo "ERROR: curl failed contacting Ollama for ${filepath}; leaving target untouched"
+          return 1
+        }
+        content=$(printf '%s' "$raw" | ollama_content)
+        if [ -z "$content" ]; then
+          echo "ERROR: empty/missing .message.content from Ollama for ${filepath}; leaving target untouched"
+          printf '%s' "$raw" > .ai/last_failed_ollama_response.txt
+          return 1
+        fi
+        printf '%s' "$content" > "${filepath}"
         echo "wrote ${filepath} ($(wc -c < "${filepath}") bytes)"
         validate_and_retry "${filepath}"
       }
@@ -119,7 +140,8 @@ workflow SprintExecLocalGenQwen
         local user_msg="CONTRACT (full spec):\n\n${SPRINT}\n\nEXISTING FILE: ${filepath}\n\n${current}\n\nApply ONLY the modifications described for ${filepath} in the sprint spec under '## Modified files'. Output the complete updated file. Nothing else."
         echo "patching ${filepath}..."
         mkdir -p "$(dirname "${filepath}")" 2>/dev/null || true
-        curl -sf "${OLLAMA}" \
+        local raw content
+        raw=$(curl -sf "${OLLAMA}" \
           -H 'Content-Type: application/json' \
           --data "$(jq -n \
             --arg sys "${SYS}" \
@@ -127,10 +149,17 @@ workflow SprintExecLocalGenQwen
             --argjson tokens "${max_tokens}" \
             '{model:"qwen3.6:35b-a3b-q8_0",think:false,stream:false,
               messages:[{role:"system",content:$sys},{role:"user",content:$msg}],
-              options:{temperature:0.6,top_p:0.95,top_k:20,min_p:0,presence_penalty:0.0,num_ctx:32768,num_predict:$tokens}}')" \
-          | jq -r '.message.content' \
-          | sed '/^```/d' \
-          > "${filepath}"
+              options:{temperature:0.6,top_p:0.95,top_k:20,min_p:0,presence_penalty:0.0,num_ctx:32768,num_predict:$tokens}}')") || {
+          echo "ERROR: curl failed contacting Ollama for ${filepath}; leaving target untouched"
+          return 1
+        }
+        content=$(printf '%s' "$raw" | ollama_content | sed '/^```/d')
+        if [ -z "$content" ]; then
+          echo "ERROR: empty/missing .message.content from Ollama for ${filepath}; leaving target untouched"
+          printf '%s' "$raw" > .ai/last_failed_ollama_response.txt
+          return 1
+        fi
+        printf '%s' "$content" > "${filepath}"
         echo "patched ${filepath} ($(wc -c < "${filepath}") bytes)"
         validate_and_retry "${filepath}"
       }
@@ -262,11 +291,15 @@ workflow SprintExecLocalGenQwen
       printf '%s' "$proj_root" > .ai/proj_root.txt
       cd "$proj_root"
       code=0
+      runner=""
       if [ -f go.mod ]; then
+        runner="go"
         go test ./... > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
       elif [ -f package.json ]; then
+        runner="npm"
         npm test > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
       elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+        runner="pytest"
         # Ensure dev/test deps installed before running. Idempotent on a synced venv.
         # Necessary because Setup may have run before pyproject.toml existed.
         if [ -f pyproject.toml ]; then
@@ -280,17 +313,26 @@ workflow SprintExecLocalGenQwen
       cd "$WORKDIR_ABS"
       tail -10 .ai/last_test_output.txt
 
-      # Strict pass: at least one PASSED, zero FAILED, zero ERROR. Skips do not count
-      # as pass — they often indicate environment problems being silently sidestepped.
+      # Strict pass: language-specific.
+      #   pytest — at least one PASSED, zero FAILED, zero ERROR (skips do NOT
+      #            count; they often hide environment problems).
+      #   go/npm — exit code 0. Output shape varies; trust the exit code.
       passed=$(grep -oE '[0-9]+ passed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
       failed=$(grep -oE '[0-9]+ failed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
       errors=$(grep -oE '[0-9]+ error' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
       passed=${passed:-0}; failed=${failed:-0}; errors=${errors:-0}
       strict_pass=0
-      if [ "$code" -eq 0 ] && [ "$passed" -gt 0 ] && [ "$failed" -eq 0 ] && [ "$errors" -eq 0 ]; then
-        strict_pass=1
+      if [ "$runner" = "pytest" ]; then
+        if [ "$code" -eq 0 ] && [ "$passed" -gt 0 ] && [ "$failed" -eq 0 ] && [ "$errors" -eq 0 ]; then
+          strict_pass=1
+        fi
+        echo "pytest summary: passed=$passed failed=$failed errors=$errors exit=$code strict_pass=$strict_pass"
+      else
+        if [ "$code" -eq 0 ]; then
+          strict_pass=1
+        fi
+        echo "$runner summary: exit=$code strict_pass=$strict_pass"
       fi
-      echo "pytest summary: passed=$passed failed=$failed errors=$errors exit=$code strict_pass=$strict_pass"
 
       # Routing markers, in order of precedence:
       #   tests-pass       — strict pass: at least 1 PASSED, 0 FAILED, 0 ERROR, exit 0
@@ -480,10 +522,15 @@ workflow SprintExecLocalGenQwen
 
       cd "$WORKDIR_ABS"
 
-      # Optional sprint context (if a spec exists)
+      # Sprint context for the active sprint (caller wrote the id to
+      # .ai/current_sprint_id.txt before invoking this dip).
       SPRINT=""
-      if [ -f .ai/sprints/SPRINT-001.md ]; then
-        SPRINT=$(cat .ai/sprints/SPRINT-001.md)
+      if [ -f .ai/current_sprint_id.txt ]; then
+        SPRINT_ID=$(cat .ai/current_sprint_id.txt)
+        SPRINT_DOC=".ai/sprints/SPRINT-${SPRINT_ID}.md"
+        if [ -f "$SPRINT_DOC" ]; then
+          SPRINT=$(cat "$SPRINT_DOC")
+        fi
       fi
 
       # Manifest-forbidden list (architect-pinned scaffolding). Convert workspace-

@@ -1,12 +1,12 @@
 # Local-gen pipeline — methodology and results
 
-> Covers `sprint_exec_local_gen_qwen.dip` and `sprint_exec_local_gen_gemma.dip`.
+> Covers `local_code_gen/sprint_exec_qwen.dip` and `local_code_gen/sprint_runner_qwen.dip`.
 
 ## What it does
 
 Executes an enriched sprint spec using a **local Ollama model for both generation and fixing**, with a cloud model (gpt-5.4) as a last-resort fallback. Happy path costs $0.00. Cloud is only consumed when the local model exhausts 4 fix attempts.
 
-```
+```text
 Setup          detect language, install deps (go mod tidy / npm install / uv sync)
 Generate       one Ollama call per file; patch_file() for modified files, gen_file() for new
   └ validate   after each write: gofmt -e / py_compile / node --check → retry up to 2× at temp 0.1
@@ -104,7 +104,7 @@ Deliberately injecting the same bug into the sprint 3 codebase before running sp
 mkdir -p .ai/sprints
 cp SPRINT-001_enriched.md .ai/sprints/
 
-tracker -w /path/to/project sprint_exec_local_gen_qwen.dip
+tracker -w /path/to/project local_code_gen/sprint_exec_qwen.dip
 ```
 
 ## Model comparison

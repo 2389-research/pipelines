@@ -3,8 +3,8 @@
 The 14 [defect classes](DEFECT-CLASSES.md) are 14 *instances* but ~7 *patterns*. This doc consolidates them, grouped by which model needs to know about each one.
 
 The two models in the pipeline:
-- **Opus** runs `write_sprint_docs` in `spec_to_sprints.dip:537`. It writes `.ai/contract.md` ONCE per project and orchestrates `write_enriched_sprint` calls.
-- **Sonnet** runs inside the `write_enriched_sprint` tool (in tracker repo). It expands one `SPRINT-NNN.md` per call, reading `.ai/contract.md` for cross-sprint pins.
+- **Opus** runs the `write_sprint_docs` agent in `local_code_gen/spec_to_sprints.dip` (and the architect-only sibling `local_code_gen/architect_only.dip`). It writes `.ai/contract.md` ONCE per project and dispatches per-sprint enrichment via the `dispatch_sprints` tool.
+- **Sonnet** runs inside the `write_enriched_sprint` tool (in the tracker repo at `tracker/agent/tools/write_enriched_sprint.go`). It expands one `SPRINT-NNN.md` per call, reading `.ai/contract.md` for cross-sprint pins.
 
 A pattern lives at the Opus layer if it's a project-wide convention pinned ONCE in `contract.md`. A pattern lives at the Sonnet layer if it's applied per-sprint, per-file, or per-test.
 

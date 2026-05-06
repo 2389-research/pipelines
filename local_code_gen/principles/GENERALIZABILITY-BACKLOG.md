@@ -2,7 +2,7 @@
 
 Captured 2026-05-06 during the notebook_smoke_v8/v9/v10 validation cycle.
 Audit performed by reading `sprint_runner_qwen.dip` (was
-`sprint_runner_local_gen_qwen.dip` at root before the consolidation;
+`sprint_runner_qwen.dip` at root before the consolidation;
 see `../README.md` for the canonical file inventory),
 `architect_only.dip`, and `principles/SCAFFOLDING-ARCHITECTURE.md`.
 
@@ -22,18 +22,18 @@ Add detection branches for languages we already partly support.
 
 | Where (file:line) | Currently | Add |
 |---|---|---|
-| `sprint_runner_local_gen_qwen.dip:72-78` (Setup) | uv / npm / go | cargo, bundle, mvn/gradle, dotnet |
-| `sprint_runner_local_gen_qwen.dip:239-250` (RunTests) | go test, npm test, uv run pytest | cargo test, bundle exec rspec, mvn test, dotnet test |
-| `sprint_runner_local_gen_qwen.dip:341-349` (LocalFix FILE_LIST) | `.go` / `.ts`+`.js` / `.py` | `.rs`, `.rb`, `.java`, `.cs`, `.ex` |
-| `sprint_runner_local_gen_qwen.dip:496-507` (Audit test count) | `^func Test`, `describe\|it\|test\(`, `^def test_` | Rust `#[test]`, Ruby `def test_` (RSpec), Java `@Test` |
-| `sprint_runner_local_gen_qwen.dip:143` (LocalFix syntax check) | `gofmt`, `py_compile`, `node --check` (deprecated) | replace `node --check` with `node -c`; consider `cargo check` for Rust |
+| `sprint_runner_qwen.dip:72-78` (Setup) | uv / npm / go | cargo, bundle, mvn/gradle, dotnet |
+| `sprint_runner_qwen.dip:239-250` (RunTests) | go test, npm test, uv run pytest | cargo test, bundle exec rspec, mvn test, dotnet test |
+| `sprint_runner_qwen.dip:341-349` (LocalFix FILE_LIST) | `.go` / `.ts`+`.js` / `.py` | `.rs`, `.rb`, `.java`, `.cs`, `.ex` |
+| `sprint_runner_qwen.dip:496-507` (Audit test count) | `^func Test`, `describe\|it\|test\(`, `^def test_` | Rust `#[test]`, Ruby `def test_` (RSpec), Java `@Test` |
+| `sprint_runner_qwen.dip:143` (LocalFix syntax check) | `gofmt`, `py_compile`, `node --check` (deprecated) | replace `node --check` with `node -c`; consider `cargo check` for Rust |
 
 Also broaden the existing Node test-count regex (line 502-503) — it only
 matches Mocha/Jest. Vitest, Cypress, and async patterns slip through.
 
 ## Tier 2 — Prompt parametrization (~1 hr)
 
-`CloudFix` prompt at `sprint_runner_local_gen_qwen.dip:554-555` literally
+`CloudFix` prompt at `sprint_runner_qwen.dip:554-555` literally
 hardcodes:
 
 ```bash

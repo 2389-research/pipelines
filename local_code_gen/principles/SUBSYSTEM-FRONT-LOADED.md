@@ -350,7 +350,7 @@ Reasoning: 18 ORM entities + 16 sprints exceeds the size at which a
 single front-loaded foundation sprint stays manageable. Subsystems map
 cleanly to the sprint plan.
 
-See [SUBSYSTEM-FRONT-LOADED.md](https://...) for the full pattern.
+See `local_code_gen/principles/SUBSYSTEM-FRONT-LOADED.md` in the pipelines repo for the full pattern.
 ```
 
 This pin makes downstream review (and any failure forensics) easier because the architecture choice is explicit and rationale-backed, not implicit in spec sizes.

@@ -1,6 +1,6 @@
 # Speedrun Spec Format
 
-The section structure of a well-written sprint spec for local-LLM-driven generation. Named after the [`speed-run` skill](~/.claude/plugins/cache/2389-research-marketplace/speed-run/) whose contract style it generalizes.
+The section structure of a well-written sprint spec for local-LLM-driven generation. Named after the `speed-run` skill (a 2389-research Claude Code plugin) whose contract style it generalizes — signatures + algorithm prose + rules, not full file bodies.
 
 ## Why this format vs full-file bodies
 
