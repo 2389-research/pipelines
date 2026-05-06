@@ -1,6 +1,6 @@
 # Structural fix: smoke-test progression (v1 → v4, 2026-04-30 → 2026-05-01)
 
-End-to-end smoke testing of the [structural fix](STRUCTURAL-FIX-PROPOSAL.md) on the Notebook API synthetic fixture (3 sprints, ~$2/run, ~7 min). Each version isolates a separate failure mode discovered during the prior run.
+End-to-end smoke testing of the structural fix (Opus designs the contract; the dispatch tool iterates mechanically over sprints rather than the LLM looping its own dispatch) on the Notebook API synthetic fixture (3 sprints, ~$2/run, ~7 min). Each version isolates a separate failure mode discovered during the prior run.
 
 The architect side is now fully wired: Opus writes contract.md + sprint_descriptions.jsonl, calls dispatch_sprints once, and the agent terminates immediately. Sprint files match the validated NIFB speedrun-exemplar shape. Hand-off to the local runner ([RUNNER-INTEGRATION.md](RUNNER-INTEGRATION.md)) produces working code that passes 34/34 tests.
 
@@ -38,7 +38,7 @@ All cleanly build; full test suite (`go test ./agent/... ./pipeline/handlers/`) 
 - ❌ Section structure diverged from NIFB exemplars. Smoke output had `## Interface contract`, `## Imports per file`, `## Algorithm notes`, `## Test plan`, `## Expected Artifacts` — the OLD section list. Validated exemplars have `## Tricky semantics`, `## Data contract`, `## API contract`, `## Algorithm`, `## Test contract`, `## Verbatim files`. Missing `## Tricky semantics` is the most consequential gap (it's the single load-bearing "rule + WHY" list per [SPEEDRUN-SPEC-FORMAT.md](SPEEDRUN-SPEC-FORMAT.md)).
 - ❌ Architect didn't stop. After `dispatch_sprints` returned, the agent burned ~5 extra turns writing `ARCHITECT_TEST_COMPLETE.md`, `architect_test_summary.md`, `architect_test_results.txt` — pure RLHF "wrap-up nicely" behavior. Cost ~$0.50 wasted; sprint files themselves were not corrupted.
 
-**Root cause of (1):** `tracker/agent/tools/write_enriched_sprint.go`'s "REQUIRED SECTIONS" list and embedded `write_enriched_sprint_example.md` predate the v3→v7 NIFB iteration. The CANDIDATE-SONNET-PROMPT-PATCH.md added behavioral rules (P-1..P-7, M-1..M-4, two-pass review) without updating section names or the few-shot anchor.
+**Root cause of (1):** `tracker/agent/tools/write_enriched_sprint.go`'s "REQUIRED SECTIONS" list and embedded `write_enriched_sprint_example.md` predate the v3→v7 NIFB iteration. An earlier behavioral patch (P-1..P-7, M-1..M-4, two-pass review, landed Apr 30 2026 in commit `ff7e297`) added the new rules but didn't update section names or the few-shot anchor. The fix in this v2 run was to rewrite the section list to the speedrun shape and replace the embedded example with NIFB SPRINT-001 + SPRINT-002.
 
 **Root cause of (2):** the agent runtime relies on model discretion to stop (no tool calls in turn → terminate). Sonnet's RLHF biases toward post-task wrap-up; given spare turns and `write` tool access, it invents helpful artifacts.
 
@@ -121,7 +121,7 @@ All cleanly build; full test suite (`go test ./agent/... ./pipeline/handlers/`) 
 | DAG entry/exit don't run the architect work | `tool` nodes (not `agent`) | `local_code_gen/architect_only.dip` and `local_code_gen/spec_to_sprints.dip` |
 | Foundation sprint pattern (front-loaded + auto-discovery + FROZEN) | Opus prompt body | `local_code_gen/architect_only.dip` and `local_code_gen/spec_to_sprints.dip` (`write_sprint_docs` agent) |
 
-## Acceptance gate status (vs [STRUCTURAL-FIX-TEST-PLAN.md](STRUCTURAL-FIX-TEST-PLAN.md))
+## Acceptance gate status
 
 | Test | Status |
 |---|---|

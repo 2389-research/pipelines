@@ -146,5 +146,6 @@ These patterns are an exemplar library, not a grammar. Frontier models work bett
 New stacks will surface new patterns. We expect this. The role of [`DEFECT-CLASSES.md`](DEFECT-CLASSES.md) is to record empirical evidence; the role of `PATTERNS.md` (this file) is to lift those into reusable categories. When a new defect surfaces:
 1. Append to `DEFECT-CLASSES.md` (record).
 2. Either fold into an existing pattern in this doc, or add a new pattern category if none fits.
-3. Sync the relevant subset into the runtime prompts ([`CANDIDATE-OPUS-PROMPT-PATCH.md`](CANDIDATE-OPUS-PROMPT-PATCH.md) or [`CANDIDATE-SONNET-PROMPT-PATCH.md`](CANDIDATE-SONNET-PROMPT-PATCH.md)).
-4. Apply the patches to the actual prompt locations.
+3. Sync the relevant subset into the live prompts:
+   - Opus → `local_code_gen/spec_to_sprints.dip` (and `architect_only.dip`)'s `write_sprint_docs` agent body.
+   - Sonnet → `tracker/agent/tools/write_enriched_sprint.go`'s system prompt.
