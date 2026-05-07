@@ -879,7 +879,14 @@ workflow SprintRunnerLocalGenQwen
         | tr -d '\n' \
         | head -c 100)
       [ -z "$TITLE" ] && TITLE="implement sprint ${SPRINT_ID}"
-      git add -A
+
+      # Scope the add to the current working directory only. When this dip
+      # runs inside an experiment workdir nested in a parent repo, bare
+      # `git add -A` adds untracked files from anywhere in the parent's
+      # working tree, polluting the per-sprint commit with files from
+      # unrelated experiment dirs that happen to be untracked. `git add -A .`
+      # restricts the operation to the experiment workdir's files only.
+      git add -A .
       if git diff --cached --quiet; then
         echo "no changes to commit for sprint ${SPRINT_ID}"
         printf 'commit-skipped'
