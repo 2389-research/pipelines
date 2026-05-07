@@ -34,7 +34,7 @@ workflow IterRun
       rm -f .ai/iter-run-temp/spec_review.md .ai/iter-run-temp/quality_review.md \
             .ai/iter-run-temp/context_brief.txt .ai/iter-run-temp/escalation_notes.txt \
             .ai/iter-run-temp/scope.md
-      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+      if [ ! -f docs/iterations/roadmap.md ]; then
         printf 'no-roadmap'
         exit 0
       fi
@@ -49,7 +49,7 @@ workflow IterRun
           cur = ""
           exit
         }
-      ' docs/superpowers/iterations/roadmap.md)
+      ' docs/iterations/roadmap.md)
       if [ -z "$iter_id" ]; then
         printf 'all-done'
         exit 0
@@ -71,15 +71,15 @@ workflow IterRun
     model: gemini-3-flash-preview
     provider: gemini
     prompt:
-      Read the current iteration from docs/superpowers/iterations/roadmap.md.
+      Read the current iteration from docs/iterations/roadmap.md.
 
       Read .ai/iter-current-iteration.txt to get the current iteration ID.
 
       Then load:
       1. The current iteration section from roadmap.md (all committed stories and their IDs)
-      2. The relevant story cards from docs/superpowers/iterations/requirements/ for each story in this iteration
-      3. docs/superpowers/iterations/behavior-scenarios.md
-      4. docs/superpowers/iterations/behavior-corpus.md
+      2. The relevant story cards from docs/iterations/requirements/ for each story in this iteration
+      3. docs/iterations/behavior-scenarios.md
+      4. docs/iterations/behavior-corpus.md
 
       Write a scope summary to .ai/iter-run-temp/scope.md with:
       - Iteration ID and title
@@ -95,7 +95,7 @@ workflow IterRun
     timeout: 300s
     command:
       set -euo pipefail
-      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+      if [ ! -f docs/iterations/behavior-corpus.md ]; then
         printf 'baseline-0-of-0-sentinels'
         exit 0
       fi
@@ -121,7 +121,7 @@ workflow IterRun
           total=$((total + 1))
           printf 'TBD %s\n' "$scenario_name" >> .ai/iter-sentinel-baseline.txt
         fi
-      done < docs/superpowers/iterations/behavior-corpus.md
+      done < docs/iterations/behavior-corpus.md
       printf 'baseline-%d-of-%d-sentinels' "$passed" "$total"
 
   tool consistency_audit
@@ -134,7 +134,7 @@ workflow IterRun
         printf 'inconsistent-no-iteration-id'
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+      if [ ! -f docs/iterations/roadmap.md ]; then
         printf 'inconsistent-no-roadmap'
         exit 0
       fi
@@ -143,7 +143,7 @@ workflow IterRun
         $0 ~ ("^### " iter) { in_section=1; next }
         in_section && /^### ITER-/ { exit }
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
-      ' docs/superpowers/iterations/roadmap.md | sort -u)
+      ' docs/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
         printf 'inconsistent-no-stories-found-for-%s' "$iter_id"
         exit 0
@@ -151,12 +151,12 @@ workflow IterRun
       issues=""
       for story_id in $story_ids; do
         # Check story exists in requirements/
-        if ! grep -rq "$story_id" docs/superpowers/iterations/requirements/ 2>/dev/null; then
+        if ! grep -rq "$story_id" docs/iterations/requirements/ 2>/dev/null; then
           issues="${issues} ${story_id}-not-in-requirements"
           continue
         fi
         # Check not already marked done for a DIFFERENT iteration
-        done_iter=$(grep -r "Status.*done:" docs/superpowers/iterations/requirements/ 2>/dev/null | grep "$story_id" | grep -oE 'done:ITER-[0-9]+' | head -1 || true)
+        done_iter=$(grep -r "Status.*done:" docs/iterations/requirements/ 2>/dev/null | grep "$story_id" | grep -oE 'done:ITER-[0-9]+' | head -1 || true)
         if [ -n "$done_iter" ] && [ "$done_iter" != "done:${iter_id}" ]; then
           # Only flag if code doesn't actually exist (not checking code here, flag for review)
           issues="${issues} ${story_id}-already-${done_iter}"
@@ -176,8 +176,8 @@ workflow IterRun
 
       Read:
       1. .ai/iter-current-iteration.txt for the current iteration ID
-      2. docs/superpowers/iterations/roadmap.md for the current iteration section
-      3. docs/superpowers/iterations/requirements/ for the story files mentioned in the inconsistency report
+      2. docs/iterations/roadmap.md for the current iteration section
+      3. docs/iterations/requirements/ for the story files mentioned in the inconsistency report
 
       Fix the inconsistencies:
       - If a STORY-NNNN referenced in roadmap.md does not exist in requirements/, add a minimal placeholder story card to the appropriate epic file so the pipeline can proceed. Note this as a gap to be filled during implementation.
@@ -191,7 +191,7 @@ workflow IterRun
       Use STATUS: success when inconsistencies are resolved.
       Use STATUS: fail when the inconsistencies cannot be automatically resolved and require human intervention.
 
-      HARD CONSTRAINT: Only modify files in docs/superpowers/iterations/. Do not modify source code.
+      HARD CONSTRAINT: Only modify files in docs/iterations/. Do not modify source code.
 
   # ── PHASE: PAR Scope Review ──────────────────────────────────────────────────
 
@@ -215,9 +215,9 @@ workflow IterRun
       Read:
       1. .ai/iter-run-temp/scope.md for the iteration scope summary
       2. .ai/iter-current-iteration.txt for the current iteration ID
-      3. docs/superpowers/iterations/roadmap.md for the full iteration definition
-      4. The relevant story cards from docs/superpowers/iterations/requirements/
-      5. docs/superpowers/iterations/behavior-scenarios.md
+      3. docs/iterations/roadmap.md for the full iteration definition
+      4. The relevant story cards from docs/iterations/requirements/
+      5. docs/iterations/behavior-scenarios.md
 
       ### Checks
 
@@ -253,8 +253,8 @@ workflow IterRun
       Read:
       1. .ai/iter-run-temp/scope.md for the iteration scope summary
       2. .ai/iter-current-iteration.txt for the current iteration ID
-      3. docs/superpowers/iterations/roadmap.md — this iteration AND the next 2-3 iterations
-      4. The relevant story cards from docs/superpowers/iterations/requirements/
+      3. docs/iterations/roadmap.md — this iteration AND the next 2-3 iterations
+      4. The relevant story cards from docs/iterations/requirements/
 
       ### Checks
 
@@ -312,13 +312,13 @@ workflow IterRun
 
       Update the scope summary in .ai/iter-run-temp/scope.md to reflect corrections.
 
-      HARD CONSTRAINT: Only modify files in docs/superpowers/iterations/ and .ai/iter-run-temp/. Do not modify source code.
+      HARD CONSTRAINT: Only modify files in docs/iterations/ and .ai/iter-run-temp/. Do not modify source code.
 
   # ── PHASE: Task Decomposition ────────────────────────────────────────────────
 
   agent decompose_tasks
     label: "Decompose Tasks"
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
     goal_gate: true
@@ -329,9 +329,9 @@ workflow IterRun
       Read:
       1. .ai/iter-loop-context.txt (if it exists) — this contains prior attempt history. If this iteration was retried, use the failure context to avoid repeating the same mistakes. Adjust your decomposition strategy based on what failed before (e.g., split tasks smaller if prior attempt was "task too large", use different approach if prior attempt hit a specific error).
       2. .ai/iter-run-temp/scope.md (iteration scope with committed stories)
-      3. The full story cards from docs/superpowers/iterations/requirements/
-      4. docs/superpowers/iterations/behavior-scenarios.md
-      5. docs/superpowers/iterations/behavior-corpus.md
+      3. The full story cards from docs/iterations/requirements/
+      4. docs/iterations/behavior-scenarios.md
+      5. docs/iterations/behavior-corpus.md
 
       ## Decomposition Rules
 
@@ -378,7 +378,7 @@ workflow IterRun
         printf 'error-no-iteration-id'
         exit 1
       fi
-      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+      if [ ! -f docs/iterations/roadmap.md ]; then
         printf 'error-no-roadmap'
         exit 1
       fi
@@ -390,8 +390,8 @@ workflow IterRun
           in_target = 0
         }
         { print }
-      ' docs/superpowers/iterations/roadmap.md > docs/superpowers/iterations/roadmap.md.tmp
-      mv docs/superpowers/iterations/roadmap.md.tmp docs/superpowers/iterations/roadmap.md
+      ' docs/iterations/roadmap.md > docs/iterations/roadmap.md.tmp
+      mv docs/iterations/roadmap.md.tmp docs/iterations/roadmap.md
       printf 'iteration-in-progress-%s' "$iter_id"
 
   tool update_progress
@@ -406,10 +406,10 @@ workflow IterRun
         task_total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
         task_done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
       fi
-      mkdir -p docs/superpowers/iterations
+      mkdir -p docs/iterations
       printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** task-decomposition\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
         "$iter_id" "$task_done" "$task_total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        > docs/superpowers/iterations/progress.md
+        > docs/iterations/progress.md
       printf 'progress-updated'
 
   # ── PHASE: Per-Task Loop ─────────────────────────────────────────────────────
@@ -457,7 +457,7 @@ workflow IterRun
 
       Read .ai/iter-run-temp/task_status.txt to find the current in_progress task number.
       Then read .ai/iter-run-temp/tasks.md and find that task's full description.
-      Also read the relevant story cards from docs/superpowers/iterations/requirements/.
+      Also read the relevant story cards from docs/iterations/requirements/.
 
       ## Engineering Principles
 
@@ -534,8 +534,8 @@ workflow IterRun
       Read:
       1. .ai/iter-run-temp/task_status.txt to find the current in_progress task
       2. .ai/iter-run-temp/tasks.md for the task description
-      3. The relevant story cards from docs/superpowers/iterations/requirements/
-      4. docs/superpowers/iterations/behavior-scenarios.md
+      3. The relevant story cards from docs/iterations/requirements/
+      4. docs/iterations/behavior-scenarios.md
       5. The relevant parts of the codebase mentioned in the task
 
       Identify what information the implementer is missing. Gather it and provide a clear context brief:
@@ -561,7 +561,7 @@ workflow IterRun
       Read:
       1. .ai/iter-run-temp/task_status.txt to find the current task
       2. .ai/iter-run-temp/tasks.md for the task description
-      3. The relevant story cards from docs/superpowers/iterations/requirements/
+      3. The relevant story cards from docs/iterations/requirements/
 
       Assess:
       - Is the task too large? Should it be split into two smaller tasks?
@@ -603,7 +603,7 @@ workflow IterRun
 
       You start from the SPEC and trace DOWNWARD into code. Your question: "For each requirement, does the code deliver it?"
 
-      Read .ai/iter-run-temp/task_status.txt to find the current in_progress task. Read .ai/iter-run-temp/tasks.md for task details. Read the relevant story cards from docs/superpowers/iterations/requirements/.
+      Read .ai/iter-run-temp/task_status.txt to find the current in_progress task. Read .ai/iter-run-temp/tasks.md for task details. Read the relevant story cards from docs/iterations/requirements/.
 
       ### Method
 
@@ -648,7 +648,7 @@ workflow IterRun
 
       You start from the GIT DIFF and trace UPWARD into the spec. Your question: "For each change, is it authorized by a requirement?"
 
-      Run `git diff HEAD~1` to see all changes made by the implementer. Read .ai/iter-run-temp/tasks.md and the relevant story cards from docs/superpowers/iterations/requirements/.
+      Run `git diff HEAD~1` to see all changes made by the implementer. Read .ai/iter-run-temp/tasks.md and the relevant story cards from docs/iterations/requirements/.
 
       ### Method
 
@@ -718,8 +718,8 @@ workflow IterRun
 
       For each issue found:
       - Missing implementation: write the missing code following TDD (test first, then implementation)
-      - Missing scenario: add the required scenario to docs/superpowers/iterations/behavior-scenarios.md
-      - Missing corpus entry: add the entry to docs/superpowers/iterations/behavior-corpus.md
+      - Missing scenario: add the required scenario to docs/iterations/behavior-scenarios.md
+      - Missing corpus entry: add the entry to docs/iterations/behavior-corpus.md
       - Evidence at wrong seam: replace with evidence at the correct seam
 
       After fixing all issues:
@@ -792,7 +792,7 @@ workflow IterRun
 
       You evaluate code RELATIVE TO WHAT COMES NEXT. You think 3 iterations ahead.
 
-      Read the current task from .ai/iter-run-temp/tasks.md. Run `git diff HEAD~1` to see changes. Read the next 3 pending iterations from docs/superpowers/iterations/roadmap.md.
+      Read the current task from .ai/iter-run-temp/tasks.md. Run `git diff HEAD~1` to see changes. Read the next 3 pending iterations from docs/iterations/roadmap.md.
 
       ### Boxing-In Analysis (your PRIMARY focus)
       For EACH changed file, ask: "What future iteration would need to modify this?"
@@ -902,7 +902,7 @@ workflow IterRun
       done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
       printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** per-task-loop\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
         "$iter_id" "$done" "$total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        > docs/superpowers/iterations/progress.md
+        > docs/iterations/progress.md
       printf 'progress-%d-of-%d' "$done" "$total"
 
   # ── PHASE: Post-Iteration ────────────────────────────────────────────────────
@@ -913,7 +913,7 @@ workflow IterRun
     command:
       set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
-      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+      if [ ! -f docs/iterations/behavior-corpus.md ]; then
         printf 'impacted-all-tbd'
         exit 0
       fi
@@ -925,7 +925,7 @@ workflow IterRun
         $0 ~ ("^### " iter) { in_section=1; next }
         in_section && /^### ITER-/ { exit }
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
-      ' docs/superpowers/iterations/roadmap.md | sort -u)
+      ' docs/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
         printf 'impacted-all-tbd'
         exit 0
@@ -940,8 +940,8 @@ workflow IterRun
         # Check if this scenario is owned by a story in this iteration
         is_impacted=false
         for sid in $story_ids; do
-          if grep -q "$scenario_id" docs/superpowers/iterations/behavior-scenarios.md 2>/dev/null; then
-            if grep -A5 "$scenario_id" docs/superpowers/iterations/behavior-scenarios.md 2>/dev/null | grep -q "$sid"; then
+          if grep -q "$scenario_id" docs/iterations/behavior-scenarios.md 2>/dev/null; then
+            if grep -A5 "$scenario_id" docs/iterations/behavior-scenarios.md 2>/dev/null | grep -q "$sid"; then
               is_impacted=true
               break
             fi
@@ -954,7 +954,7 @@ workflow IterRun
         elif sh -c "$cmd" >/dev/null 2>&1; then
           passed=$((passed + 1))
         fi
-      done < docs/superpowers/iterations/behavior-corpus.md
+      done < docs/iterations/behavior-corpus.md
       if [ "$total" -eq 0 ] || [ "$total" -eq "$tbd" ]; then
         printf 'impacted-all-tbd'
       else
@@ -966,7 +966,7 @@ workflow IterRun
     timeout: 300s
     command:
       set -euo pipefail
-      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+      if [ ! -f docs/iterations/behavior-corpus.md ]; then
         printf 'sentinel-pass'
         exit 0
       fi
@@ -991,7 +991,7 @@ workflow IterRun
             regressions="${regressions} ${scenario_id}"
           fi
         fi
-      done < docs/superpowers/iterations/behavior-corpus.md
+      done < docs/iterations/behavior-corpus.md
       if [ -n "$regressions" ]; then
         printf 'sentinel-regression-%s' "$(printf '%s' "$regressions" | tr ' ' ',')"
       else
@@ -1056,7 +1056,7 @@ workflow IterRun
       1. .ai/iter-current-iteration.txt for the current iteration ID
       2. .ai/iter-run-temp/tasks.md for the full task list and outcomes
       3. .ai/iter-run-temp/task_status.txt for final task statuses
-      4. docs/superpowers/iterations/roadmap.md for the current iteration's story list
+      4. docs/iterations/roadmap.md for the current iteration's story list
 
       ## Your Job
 
@@ -1074,7 +1074,7 @@ workflow IterRun
       4. Update iteration status to done in roadmap.md:
          - Change **Status:** in_progress to **Status:** done for this iteration
 
-      5. Append an entry to docs/superpowers/iterations/iteration-log.md:
+      5. Append an entry to docs/iterations/iteration-log.md:
          ## ITER-<current> — Completed <date>
          - Stories delivered: [list of STORY-NNNN IDs]
          - Tasks completed: N/N
@@ -1090,7 +1090,7 @@ workflow IterRun
       Use STATUS: success when all wrap-up tasks are complete.
       Use STATUS: fail when wrap-up cannot be completed (e.g., uncommitted changes, missing story IDs).
 
-      HARD CONSTRAINT: Only modify files in docs/superpowers/iterations/. Do not modify source code.
+      HARD CONSTRAINT: Only modify files in docs/iterations/. Do not modify source code.
 
   tool validate_wrap_up
     label: "Validate Wrap-Up"
@@ -1104,16 +1104,16 @@ workflow IterRun
       fi
       # Check iteration status is done in roadmap
       # Verify THIS iteration (not just any) is marked done
-      if ! grep -A3 "$iter_id" docs/superpowers/iterations/roadmap.md 2>/dev/null | grep -q "Status.*done"; then
+      if ! grep -A3 "$iter_id" docs/iterations/roadmap.md 2>/dev/null | grep -q "Status.*done"; then
         printf 'wrapup-invalid-iteration-not-marked-done'
         exit 0
       fi
       # Check iteration-log.md has an entry for this iteration
-      if [ ! -f docs/superpowers/iterations/iteration-log.md ]; then
+      if [ ! -f docs/iterations/iteration-log.md ]; then
         printf 'wrapup-invalid-no-iteration-log'
         exit 0
       fi
-      if ! grep -q "$iter_id" docs/superpowers/iterations/iteration-log.md; then
+      if ! grep -q "$iter_id" docs/iterations/iteration-log.md; then
         printf 'wrapup-invalid-iteration-not-in-log'
         exit 0
       fi
@@ -1125,7 +1125,7 @@ workflow IterRun
     command:
       set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
-      git add docs/superpowers/iterations/
+      git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
       else

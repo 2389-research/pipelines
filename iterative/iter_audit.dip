@@ -36,15 +36,15 @@ workflow IterAudit
         printf 'state-missing-iter-id-empty'
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+      if [ ! -f docs/iterations/roadmap.md ]; then
         printf 'state-missing-roadmap.md'
         exit 0
       fi
-      if [ ! -d docs/superpowers/iterations/requirements ] || [ -z "$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null)" ]; then
+      if [ ! -d docs/iterations/requirements ] || [ -z "$(ls docs/iterations/requirements/*.md 2>/dev/null)" ]; then
         printf 'state-missing-requirements-directory'
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+      if [ ! -f docs/iterations/behavior-scenarios.md ]; then
         printf 'state-missing-behavior-scenarios.md'
         exit 0
       fi
@@ -62,9 +62,9 @@ workflow IterAudit
 
       Required files:
       - .ai/iter-current-iteration.txt — the current iteration ID (e.g. ITER-0001)
-      - docs/superpowers/iterations/roadmap.md — the iteration roadmap
-      - docs/superpowers/iterations/requirements/ — per-epic story files
-      - docs/superpowers/iterations/behavior-scenarios.md — scenario registry
+      - docs/iterations/roadmap.md — the iteration roadmap
+      - docs/iterations/requirements/ — per-epic story files
+      - docs/iterations/behavior-scenarios.md — scenario registry
 
       Optional but recommended:
       - .ai/iter-sentinel-baseline.txt — pre-iteration sentinel baseline (tier 3 audit will skip regression comparison without it)
@@ -82,8 +82,8 @@ workflow IterAudit
     timeout: 15s
     command:
       set -euo pipefail
-      corpus="docs/superpowers/iterations/behavior-corpus.md"
-      roadmap="docs/superpowers/iterations/roadmap.md"
+      corpus="docs/iterations/behavior-corpus.md"
+      roadmap="docs/iterations/roadmap.md"
       if [ ! -f "$corpus" ]; then
         printf 'tbd-check-no-corpus'
         exit 0
@@ -147,7 +147,7 @@ workflow IterAudit
 
       You trace TOP-DOWN from story cards into the codebase. Your question: "Is each AC actually implemented?"
 
-      Read .ai/iter-current-iteration.txt for the current iteration ID. Read docs/superpowers/iterations/roadmap.md to identify stories marked done for this iteration. For each story, read its full card from docs/superpowers/iterations/requirements/.
+      Read .ai/iter-current-iteration.txt for the current iteration ID. Read docs/iterations/roadmap.md to identify stories marked done for this iteration. For each story, read its full card from docs/iterations/requirements/.
 
       ### Method
 
@@ -192,7 +192,7 @@ workflow IterAudit
 
       You trace BOTTOM-UP from tests into the story cards. Your question: "Does each test prove what the AC claims at the declared seam?"
 
-      Read .ai/iter-current-iteration.txt for the current iteration ID. Read docs/superpowers/iterations/behavior-scenarios.md. Read docs/superpowers/iterations/behavior-corpus.md.
+      Read .ai/iter-current-iteration.txt for the current iteration ID. Read docs/iterations/behavior-scenarios.md. Read docs/iterations/behavior-corpus.md.
 
       ### Method
 
@@ -282,9 +282,9 @@ workflow IterAudit
       Your lens: **Run every impacted scenario command and verify the actual outputs match expected observables.** You are the execution engine — your job is ground truth from real test runs.
 
       Read .ai/iter-current-iteration.txt to get the current iteration ID.
-      Read docs/superpowers/iterations/roadmap.md to identify stories committed this iteration.
-      Read docs/superpowers/iterations/behavior-scenarios.md for the scenario registry.
-      Read docs/superpowers/iterations/behavior-corpus.md for test commands.
+      Read docs/iterations/roadmap.md to identify stories committed this iteration.
+      Read docs/iterations/behavior-scenarios.md for the scenario registry.
+      Read docs/iterations/behavior-corpus.md for test commands.
 
       Build the impact chain:
       1. Run git diff --name-only against the pre-iteration baseline to get changed files
@@ -342,8 +342,8 @@ workflow IterAudit
       Your lens: **Read the code diffs and scenario definitions side by side to detect semantic drift — cases where behavior changed in meaning even though tests still pass.** You do NOT run tests. You analyze whether the scenario descriptions still truthfully describe what the code does.
 
       Read .ai/iter-current-iteration.txt to get the current iteration ID.
-      Read docs/superpowers/iterations/roadmap.md to identify stories committed this iteration.
-      Read docs/superpowers/iterations/behavior-scenarios.md for the scenario registry.
+      Read docs/iterations/roadmap.md to identify stories committed this iteration.
+      Read docs/iterations/behavior-scenarios.md for the scenario registry.
 
       Build the impact chain (same as Auditor A — file → story → scenario).
 
@@ -427,7 +427,7 @@ workflow IterAudit
 
       Your lens: **Run every sentinel test command and produce a faithful record of exactly what happened.** You are the execution engine. Your job is to generate ground-truth results that the aggregator can trust. Do NOT interpret or classify results — just run and report.
 
-      Read docs/superpowers/iterations/behavior-corpus.md to get the complete sentinel corpus table.
+      Read docs/iterations/behavior-corpus.md to get the complete sentinel corpus table.
 
       For EACH scenario in the corpus with cadence "sentinel":
       1. Extract the exact test command from the corpus table
@@ -485,7 +485,7 @@ workflow IterAudit
 
       Your lens: **Run every sentinel, read the baseline, and classify each result against prior state.** You are the regression detector. Your job is to determine what changed, whether it matters, and how severe it is.
 
-      Read docs/superpowers/iterations/behavior-corpus.md for the sentinel corpus table.
+      Read docs/iterations/behavior-corpus.md for the sentinel corpus table.
       Read .ai/iter-sentinel-baseline.txt if it exists — this contains pre-iteration results.
 
       For EACH scenario in the corpus with cadence "sentinel":
@@ -560,7 +560,7 @@ workflow IterAudit
 
   agent synthesize_audit
     label: "Synthesize Audit"
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     reasoning_effort: high
     auto_status: true
     prompt:
@@ -608,11 +608,11 @@ workflow IterAudit
       1. .ai/iter-audit-temp/tier1_findings.md
       2. .ai/iter-audit-temp/tier2_findings.md
       3. .ai/iter-audit-temp/tier3_findings.md
-      4. docs/superpowers/iterations/roadmap.md (to determine the next follow-up iteration ID)
-      5. All epic files in docs/superpowers/iterations/requirements/ (to find where to append gap stories)
+      4. docs/iterations/roadmap.md (to determine the next follow-up iteration ID)
+      5. All epic files in docs/iterations/requirements/ (to find where to append gap stories)
 
       For each gap story specified by the synthesis:
-      - Append to the appropriate epic file in docs/superpowers/iterations/requirements/
+      - Append to the appropriate epic file in docs/iterations/requirements/
       - Use the next available STORY-NNNN ID in that epic
       - Status: pending
       - Mark CRITICAL stories prominently in the title with [CRITICAL]
@@ -628,7 +628,7 @@ workflow IterAudit
       - AC-1: <specific testable criterion that closes the gap> · impact:<impact> · seam:<seam>
       **Status:** pending
 
-      After writing all gap stories, update docs/superpowers/iterations/roadmap.md:
+      After writing all gap stories, update docs/iterations/roadmap.md:
       - Add a new follow-up iteration section (ITER-XXXX-gap-remediation or similar) containing all gap story IDs
       - Set its status to pending
 
@@ -640,7 +640,7 @@ workflow IterAudit
     timeout: 30s
     command:
       set -euo pipefail
-      git add docs/superpowers/iterations/
+      git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
       else

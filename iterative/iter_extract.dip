@@ -46,7 +46,7 @@ workflow IterExtract
           exit 0
         fi
       done
-      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './docs/iterations/*' -not -path './.ai/*' | sort | head -1)
       if [ -n "$first" ]; then
         printf '%s' "$first" > .ai/iter-extract-temp/spec_path.txt
         printf '%s' "$first"
@@ -62,11 +62,11 @@ workflow IterExtract
       has_requirements=false
       has_scenarios=false
       has_temp=false
-      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$req_count" -gt 0 ]; then
         has_requirements=true
       fi
-      if [ -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+      if [ -f docs/iterations/behavior-scenarios.md ]; then
         has_scenarios=true
       fi
       temp_count=$(ls .ai/iter-extract-temp/extraction_*.json 2>/dev/null | wc -l | tr -d ' ')
@@ -87,12 +87,12 @@ workflow IterExtract
     label: "Validate Existing Artifacts"
     auto_status: true
     prompt:
-      Read and validate the existing extraction artifacts in docs/superpowers/iterations/.
+      Read and validate the existing extraction artifacts in docs/iterations/.
 
       Check:
-      - docs/superpowers/iterations/requirements/ for per-epic .md files with STORY- IDs
-      - docs/superpowers/iterations/behavior-scenarios.md for SCENARIO- and JOURNEY- IDs
-      - docs/superpowers/iterations/behavior-corpus.md for the corpus table
+      - docs/iterations/requirements/ for per-epic .md files with STORY- IDs
+      - docs/iterations/behavior-scenarios.md for SCENARIO- and JOURNEY- IDs
+      - docs/iterations/behavior-corpus.md for the corpus table
 
       Report whether they are complete (all stories have ACs, all behavioral ACs have scenario refs, all scenarios link to stories, corpus has all entries).
 
@@ -628,7 +628,7 @@ workflow IterExtract
       1. STORIES: Combine all stories. Deduplicate by title similarity. Group into epics by epic_theme. Assign stable IDs:
          - EPIC-001, EPIC-002, etc.
          - STORY-0001, STORY-0002, etc. (global, not per-epic)
-         Write per-epic files to docs/superpowers/iterations/requirements/EPIC-NNN-<theme>.md
+         Write per-epic files to docs/iterations/requirements/EPIC-NNN-<theme>.md
 
          Each epic file format:
          # EPIC-NNN — <Theme>
@@ -646,16 +646,16 @@ workflow IterExtract
          - SCENARIO-0001 for surface/contract/failure-recovery
          - JOURNEY-0001 for journey scenarios
          Resolve owning_story_titles to STORY-NNNN IDs.
-         Write to docs/superpowers/iterations/behavior-scenarios.md
+         Write to docs/iterations/behavior-scenarios.md
 
       3. CORPUS: Build behavior-corpus.md table from scenario list.
          Journey scenarios → sentinel cadence. Surface scenarios → iteration cadence.
          Set command to TBD.
-         Write to docs/superpowers/iterations/behavior-corpus.md
+         Write to docs/iterations/behavior-corpus.md
 
       4. Back-link scenarios to story ACs by appending scenario:<ID> to AC lines.
 
-      Create the docs/superpowers/iterations/ and docs/superpowers/iterations/requirements/ directories.
+      Create the docs/iterations/ and docs/iterations/requirements/ directories.
 
       After writing all files, verify:
       - Every story has at least one AC
@@ -663,7 +663,7 @@ workflow IterExtract
       - Every scenario has owning_stories resolved to STORY IDs
       - Behavior corpus has an entry for every scenario
 
-      HARD CONSTRAINT: Only write to docs/superpowers/iterations/. Do NOT modify the original spec.
+      HARD CONSTRAINT: Only write to docs/iterations/. Do NOT modify the original spec.
 
       End your response with exactly one of:
       STATUS: success
@@ -678,28 +678,28 @@ workflow IterExtract
     command:
       set -euo pipefail
       fail_reason=""
-      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$req_count" -eq 0 ]; then
         fail_reason="no-requirement-files"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+      if [ ! -f docs/iterations/behavior-scenarios.md ]; then
         fail_reason="missing-behavior-scenarios"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+      if [ ! -f docs/iterations/behavior-corpus.md ]; then
         fail_reason="missing-behavior-corpus"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if ! grep -qr 'STORY-' docs/superpowers/iterations/requirements/; then
+      if ! grep -qr 'STORY-' docs/iterations/requirements/; then
         fail_reason="no-story-ids"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if ! grep -qE 'SCENARIO-|JOURNEY-' docs/superpowers/iterations/behavior-scenarios.md; then
+      if ! grep -qE 'SCENARIO-|JOURNEY-' docs/iterations/behavior-scenarios.md; then
         fail_reason="no-scenario-ids"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
@@ -711,7 +711,7 @@ workflow IterExtract
     timeout: 30s
     command:
       set -euo pipefail
-      git add docs/superpowers/iterations/
+      git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
       else
