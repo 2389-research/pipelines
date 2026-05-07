@@ -333,6 +333,49 @@ workflow SprintExecDr
       cp .ai/ledger.yaml .ai/ledger-snapshot.yaml
       printf 'resume-%s' "$count"
 
+  tool ValidateDispatch
+    label: "Pick validation path: script | sct | cmd"
+    timeout: 10s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      if [ ! -f "$sprint_yaml" ]; then
+        printf 'cmd'
+        exit 0
+      fi
+      if yq -e '.validation.script' "$sprint_yaml" >/dev/null 2>&1; then
+        printf 'script'
+        exit 0
+      fi
+      if yq -e '.validation.setup' "$sprint_yaml" >/dev/null 2>&1; then
+        printf 'sct'
+        exit 0
+      fi
+      printf 'cmd'
+
+  tool ValidateScript
+    label: "Run sprint validation script"
+    timeout: 600s
+    command:
+      set -eu
+      target=$(cat .ai/current_sprint_id.txt)
+      sprint_yaml=".ai/sprints/SPRINT-${target}.yaml"
+      script_path=$(yq -r '.validation.script' "$sprint_yaml")
+      if [ -z "$script_path" ] || [ "$script_path" = "null" ]; then
+        printf 'no validation.script declared in %s\n' "$sprint_yaml"
+        exit 1
+      fi
+      if [ ! -f "$script_path" ]; then
+        printf 'validation.script %s not found on disk\n' "$script_path"
+        exit 1
+      fi
+      chmod +x "$script_path" 2>/dev/null || true
+      printf '=== Running %s ===\n' "$script_path"
+      sh "$script_path" > /tmp/sprint-validate-script.log 2>&1 || { cat /tmp/sprint-validate-script.log; exit 1; }
+      cat /tmp/sprint-validate-script.log
+      printf 'validation-pass-script'
+
   tool ValidateBuild
     label: "Validate Build and Tests"
     timeout: 300s
@@ -794,9 +837,16 @@ workflow SprintExecDr
     ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
     ImplementSprint -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
     ImplementSprint -> MarkFailed
-    CheckLedgerIntegrity -> ValidateBuild   when ctx.outcome = success  label: ledger_ok
-    CheckLedgerIntegrity -> MarkFailed      when ctx.outcome = fail     label: ledger_tampered
+    CheckLedgerIntegrity -> ValidateDispatch  when ctx.outcome = success  label: ledger_ok
+    CheckLedgerIntegrity -> MarkFailed        when ctx.outcome = fail     label: ledger_tampered
     CheckLedgerIntegrity -> MarkFailed
+    ValidateDispatch -> ValidateScript  when ctx.tool_stdout = script  label: script_path
+    ValidateDispatch -> ValidateBuild   when ctx.tool_stdout = cmd     label: cmd_path
+    ValidateDispatch -> ValidateBuild   when ctx.tool_stdout = sct     label: sct_fallback_to_cmd
+    ValidateDispatch -> ValidateBuild
+    ValidateScript -> CommitSprintWork  when ctx.outcome = success  label: validated_via_script
+    ValidateScript -> ImplementSprint   when ctx.outcome = fail     label: fix_script_validation  restart: true
+    ValidateScript -> MarkFailed
     ResumeCheck -> ImplementSprint          when ctx.tool_stdout startswith resume-            label: resume              restart: true
     ResumeCheck -> CheckBootstrapOnFailure  when ctx.tool_stdout startswith max-resumes-       label: max_exhausted
     ResumeCheck -> MarkFailed               when ctx.outcome = fail                            label: resume_failed
