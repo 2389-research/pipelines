@@ -731,6 +731,8 @@ workflow SprintRunnerLocalGenQwen
       grep_includes=$(lang_test_grep_includes "$lang")
       test_section_awk='/^## (Test contract|Test plan)/{f=1;next} f && /^##/{exit} f{print}'
 
+      # `grep -c` always emits a count line; we use `|| true` to swallow
+      # exit-1-on-no-match without appending a second "0".
       if [ "$lang" = "python" ]; then
         # Python's spec format has a special case: v4 backticked test names
         # in tables. Try that first, fall back to the generic pattern.
@@ -738,15 +740,22 @@ workflow SprintRunnerLocalGenQwen
           | grep -oE '`test_[a-zA-Z0-9_]+\(' | sort -u | wc -l | tr -d ' ')
         if [ "$sprint_tests" = "0" ]; then
           sprint_tests=$(awk "$test_section_awk" "$sprint" \
-            | grep -cE "$test_pattern" 2>/dev/null || echo 0)
+            | grep -cE "$test_pattern" 2>/dev/null || true)
         fi
       else
         sprint_tests=$(awk "$test_section_awk" "$sprint" \
-          | grep -cE "$test_pattern" 2>/dev/null || echo 0)
+          | grep -cE "$test_pattern" 2>/dev/null || true)
       fi
+      [ -z "$sprint_tests" ] && sprint_tests=0
+
+      # Exclude pipeline-state dirs from the on-disk count: .ai/scaffolding_originals/
+      # contains snapshot copies of test files, which would otherwise double the
+      # count; .tracker/ holds run state.
       # shellcheck disable=SC2086 — grep_includes is a multi-flag string we
       # want word-split.
-      actual_tests=$(grep -rE "$test_pattern" . $grep_includes 2>/dev/null | wc -l | tr -d ' ')
+      actual_tests=$(grep -rE "$test_pattern" . \
+        --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+        $grep_includes 2>/dev/null | wc -l | tr -d ' ')
 
       if [ -z "$actual_tests" ]; then actual_tests=0; fi
       echo "test count: sprint=$sprint_tests actual=$actual_tests" >> .ai/last_audit_output.txt
