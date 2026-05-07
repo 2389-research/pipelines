@@ -41,43 +41,46 @@ workflow SprintExecLocalGenQwen
       rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/cloud_attempted .ai/passing_pre.txt .ai/escalation.txt
       rm -rf .ai/snapshot_pre_local .ai/snapshot_round_pre
 
-      proj_root="."
-      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
-        proj_root="backend"
-      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
-        proj_root="frontend"
-      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
-        proj_root="server"
-      fi
+      # Stage lib helpers from the repo into .ai/ so every downstream tool
+      # is self-contained.
+      stage_lib() {
+        local name="$1"
+        local target=".ai/$name"
+        [ -f "$target" ] && return 0
+        for src in \
+          "local_code_gen/lib/$name" \
+          "local_code_gen/$name" \
+          "${PIPELINES_REPO:-}/local_code_gen/lib/$name" \
+          "${PIPELINES_REPO:-}/local_code_gen/$name" \
+          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
+          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/$name" \
+          "$HOME/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
+          "$HOME/Documents/GitHub/pipelines/local_code_gen/$name"; do
+          if [ -n "$src" ] && [ -f "$src" ]; then
+            cp "$src" "$target"
+            echo "staged $name from $src"
+            return 0
+          fi
+        done
+        echo "ERROR: $name not found in any expected location" >&2
+        return 1
+      }
+      stage_lib lang_profile.sh || exit 1
+      stage_lib merge_sr.py     || exit 1
+
+      . .ai/lang_profile.sh
+      proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
 
       cd "$proj_root"
-      if [ -f pyproject.toml ]; then
-        uv sync --all-extras > "$WORKDIR_ABS/.ai/install.log" 2>&1 || uv sync >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
-      elif [ -f go.mod ]; then
-        go mod tidy 2>/dev/null || true
-      elif [ -f package.json ]; then
-        npm install 2>/dev/null || true
-      fi
+      lang=$(detect_lang ".")
+      eval "$(lang_install_cmd "$lang")"
+      test_command=$(lang_test_cmd "$lang")
       cd "$WORKDIR_ABS"
 
-      # Stage merge_sr.py in .ai/ so LocalFix has a self-contained reference
-      # (independent of $PIPELINES_REPO env). Try the in-tree sibling first
-      # (works for any clean checkout where this dip is run from the repo root)
-      # before the env var and hardcoded fallbacks.
-      if [ ! -f .ai/merge_sr.py ]; then
-        for src in \
-          "local_code_gen/merge_sr.py" \
-          "${PIPELINES_REPO:-}/local_code_gen/merge_sr.py" \
-          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/merge_sr.py" \
-          "$HOME/Documents/GitHub/pipelines/local_code_gen/merge_sr.py"; do
-          if [ -n "$src" ] && [ -f "$src" ]; then
-            cp "$src" .ai/merge_sr.py
-            echo "staged merge_sr.py from $src"
-            break
-          fi
-        done
-      fi
+      printf '%s' "$lang"        > .ai/lang.txt
+      printf '%s' "$test_command" > .ai/test_command.txt
+      echo "detected lang=$lang test_command='$test_command' proj_root=$proj_root"
 
       printf 'setup-done'
 
@@ -164,13 +167,11 @@ workflow SprintExecLocalGenQwen
         validate_and_retry "${filepath}"
       }
 
+      [ -f .ai/lang_profile.sh ] && . .ai/lang_profile.sh
       syntax_check() {
-        local fp="$1"
-        case "$fp" in
-          *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
-          *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
-          *.ts|*.js) node --check "$fp" 2>&1 | head -5 ;;
-        esac
+        if command -v lang_syntax_check >/dev/null 2>&1; then
+          lang_syntax_check "$1"
+        fi
       }
 
       validate_and_retry() {
@@ -278,51 +279,31 @@ workflow SprintExecLocalGenQwen
       set +e
       mkdir -p .ai
       WORKDIR_ABS=$(pwd)
-      # Re-detect proj_root every run — Generate may have created subdirs
-      # after Setup's initial detection.
-      proj_root="."
-      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
-        proj_root="backend"
-      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
-        proj_root="frontend"
-      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
-        proj_root="server"
-      fi
+      . .ai/lang_profile.sh
+
+      proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
+
+      lang=$(cat .ai/lang.txt 2>/dev/null || echo "")
+      [ -z "$lang" ] && lang=$(detect_lang "$proj_root")
+      printf '%s' "$lang" > .ai/lang.txt
+
       cd "$proj_root"
-      code=0
-      runner=""
-      if [ -f go.mod ]; then
-        runner="go"
-        go test ./... > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
-      elif [ -f package.json ]; then
-        runner="npm"
-        npm test > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
-      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-        runner="pytest"
-        # Ensure dev/test deps installed before running. Idempotent on a synced venv.
-        # Necessary because Setup may have run before pyproject.toml existed.
-        if [ -f pyproject.toml ]; then
-          uv sync --all-extras >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
-        fi
-        uv run pytest -v > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
-      else
-        echo "no test runner detected" > "$WORKDIR_ABS/.ai/last_test_output.txt"
-        code=1
+      if [ "$lang" = "python" ] && [ -f pyproject.toml ]; then
+        uv sync --all-extras >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
       fi
+      test_command=$(lang_test_cmd "$lang")
+      eval "$test_command" > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1
+      code=$?
       cd "$WORKDIR_ABS"
       tail -10 .ai/last_test_output.txt
 
-      # Strict pass: language-specific.
-      #   pytest — at least one PASSED, zero FAILED, zero ERROR (skips do NOT
-      #            count; they often hide environment problems).
-      #   go/npm — exit code 0. Output shape varies; trust the exit code.
-      passed=$(grep -oE '[0-9]+ passed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
-      failed=$(grep -oE '[0-9]+ failed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
-      errors=$(grep -oE '[0-9]+ error' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
-      passed=${passed:-0}; failed=${failed:-0}; errors=${errors:-0}
       strict_pass=0
-      if [ "$runner" = "pytest" ]; then
+      if [ "$lang" = "python" ]; then
+        passed=$(grep -oE '[0-9]+ passed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
+        failed=$(grep -oE '[0-9]+ failed' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
+        errors=$(grep -oE '[0-9]+ error' .ai/last_test_output.txt | tail -1 | awk '{print $1}')
+        passed=${passed:-0}; failed=${failed:-0}; errors=${errors:-0}
         if [ "$code" -eq 0 ] && [ "$passed" -gt 0 ] && [ "$failed" -eq 0 ] && [ "$errors" -eq 0 ]; then
           strict_pass=1
         fi
@@ -331,7 +312,7 @@ workflow SprintExecLocalGenQwen
         if [ "$code" -eq 0 ]; then
           strict_pass=1
         fi
-        echo "$runner summary: exit=$code strict_pass=$strict_pass"
+        echo "$lang summary: exit=$code strict_pass=$strict_pass"
       fi
 
       # Routing markers, in order of precedence:
@@ -361,17 +342,11 @@ workflow SprintExecLocalGenQwen
       mkdir -p .ai
       OLLAMA=http://localhost:11434/api/chat
       WORKDIR_ABS=$(pwd)
-      # Re-detect proj_root every round (Generate may have created subdirs)
-      proj_root="."
-      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
-        proj_root="backend"
-      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
-        proj_root="frontend"
-      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
-        proj_root="server"
-      fi
+      . .ai/lang_profile.sh
+      proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
       PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
+      lang=$(cat .ai/lang.txt 2>/dev/null || detect_lang "$proj_root")
 
       MAX_ROUNDS=8
       MAX_ROLLBACKS=3
@@ -394,19 +369,22 @@ workflow SprintExecLocalGenQwen
       # cover the full attack surface that qwen could write to via SR.
       ROOT_FILES="pyproject.toml package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
 
+      SOURCE_DIRS=$(lang_src_dirs "$lang")
+      for extra in tests scripts; do
+        case " $SOURCE_DIRS " in *" $extra "*) ;; *) SOURCE_DIRS="$SOURCE_DIRS $extra" ;; esac
+      done
+
       snapshot_state() {
         local snap_dir="$1"
-        # Make snap_dir absolute so cd doesn't break it
         case "$snap_dir" in
           /*) ;;
           *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
         esac
         rm -rf "$snap_dir"; mkdir -p "$snap_dir"
         cd "$PROJ_ROOT_ABS"
-        [ -d app ] && cp -R app "$snap_dir/" || true
-        [ -d tests ] && cp -R tests "$snap_dir/" || true
-        [ -d scripts ] && cp -R scripts "$snap_dir/" || true
-        [ -d src ] && cp -R src "$snap_dir/" || true
+        for d in $SOURCE_DIRS; do
+          [ -d "$d" ] && cp -R "$d" "$snap_dir/" || true
+        done
         for f in $ROOT_FILES; do
           [ -f "$f" ] && cp "$f" "$snap_dir/"
         done
@@ -418,20 +396,21 @@ workflow SprintExecLocalGenQwen
           /*) ;;
           *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
         esac
-        # Refuse to "restore" from an empty snapshot — that would just delete current state
-        if [ ! -d "$snap_dir/app" ] && [ ! -d "$snap_dir/tests" ]; then
-          echo "WARN: snapshot $snap_dir is empty; refusing to restore (would nuke current state)"
+        any_present=0
+        for d in $SOURCE_DIRS; do
+          [ -d "$snap_dir/$d" ] && any_present=1 && break
+        done
+        if [ "$any_present" -eq 0 ]; then
+          echo "WARN: snapshot $snap_dir has no source dirs; refusing to restore (would nuke current state)"
           return 1
         fi
         cd "$PROJ_ROOT_ABS"
-        [ -d app ] && rm -rf app
-        [ -d tests ] && rm -rf tests
-        [ -d scripts ] && rm -rf scripts
-        [ -d src ] && rm -rf src
-        [ -d "$snap_dir/app" ] && cp -R "$snap_dir/app" .
-        [ -d "$snap_dir/tests" ] && cp -R "$snap_dir/tests" .
-        [ -d "$snap_dir/scripts" ] && cp -R "$snap_dir/scripts" .
-        [ -d "$snap_dir/src" ] && cp -R "$snap_dir/src" .
+        for d in $SOURCE_DIRS; do
+          [ -d "$d" ] && rm -rf "$d"
+        done
+        for d in $SOURCE_DIRS; do
+          [ -d "$snap_dir/$d" ] && cp -R "$snap_dir/$d" .
+        done
         for f in $ROOT_FILES; do
           [ -f "$snap_dir/$f" ] && cp "$snap_dir/$f" .
         done
@@ -491,12 +470,31 @@ workflow SprintExecLocalGenQwen
       PRE_PASS_COUNT=$(wc -l < .ai/passing_pre.txt | tr -d ' ')
       echo "pre-round passing tests: $PRE_PASS_COUNT"
 
-      # Build context: full app/ source + failing test files
+      # Build context bundle: full source-dir contents + failing test files.
+      # Language dispatch lives in lang_profile.sh.
       cd "$PROJ_ROOT_ABS"
-      FAILING_TESTS=$( { grep -oE 'FAILED [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; \
-                        grep -oE 'ERROR [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; } | sort -u)
+      FAILING_TESTS=$(lang_failing_test_files "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
 
-      find app -name "*.py" -not -path "*/__pycache__/*" 2>/dev/null | sort > /tmp/lf_app_files.txt
+      lf_src_dirs=$(lang_src_dirs "$lang")
+      lf_glob=$(lang_src_glob "$lang")
+      lf_extra_globs=$(lang_src_glob_extras "$lang")
+      lf_prune=$(lang_find_prune "$lang")
+
+      : > /tmp/lf_app_files.txt
+      for d in $lf_src_dirs; do
+        [ -d "$d" ] || continue
+        if [ -n "$lf_extra_globs" ]; then
+          find_expr="find \"$d\" \\( -name '$lf_glob'"
+          for g in $lf_extra_globs; do
+            find_expr="$find_expr -o -name '$g'"
+          done
+          find_expr="$find_expr \\) $lf_prune"
+        else
+          find_expr="find \"$d\" -name '$lf_glob' $lf_prune"
+        fi
+        eval "$find_expr 2>/dev/null" | sort >> /tmp/lf_app_files.txt
+      done
+
       printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
       : > /tmp/lf_context.txt
       while IFS= read -r f; do
@@ -516,8 +514,8 @@ workflow SprintExecLocalGenQwen
       CONTEXT=$(cat /tmp/lf_context.txt)
       rm -f /tmp/lf_app_files.txt /tmp/lf_failing_tests.txt /tmp/lf_context.txt
 
-      FAIL_BLOCKS=$(awk '/^=+ FAILURES =+$/{f=1;next} f && /^=+ short test summary/{exit} f' "$WORKDIR_ABS/.ai/last_test_output.txt")
-      FAIL_SUMMARY=$(grep -E "^(FAILED|ERROR) " "$WORKDIR_ABS/.ai/last_test_output.txt" || true)
+      FAIL_BLOCKS=$(lang_failure_block "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
+      FAIL_SUMMARY=$(lang_failure_summary "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
       FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || echo 0)
 
       cd "$WORKDIR_ABS"
@@ -678,31 +676,26 @@ workflow SprintExecLocalGenQwen
       # v1 fallback (only fires if older specs are still in use)
       check_artifact_section '^## Expected Artifacts'
 
-      # Test-count check: prefer v4's "## Test contract" (per-file tables); fall back
-      # to v1's "## Test plan" (named test functions).
+      # Test-count check: language dispatch via lang_profile.sh.
+      . .ai/lang_profile.sh
+      lang=$(cat .ai/lang.txt 2>/dev/null || echo "unknown")
+      test_pattern=$(lang_test_count_pattern "$lang")
+      grep_includes=$(lang_test_grep_includes "$lang")
       test_section_awk='/^## (Test contract|Test plan)/{f=1;next} f && /^##/{exit} f{print}'
-      if [ -f go.mod ]; then
-        sprint_tests=$(awk "$test_section_awk" "$sprint" \
-          | grep -cE "^func Test" 2>/dev/null || echo 0)
-        actual_tests=$(grep -rE "^func Test" . --include="*.go" 2>/dev/null | wc -l | tr -d ' ')
-      elif [ -f package.json ]; then
-        sprint_tests=$(awk "$test_section_awk" "$sprint" \
-          | grep -cE "^\s*(describe|it|test)\(" 2>/dev/null || echo 0)
-        actual_tests=$(grep -rE "^\s*(describe|it|test)\(" . --include="*.ts" --include="*.js" 2>/dev/null | wc -l | tr -d ' ')
-      elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-        # v4 Test contract uses backticked test names in tables (`test_foo(...)`); count those.
-        # Falls back to "def test_*" lines for v1 Test plan format.
+
+      if [ "$lang" = "python" ]; then
         sprint_tests=$(awk "$test_section_awk" "$sprint" \
           | grep -oE '`test_[a-zA-Z0-9_]+\(' | sort -u | wc -l | tr -d ' ')
         if [ "$sprint_tests" = "0" ]; then
           sprint_tests=$(awk "$test_section_awk" "$sprint" \
-            | grep -cE "^def test_" 2>/dev/null || echo 0)
+            | grep -cE "$test_pattern" 2>/dev/null || echo 0)
         fi
-        actual_tests=$(grep -rE "^(async )?def test_" . --include="*.py" 2>/dev/null | wc -l | tr -d ' ')
       else
-        sprint_tests=0
-        actual_tests=0
+        sprint_tests=$(awk "$test_section_awk" "$sprint" \
+          | grep -cE "$test_pattern" 2>/dev/null || echo 0)
       fi
+      # shellcheck disable=SC2086
+      actual_tests=$(grep -rE "$test_pattern" . $grep_includes 2>/dev/null | wc -l | tr -d ' ')
 
       if [ -z "$actual_tests" ]; then actual_tests=0; fi
       echo "test count: sprint=$sprint_tests actual=$actual_tests" >> .ai/last_audit_output.txt
@@ -741,6 +734,12 @@ workflow SprintExecLocalGenQwen
       - `.ai/sprints/SPRINT-$(cat .ai/current_sprint_id.txt).md` — the sprint
          contract. Read its "Tricky semantics", "Rules", and per-file
          "Algorithm" sections. The fix is usually "make code match the spec".
+      - `.ai/lang.txt` — the detected project language (python | go | node |
+         rust | ruby | java-maven | java-gradle | unknown).
+      - `.ai/test_command.txt` — the exact test command Setup determined for
+         this project (e.g. `uv run pytest -v`, `go test ./...`, `cargo test`,
+         `npm test`, `bundle exec rspec`). cat this file and use it; do NOT
+         hardcode pytest.
 
       Loop within this single session:
       1. cat .ai/last_test_output.txt (and last_audit_output.txt if relevant).
@@ -750,9 +749,12 @@ workflow SprintExecLocalGenQwen
          (route returns shape A but test asserts shape B), read both.
       3. apply_patch a targeted fix. For multi-file fixes, do them all in
          this session — do not artificially split.
-      4. cd into the project subdirectory and run pytest yourself
-         (e.g. `cd backend && uv run pytest -x --tb=short 2>&1 | tail -80`).
-      5. Read pytest output. If green, you are done — output a one-line
+      4. cd into the project subdirectory and run the test command yourself.
+         The shape is `cd $(cat .ai/proj_root.txt) && $(cat .ai/test_command.txt) 2>&1 | tail -80`.
+         Do NOT assume pytest — `cat .ai/test_command.txt` to discover the
+         exact command (Python: `uv run pytest`, Go: `go test ./...`, Rust:
+         `cargo test`, Node: `npm test`, Ruby: `bundle exec rspec`, etc).
+      5. Read the test output. If green, you are done — output a one-line
          summary and stop. If still failing, GOTO 1 with the new top error.
 
       Rules:
