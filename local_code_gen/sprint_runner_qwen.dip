@@ -115,7 +115,7 @@ workflow SprintRunnerLocalGenQwen
 
       cd "$proj_root"
       lang=$(detect_lang ".")
-      eval "$(lang_install_cmd "$lang")"
+      lang_install "$lang"
       test_command=$(lang_test_cmd "$lang")
       cd "$WORKDIR_ABS"
 
@@ -328,8 +328,7 @@ workflow SprintRunnerLocalGenQwen
       if [ "$lang" = "python" ] && [ -f pyproject.toml ]; then
         uv sync --all-extras >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
       fi
-      test_command=$(lang_test_cmd "$lang")
-      eval "$test_command" > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1
+      lang_run_tests "$WORKDIR_ABS/.ai/last_test_output.txt" "$lang"
       code=$?
       cd "$WORKDIR_ABS"
       tail -10 .ai/last_test_output.txt
@@ -530,17 +529,14 @@ workflow SprintRunnerLocalGenQwen
       : > /tmp/lf_app_files.txt
       for d in $lf_src_dirs; do
         [ -d "$d" ] || continue
-        if [ -n "$lf_extra_globs" ]; then
-          # build `find <d> ( -name g1 -o -name g2 ... ) <prune>`
-          find_expr="find \"$d\" \\( -name '$lf_glob'"
-          for g in $lf_extra_globs; do
-            find_expr="$find_expr -o -name '$g'"
-          done
-          find_expr="$find_expr \\) $lf_prune"
-        else
-          find_expr="find \"$d\" -name '$lf_glob' $lf_prune"
-        fi
-        eval "$find_expr 2>/dev/null" | sort >> /tmp/lf_app_files.txt
+        # Primary glob (always present).
+        # shellcheck disable=SC2086 — $lf_prune is a flag list we want word-split.
+        find "$d" -name "$lf_glob" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
+        # Extra globs for multi-extension languages (node: *.js; java: *.kt).
+        for g in $lf_extra_globs; do
+          # shellcheck disable=SC2086
+          find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
+        done
       done
 
       printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt

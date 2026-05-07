@@ -52,29 +52,32 @@ detect_lang() {
 
 # ─── Per-language profile fields ──────────────────────────────────────────────
 
-# lang_install_cmd: install the project's deps. Caller must `cd` to proj_root
-# first. Idempotent on already-installed projects. Echoes a shell command
-# string the caller `eval`s.
-lang_install_cmd() {
+# lang_install: install the project's deps. Runs in the calling shell (no
+# subshell, no eval) so the function has access to $WORKDIR_ABS from Setup.
+# Caller must `cd` to proj_root first. Idempotent on already-installed projects.
+lang_install() {
   case "$1" in
     python)
       if [ -f pyproject.toml ]; then
-        echo 'uv sync --all-extras > "$WORKDIR_ABS/.ai/install.log" 2>&1 || uv sync >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true'
+        uv sync --all-extras > "$WORKDIR_ABS/.ai/install.log" 2>&1 \
+          || uv sync >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
       else
-        echo 'pip install -r requirements.txt > "$WORKDIR_ABS/.ai/install.log" 2>&1 || true'
+        pip install -r requirements.txt > "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
       fi ;;
-    go)          echo 'go mod tidy 2>/dev/null || true' ;;
-    node)        echo 'npm install > "$WORKDIR_ABS/.ai/install.log" 2>&1 || true' ;;
-    rust)        echo 'cargo build --quiet 2>/dev/null || true' ;;
-    ruby)        echo 'bundle install > "$WORKDIR_ABS/.ai/install.log" 2>&1 || true' ;;
-    java-maven)  echo ':' ;;   # mvn install is slow — let RunTests do `mvn test`
-    java-gradle) echo ':' ;;   # gradle is slow — let RunTests do ./gradlew test
-    *)           echo ':' ;;
+    go)          go mod tidy 2>/dev/null || true ;;
+    node)        npm install > "$WORKDIR_ABS/.ai/install.log" 2>&1 || true ;;
+    rust)        cargo build --quiet 2>/dev/null || true ;;
+    ruby)        bundle install > "$WORKDIR_ABS/.ai/install.log" 2>&1 || true ;;
+    java-maven)  : ;;   # mvn install is slow — let RunTests do `mvn test`
+    java-gradle) : ;;   # gradle is slow — let RunTests do ./gradlew test
+    *)           : ;;
   esac
 }
 
-# lang_test_cmd: project's test command, as a shell string. Caller must `cd`
-# to proj_root before running. Output redirection is the caller's responsibility.
+# lang_test_cmd: project's test command as a shell string. Used for two
+# purposes: (a) Setup writes it to .ai/test_command.txt so CloudFix can read
+# what command the project uses, (b) human-readable diagnostics. The actual
+# test execution goes through lang_run_tests (no eval).
 lang_test_cmd() {
   case "$1" in
     python)
@@ -95,6 +98,37 @@ lang_test_cmd() {
     java-maven)  echo 'mvn test -q' ;;
     java-gradle) echo './gradlew test --console=plain' ;;
     *)           echo "echo 'no test runner detected'; exit 1" ;;
+  esac
+}
+
+# lang_run_tests: actually run the project's tests, redirecting both stdout
+# and stderr to $1. Returns the test runner's exit code. Caller must `cd` to
+# proj_root first. Mirrors lang_test_cmd's per-language dispatch but executes
+# directly (no eval).
+# Args: $1=output_file, $2=lang
+lang_run_tests() {
+  local out="$1" lang="$2"
+  case "$lang" in
+    python)
+      if [ -f pyproject.toml ]; then
+        uv run pytest -v > "$out" 2>&1
+      else
+        pytest -v > "$out" 2>&1
+      fi ;;
+    go)          go test ./... > "$out" 2>&1 ;;
+    node)        npm test > "$out" 2>&1 ;;
+    rust)        cargo test > "$out" 2>&1 ;;
+    ruby)
+      if [ -d spec ] || grep -q "rspec" Gemfile 2>/dev/null; then
+        bundle exec rspec > "$out" 2>&1
+      else
+        bundle exec rake test > "$out" 2>&1
+      fi ;;
+    java-maven)  mvn test -q > "$out" 2>&1 ;;
+    java-gradle) ./gradlew test --console=plain > "$out" 2>&1 ;;
+    *)
+      echo "no test runner detected (lang=$lang)" > "$out"
+      return 1 ;;
   esac
 }
 
