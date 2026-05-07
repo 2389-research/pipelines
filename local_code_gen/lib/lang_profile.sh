@@ -161,7 +161,9 @@ lang_src_glob_extras() {
 # context. Space-separated.
 lang_src_dirs() {
   case "$1" in
-    python)                 echo "app tests" ;;
+    # Python: covers both flat-layout (`app/`) and src-layout (`src/`) repos.
+    # PEP 420 / setuptools src-layout puts the package under `src/<package>/`.
+    python)                 echo "app src tests" ;;
     go)                     echo "cmd internal pkg" ;;
     node)                   echo "src tests test" ;;
     rust)                   echo "src tests" ;;
@@ -272,11 +274,14 @@ lang_failing_test_files() {
 lang_syntax_check() {
   local fp="$1"
   case "$fp" in
-    *.go)      gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
-    *.py)      python3 -m py_compile "$fp" 2>&1 | head -5 ;;
-    *.ts|*.js) node -c "$fp" 2>&1 | head -5 ;;
-    *.rs)      rustc --edition 2021 --emit=metadata -o /dev/null "$fp" 2>&1 | head -5 ;;
-    *.rb)      ruby -c "$fp" 2>&1 | head -5 ;;
+    *.go)  gofmt -e "$fp" 2>&1 >/dev/null | head -5 ;;
+    *.py)  python3 -m py_compile "$fp" 2>&1 | head -5 ;;
+    *.js)  node -c "$fp" 2>&1 | head -5 ;;
+    # *.ts: no fast pre-check available. `node -c` is JS-only (won't parse
+    # types), `tsc` requires a tsconfig.json + project context. TypeScript
+    # syntax errors surface at RunTests time via `npm test` / `tsc --noEmit`.
+    *.rs)  rustc --edition 2021 --emit=metadata -o /dev/null "$fp" 2>&1 | head -5 ;;
+    *.rb)  ruby -c "$fp" 2>&1 | head -5 ;;
     # Java/Kotlin/.NET — quick parse needs classpath; defer to RunTests.
   esac
 }

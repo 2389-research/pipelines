@@ -44,16 +44,17 @@ workflow SprintExecLocalGenQwen
       # Stage lib helpers from the repo into .ai/ so every downstream tool
       # is self-contained.
       stage_lib() {
+        # Always refresh the staged copy if a source is available — keeps
+        # `.ai/<name>` in sync with the repo-level lib across re-runs / branch
+        # switches. If no source can be found but a prior staged copy exists,
+        # fall back to the staged copy. Fail only if neither exists.
         local name="$1"
         local target=".ai/$name"
-        [ -f "$target" ] && return 0
         for src in \
           "local_code_gen/lib/$name" \
           "local_code_gen/$name" \
           "${PIPELINES_REPO:-}/local_code_gen/lib/$name" \
           "${PIPELINES_REPO:-}/local_code_gen/$name" \
-          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
-          "/Users/michaelsugimura/Documents/GitHub/pipelines/local_code_gen/$name" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/$name"; do
           if [ -n "$src" ] && [ -f "$src" ]; then
@@ -62,6 +63,10 @@ workflow SprintExecLocalGenQwen
             return 0
           fi
         done
+        if [ -f "$target" ]; then
+          echo "staged $name not found in repo; using existing $target"
+          return 0
+        fi
         echo "ERROR: $name not found in any expected location" >&2
         return 1
       }
@@ -395,12 +400,22 @@ workflow SprintExecLocalGenQwen
           /*) ;;
           *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
         esac
+        # Refuse to "restore" from a snapshot with NEITHER source dirs NOR
+        # root manifest files — that genuinely empty snapshot would just
+        # delete current state. Pre-local snapshots of an architect-prepped
+        # repo (only Cargo.toml/go.mod/pyproject.toml + scaffolding manifest,
+        # no source dirs yet) are valid rollback points.
         any_present=0
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && any_present=1 && break
         done
         if [ "$any_present" -eq 0 ]; then
-          echo "WARN: snapshot $snap_dir has no source dirs; refusing to restore (would nuke current state)"
+          for f in $ROOT_FILES; do
+            [ -f "$snap_dir/$f" ] && any_present=1 && break
+          done
+        fi
+        if [ "$any_present" -eq 0 ]; then
+          echo "WARN: snapshot $snap_dir has no source dirs and no root manifests; refusing to restore (would nuke current state)"
           return 1
         fi
         cd "$PROJ_ROOT_ABS"
