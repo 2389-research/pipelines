@@ -444,6 +444,7 @@ workflow IterExtract
     label: "PAR Omission Reviewer A — Textual Coverage"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -485,10 +486,18 @@ workflow IterExtract
 
       Write patches to .ai/iter-extract-temp/omission_patches_a.json using the extraction JSON format.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when patches were written (or when no omissions were found and patches are intentionally empty).
+      Use STATUS: fail only if you could not read the spec or extractions and produced no analysis.
+
   agent par_omission_reviewer_b
     label: "PAR Omission Reviewer B — Semantic Intent"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -529,6 +538,13 @@ workflow IterExtract
       - [item]
 
       Write patches to .ai/iter-extract-temp/omission_patches_b.json using the extraction JSON format.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when patches were written (or when no omissions were found and patches are intentionally empty).
+      Use STATUS: fail only if you could not read the spec or extractions and produced no analysis.
 
   fan_in par_omission_join <- par_omission_reviewer_a, par_omission_reviewer_b
 
@@ -711,6 +727,15 @@ workflow IterExtract
     timeout: 30s
     command:
       set -euo pipefail
+      if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        git init -q
+        if [ -z "$(git config user.email 2>/dev/null)" ]; then
+          git config user.email "iterative-pipeline@local"
+          git config user.name "Iterative Pipeline"
+        fi
+        git add -A
+        git commit -q --allow-empty -m "chore: initialize repository for iterative pipeline"
+      fi
       git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
@@ -746,6 +771,7 @@ workflow IterExtract
     count_remaining_chunks -> par_omission_dispatch    when ctx.tool_stdout = all-extracted      label: done_extracting
     par_omission_dispatch -> par_omission_reviewer_a
     par_omission_dispatch -> par_omission_reviewer_b
+    par_omission_dispatch -> par_omission_aggregate     when ctx.outcome = fail   label: tolerated
     par_omission_reviewer_a -> par_omission_join
     par_omission_reviewer_b -> par_omission_join
     par_omission_join -> par_omission_aggregate
