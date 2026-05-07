@@ -78,6 +78,18 @@ workflow SprintRunnerLocalGenQwen
       rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/cloud_attempted .ai/passing_pre.txt .ai/escalation.txt
       rm -rf .ai/snapshot_pre_local .ai/snapshot_round_pre
 
+      # Initialize a local git repo in the experiment workdir if not already
+      # one. CommitSprint commits sprint work HERE so the work stays scoped to
+      # the experiment (not the parent repo this dip might be running inside).
+      # `git rev-parse --is-inside-work-tree` walks up to a parent repo if no
+      # local one exists, so we explicitly check for a local `.git/`.
+      if [ ! -e .git ]; then
+        git init --quiet
+        git config user.email "sprint-runner@local"
+        git config user.name "Sprint Runner"
+        echo "initialized local git repo at $(pwd)"
+      fi
+
       # Stage lib helpers from the repo into .ai/ so every downstream tool
       # is self-contained — works whether this dip is run inside the repo or
       # against an experiment workdir elsewhere on disk. Both files are sourced
