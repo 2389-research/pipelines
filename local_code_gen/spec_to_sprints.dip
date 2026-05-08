@@ -702,7 +702,7 @@ workflow SpecToSprintsForLocalCodegen
 
       (a) **Symbols consumed.** Name the types / functions / constants Sprint N imports from Sprint M (these are pinned in §6).
 
-      (b) **Required cross-module test.** One named test that Sprint N MUST include in its test plan. The test calls Sprint M's public function(s) directly to construct values it then feeds to Sprint N's public API — no aliasing, no manual reconstruction of Sprint M's types via hand-built fixtures, no mocks. Specify:
+      (b) **Required cross-module test.** One named test that Sprint N MUST include in its test plan. The test obtains real upstream values through Sprint M's public API surface (constructor, exported constant, factory, parser, builder, etc.) and then feeds those values to Sprint N's public API — no aliasing, no manual reconstruction of Sprint M's types via hand-built fixtures, no mocks. Specify:
       - **Test name** in snake_case (e.g. `parse_consumes_real_lexer_tokens`)
       - **Test body sketch** — 3–6 lines in the project's language showing the call chain: construct an upstream value via Sprint M's public API, feed it to Sprint N's public API, assert on the result.
       - **What it catches** — one line: e.g. "type duplication or signature drift in the parser's input type."
