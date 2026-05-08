@@ -716,7 +716,70 @@ workflow SprintExecDr
       **Recommendation:** RETRY | REDECOMPOSE | ABANDON
       **Recovery notes:** <what should change>
 
-      HARD CONSTRAINT: Do NOT write code. Do NOT fix the implementation. Do NOT modify the sprint YAML status or ledger. Your ONLY job is to analyze and recommend. The runner pipeline handles the actual retry/redecompose/abandon decision.
+      ## ALLOWED FILE OUTPUTS (exhaustive — no others permitted)
+
+      You may write to exactly these three paths, and nothing else:
+      1. `.ai/sprints/SPRINT-<id>-recovery-analysis.md` — required
+      2. `.ai/redecompose-request.yaml` — only if recommendation is REDECOMPOSE
+      3. `.ai/managers/recovery-journal.md` — append only, never overwrite
+
+      After those writes, STOP. Do not run any further tools.
+
+      ## EXPLICITLY FORBIDDEN — even if it seems helpful
+
+      - Do NOT create new SPRINT-XX{A,B,C,...}.yaml or .md files. The pipeline's `redecompose_sprint` step will create them via `splice_ledger`.
+      - Do NOT modify `.ai/ledger.yaml`. The `splice_ledger` tool will mark statuses, write `superseded_by`, and rewrite dependents — and it does this correctly. If you do it yourself, you create conflicts that fail the run.
+      - Do NOT modify any existing `.ai/sprints/SPRINT-*.yaml` or `.md` files (besides the recovery-analysis).
+      - Do NOT touch project source files. You are a planner, not an implementer.
+      - Do NOT invoke `git`, `yq -i`, `npm`, `node`, or any state-mutating shell command beyond writing the three allowed paths.
+
+      The pipeline has dedicated tools for every state mutation downstream of you. Trust them. Your job ends when the three allowed files are written.
+
+      A boundary-enforcement tool runs after you and rolls back any forbidden writes.
+
+  tool SnapshotForRecovery
+    label: "Snapshot ledger + sprint files before RecoveryManager"
+    timeout: 10s
+    command:
+      set -eu
+      snap_dir=".ai/.recovery-snapshot"
+      mkdir -p "$snap_dir"
+      cp .ai/ledger.yaml "$snap_dir/ledger.yaml"
+      ls .ai/sprints/ 2>/dev/null | sort > "$snap_dir/sprints-before.list" || true
+      printf 'recovery-snapshot-taken'
+
+  tool EnforceRecoveryBoundary
+    label: "Enforce RecoveryManager boundary — roll back forbidden writes"
+    timeout: 15s
+    command:
+      set -eu
+      snap_dir=".ai/.recovery-snapshot"
+      if [ ! -d "$snap_dir" ] || [ ! -f "$snap_dir/ledger.yaml" ]; then
+        printf 'no-snapshot-skipping-enforcement'
+        exit 0
+      fi
+      violations=""
+      # Roll back ledger if it changed
+      if ! cmp -s "$snap_dir/ledger.yaml" .ai/ledger.yaml 2>/dev/null; then
+        cp "$snap_dir/ledger.yaml" .ai/ledger.yaml
+        violations="$violations ledger.yaml"
+      fi
+      # Detect and remove any newly created sprint files except *-recovery-analysis.md
+      ls .ai/sprints/ 2>/dev/null | sort > "$snap_dir/sprints-after.list" || true
+      new_files=$(comm -13 "$snap_dir/sprints-before.list" "$snap_dir/sprints-after.list" 2>/dev/null | grep -v -- '-recovery-analysis\.md$' || true)
+      if [ -n "$new_files" ]; then
+        for f in $new_files; do
+          rm -f ".ai/sprints/$f"
+          violations="$violations $f"
+        done
+      fi
+      rm -rf "$snap_dir"
+      if [ -n "$violations" ]; then
+        printf 'recovery-boundary-violated-rolled-back:%s' "$violations" | tr '\n' ' '
+        # Emit success — we rolled back, the pipeline can continue normally
+        exit 0
+      fi
+      printf 'recovery-boundary-clean'
 
   agent FailureSummary
     label: "Failure Summary"
@@ -1003,8 +1066,10 @@ workflow SprintExecDr
     CompleteSprint -> Exit              when ctx.outcome = success  label: done
     CompleteSprint -> MarkFailed         when ctx.outcome = fail     label: complete_failed
     CompleteSprint -> Exit
-    MarkFailed -> RecoveryManager
-    RecoveryManager -> FailureSummary
+    MarkFailed -> SnapshotForRecovery
+    SnapshotForRecovery -> RecoveryManager
+    RecoveryManager -> EnforceRecoveryBoundary
+    EnforceRecoveryBoundary -> FailureSummary
     FailureSummary -> Exit              when ctx.outcome = success
     FailureSummary -> Exit              when ctx.outcome = fail  label: report_failed_exit
     FailureSummary -> Exit
