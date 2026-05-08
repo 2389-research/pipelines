@@ -189,8 +189,36 @@ workflow ArchitectOnlyTest
 
       This pins what later sprints will import. Underspecification here is the failure mode — when the per-sprint writer doesn't see exact field names, it invents and diverges across sprints.
 
-      #### 7. Cross-Sprint Dependency Edges
-      Directed graph of which sprints depend on which.
+      #### 7. Cross-Sprint Dependency Edges + Required Cross-Module Tests (load-bearing)
+
+      For every directed edge `Sprint N → Sprint M` (Sprint N consumes a symbol from Sprint M), declare BOTH:
+
+      (a) **Symbols consumed.** Name the types / functions / constants Sprint N imports from Sprint M (these are pinned in §6).
+
+      (b) **Required cross-module test.** One named test that Sprint N MUST include in its test plan. The test obtains real upstream values through Sprint M's public API surface (constructor, exported constant, factory, parser, builder, etc.) and then feeds those values to Sprint N's public API — no aliasing, no manual reconstruction of Sprint M's types via hand-built fixtures, no mocks. Specify:
+      - **Test name** in snake_case (e.g. `parse_consumes_real_lexer_tokens`)
+      - **Test body sketch** — 3–6 lines in the project's language showing the call chain: construct an upstream value via Sprint M's public API, feed it to Sprint N's public API, assert on the result.
+      - **What it catches** — one line: e.g. "type duplication or signature drift in the parser's input type."
+
+      Why this is load-bearing: a sprint's local unit tests can be self-consistent within its own files even when the sprint silently violates a cross-sprint contract — a duplicated enum, a renamed field, a wrong signature only surfaces when *another* module composes against the broken API. The required cross-module test forces composition to happen in the dependent sprint's OWN test suite at compile/parse time, so contract violations fail BEFORE the sprint can freeze, while the root cause is still editable.
+
+      This rule is mandatory and applies to every project, regardless of stack. Sonnet will expand each test per the sprint's idiom; the local writer (qwen) has zero discretion to skip, rename, weaken, or substitute. If a required cross-module test would cause a freshly-generated module to fail to compile, that compile failure IS the sprint's signal to fix upstream-symbol usage — not to weaken the test.
+
+      Example block (Rust syntax shown — adapt to project language):
+
+      ```
+      **Edge: Sprint 002 → Sprint 001**
+      - Symbols consumed: `lexer::Token`, `lexer::tokenize`
+      - Required test: `parse_consumes_real_lexer_tokens`
+        ```rust
+        let tokens = crate::lexer::tokenize("1 + 2").unwrap();
+        let expr = parse(&tokens).unwrap();
+        assert!(matches!(expr, Expr::BinOp { .. }));
+        ```
+        Catches: parser re-declaring its own `Token` enum instead of importing from lexer; signature drift if `parse` doesn't accept `&[lexer::Token]` directly.
+      ```
+
+      Sprint 001 has no incoming edges and therefore no required cross-module tests.
 
       #### 8. Mandatory Rules Across All Sprints
 
@@ -233,6 +261,7 @@ workflow ArchitectOnlyTest
         - `Modified files:` — files that already exist from prior sprints and this sprint extends. Use the contract's file-ownership map. Misclassifying a modified file as new will cause the local executor to overwrite the prior sprint's contribution.
       - types/functions this sprint defines (NAMES — fields are pinned in the contract)
       - cross-sprint dependencies it consumes
+      - **Cross-module test mandate (REQUIRED for sprints 002+):** for every dependency edge declared in contract §7 where this sprint is the consumer, copy the FULL test contract (test name + body sketch + what-it-catches line) into this sprint's test plan as a named entry. These are not optional and Sonnet must surface them verbatim — the local writer has no discretion to omit them. If §7 declares N edges into this sprint, the test plan MUST include at least N cross-module tests on top of the sprint's own unit tests.
       - exact validation commands
       - Do NOT redefine field-by-field shape of cross-sprint types here; reference them by name and let the contract carry the truth.
       - **Infrastructure & setup specifics (load-bearing for sprint 001 and any later sprint that introduces new build/config infrastructure):** include verbatim content for every config file the sprint creates — package manifests, build-system config, test-runner config, linter configs. Provide the exact text the generator should transcribe.
