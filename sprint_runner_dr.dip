@@ -137,6 +137,12 @@ workflow SprintRunnerDr
     timeout: 10s
     command:
       set -eu
+      # If the inner subgraph ad-libbed a redecompose-request, route to the
+      # redecompose flow even when execute_sprint returned success.
+      if [ -f .ai/redecompose-request.yaml ]; then
+        printf 'redecompose-pending'
+        exit 0
+      fi
       total=$(yq '.sprints | length' .ai/ledger.yaml)
       done=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
       skipped=$(yq '[.sprints[] | select(.status == "skipped")] | length' .ai/ledger.yaml)
@@ -290,6 +296,7 @@ workflow SprintRunnerDr
     execute_sprint -> report_progress  when ctx.outcome = success           label: sprint_done
     execute_sprint -> handle_failure   when ctx.outcome = fail              label: sprint_failed
     execute_sprint -> handle_failure
+    report_progress -> prepare_redecompose  when ctx.tool_stdout = redecompose-pending  label: redecompose_signal
     report_progress -> check_ledger    restart: true
     handle_failure -> check_ledger          when ctx.tool_stdout startswith retry-        label: retry_sprint    restart: true
     handle_failure -> check_ledger          when ctx.tool_stdout startswith skipped-      label: skip_continue   restart: true
