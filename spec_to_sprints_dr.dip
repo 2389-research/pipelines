@@ -12,13 +12,23 @@ workflow SpecToSprintsDr
 
   agent Start
     label: Start
+    max_turns: 1
     prompt:
-      Begin spec-to-sprints decomposition pipeline.
+      Acknowledge the spec-to-sprints decomposition pipeline is starting.
+
+      HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT create, modify, or delete anything. Do NOT inspect the workspace. Do NOT call any tools beyond emitting your acknowledgement text. Your ONLY job is to confirm the pipeline start.
+
+      Just respond with a one-line acknowledgement and stop.
 
   agent Exit
     label: Exit
+    max_turns: 1
     prompt:
-      Spec-to-sprints pipeline complete.
+      Acknowledge the spec-to-sprints pipeline has completed.
+
+      HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT create, modify, or delete anything. Do NOT inspect the workspace. Do NOT call any tools beyond emitting your acknowledgement text. Your ONLY job is to confirm completion.
+
+      Just respond with a one-line acknowledgement and stop.
 
   tool find_spec
     label: "Find Spec File"
