@@ -1,5 +1,5 @@
 # ABOUTME: Resilient sprint runner — fork of sprint_runner_yaml_v2 with self-healing recovery (validation rewriter, quota waits, escalation gates).
-# ABOUTME: Calls sprint_exec_dr.dip; redecompose still uses spec_to_sprints_yaml_v2.dip until that pipeline is forked.
+# ABOUTME: Calls sprint_exec_dr.dip and spec_to_sprints_dr.dip (for the redecompose sidecar).
 workflow SprintRunnerDr
   goal: "Execute all sprints from .ai/ledger.yaml autonomously in sequence, retrying failed sprints once, re-decomposing mis-scoped sprints via sidecar, and skipping on repeated failure, until every sprint is completed/skipped/redecomposed or the failure budget is exhausted."
   start: Start
@@ -208,7 +208,7 @@ workflow SprintRunnerDr
       printf 'ready-to-redecompose-%s-next-%s' "$target" "$next_id"
 
   subgraph redecompose_sprint
-    ref: spec_to_sprints_yaml_v2.dip
+    ref: spec_to_sprints_dr.dip
 
   tool splice_ledger
     label: "Splice Redecomposed Sprints"
