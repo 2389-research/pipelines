@@ -1016,11 +1016,89 @@ workflow SpecToSprintsDr
           done
         fi
       fi
+      attempt_file=".ai/.validate-output-attempts.txt"
       if [ -n "$errors" ]; then
-        printf 'invalid-%s' "$errors"
+        attempts=$(cat "$attempt_file" 2>/dev/null || echo 0)
+        attempts=$((attempts + 1))
+        echo "$attempts" > "$attempt_file"
+        printf '\n--- validate_output attempt %s ---\n' "$attempts" >&2
+        if [ "$attempts" -ge 5 ]; then
+          printf 'escalate-output-%s' "$errors"
+        elif [ "$attempts" -ge 3 ]; then
+          printf 'rewrite-output-%s' "$errors"
+        else
+          printf 'invalid-%s' "$errors"
+        fi
         exit 0
       fi
+      rm -f "$attempt_file"
       printf 'valid'
+
+  agent RewriteOutput
+    label: "Rewrite sprint output to fix validation errors"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    fidelity: full
+    max_turns: 30
+    prompt:
+      validate_output has failed 3 consecutive times. The errors and the
+      previous attempt's output are still on disk. Rather than rewriting
+      everything from scratch (which has already failed three times),
+      apply surgical fixes to the existing files.
+
+      Read:
+      1. The validate_output stdout (in the previous tool call's context)
+         — it contains a space-separated list of error tokens like
+         `missing-stack-build-SPRINT-005.yaml`, `null-stack-lang-SPRINT-000.yaml`,
+         `missing-validation-SPRINT-012.yaml`, `oversized-sprint-SPRINT-016.yaml-18-dod-items`.
+      2. The current files under .ai/sprints/ (use ls + read).
+      3. .ai/spec_analysis.md to find canonical stack values when populating null fields.
+
+      For each error token, identify the file and field at fault, and
+      patch it in place using `yq -i` for YAML or careful section
+      replacement for MD. Examples:
+      - `missing-stack-build-SPRINT-005.yaml` → set `stack.build` to a
+        sensible value from the spec analysis (or `npm run build` for
+        node, `cargo build` for rust, etc.)
+      - `null-stack-lang-SPRINT-000.yaml` → look up the lang from
+        spec_analysis and set it
+      - `missing-validation-SPRINT-012.yaml` → add a `validation:` block
+        with a runnable command from the spec
+      - `oversized-sprint-SPRINT-NNN.yaml-N-dod-items` → trim the dod
+        list; this signals the sprint is too broad and should be
+        narrowed in scope (don't redecompose here, just trim)
+      - `ledger-yaml-mismatch` / `ledger-md-mismatch` → re-run the
+        ledger writer logic by emitting a fresh .ai/ledger.yaml from
+        the SPRINT-*.yaml files on disk
+
+      Hard rules:
+      - DO NOT rewrite files from scratch. Surgical patches only.
+      - DO NOT change the SPRINT IDs or the number of sprints.
+      - DO NOT touch .ai/spec_analysis.md or .ai/sprint_plan.md.
+      - DO NOT modify project source files outside .ai/.
+      - Use `yq -i` for in-place YAML edits; use `sed` carefully or
+        write a small awk/python script for MD edits.
+
+      Verify before exiting: re-run the validate_output checks mentally
+      on each file you touched. If you can't fix everything in this
+      turn, fix what you can and STATUS:fail; the human escalation gate
+      will pick it up.
+
+  human EscalateOutput
+    label: "Sprint output validation stuck — pick how to proceed"
+    mode: freeform
+    default: rewrite
+    prompt:
+      validate_output has failed repeatedly and the rewriter could not
+      get the sprint files clean. Latest validation errors are in the
+      tool_stdout from the prior validate_output call.
+
+      Options:
+      - **retry**: Re-run validate_output as-is. Useful if you've fixed something by hand.
+      - **rewrite**: Run the validation rewriter again (same as automatic recovery, fresh attempt).
+      - **ship-as-is**: Commit the current output despite validation errors. The runner pipeline can deal with imperfect sprints downstream.
+      - **abort**: Kill the run and bail.
 
   tool commit_output
     label: "Commit Output"
@@ -1093,7 +1171,15 @@ workflow SpecToSprintsDr
     yq_install_gate -> Exit             label: "[A] Abort"
     write_sprint_docs -> write_ledger
     write_ledger -> validate_output
-    validate_output -> commit_output       when ctx.tool_stdout = valid     label: valid
-    validate_output -> write_sprint_docs   when ctx.tool_stdout != valid    label: fix_validation  restart: true
+    validate_output -> commit_output       when ctx.tool_stdout = valid                          label: valid
+    validate_output -> EscalateOutput      when ctx.tool_stdout startswith escalate-output       label: escalate
+    validate_output -> RewriteOutput       when ctx.tool_stdout startswith rewrite-output        label: rewrite
+    validate_output -> write_sprint_docs   when ctx.tool_stdout startswith invalid               label: fix_validation  restart: true
     validate_output -> write_sprint_docs   restart: true
+    RewriteOutput -> validate_output       when ctx.outcome = success  label: rewrote_output  restart: true
+    RewriteOutput -> EscalateOutput        when ctx.outcome = fail     label: rewrite_failed
+    EscalateOutput -> validate_output      label: "retry"        restart: true
+    EscalateOutput -> RewriteOutput        label: "rewrite"      restart: true
+    EscalateOutput -> commit_output        label: "ship-as-is"
+    EscalateOutput -> Exit                 label: "abort"
     commit_output -> Exit
