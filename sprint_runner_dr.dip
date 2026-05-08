@@ -73,7 +73,7 @@ workflow SprintRunnerDr
         all_met=true
         for dep in $deps; do
           dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
-          if [ "$dep_status" != "completed" ]; then
+          if [ "$dep_status" != "completed" ] && [ "$dep_status" != "redecomposed" ]; then
             all_met=false
             break
           fi

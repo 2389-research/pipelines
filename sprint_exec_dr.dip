@@ -81,14 +81,14 @@ workflow SprintExecDr
         existing=$(cat .ai/current_sprint_id.txt)
         if [ -n "$existing" ]; then
           status=$(yq ".sprints[] | select(.id == \"$existing\") | .status" .ai/ledger.yaml 2>/dev/null)
-          if [ "$status" != "completed" ] && [ "$status" != "skipped" ]; then
+          if [ "$status" != "completed" ] && [ "$status" != "skipped" ] && [ "$status" != "redecomposed" ]; then
             printf 'found-%s' "$existing"
             exit 0
           fi
         fi
       fi
       # Otherwise find the first eligible sprint with all deps met
-      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed") | .id' .ai/ledger.yaml)
+      candidates=$(yq '.sprints[] | select(.status != "completed" and .status != "skipped" and .status != "failed" and .status != "redecomposed") | .id' .ai/ledger.yaml)
       if [ -z "$candidates" ]; then
         printf 'all-done'
         exit 0
@@ -103,7 +103,7 @@ workflow SprintExecDr
         all_met=true
         for dep in $deps; do
           dep_status=$(yq ".sprints[] | select(.id == \"$dep\") | .status" .ai/ledger.yaml 2>/dev/null)
-          if [ "$dep_status" != "completed" ]; then
+          if [ "$dep_status" != "completed" ] && [ "$dep_status" != "redecomposed" ]; then
             all_met=false
             break
           fi
@@ -220,8 +220,8 @@ workflow SprintExecDr
       target=$(cat .ai/current_sprint_id.txt)
       # Guard: never downgrade a completed sprint back to in_progress
       current_status=$(yq ".sprints[] | select(.id == \"$target\") | .status" .ai/ledger.yaml 2>/dev/null)
-      if [ "$current_status" = "completed" ]; then
-        printf 'already-completed-%s' "$target"
+      if [ "$current_status" = "completed" ] || [ "$current_status" = "redecomposed" ]; then
+        printf 'already-%s-%s' "$current_status" "$target"
         exit 0
       fi
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
