@@ -16,13 +16,27 @@ workflow IterRun
 
   agent Start
     label: Start
+    auto_status: true
     prompt:
-      Begin iteration execution pipeline. Acknowledging pipeline start — do not read or write any files.
+      Acknowledge that the iteration execution pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent Exit
     label: Exit
+    auto_status: true
     prompt:
-      Iteration execution pipeline complete. Report final status.
+      Acknowledge that the iteration execution pipeline is complete and report final status. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   tool find_next_iteration
     label: "Find Next Iteration"
@@ -59,10 +73,17 @@ workflow IterRun
 
   agent all_done_exit
     label: "All Iterations Complete"
+    auto_status: true
     prompt:
       All iterations in the roadmap have been completed. There are no pending iterations remaining.
 
       Report this status to the user. The iteration execution pipeline exits successfully — there is nothing left to do.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   # ── PHASE: Pre-Iteration ─────────────────────────────────────────────────────
 
@@ -70,6 +91,7 @@ workflow IterRun
     label: "Load Scope"
     model: gemini-3-flash-preview
     provider: gemini
+    auto_status: true
     prompt:
       Read the current iteration from docs/iterations/roadmap.md.
 
@@ -89,6 +111,12 @@ workflow IterRun
       - Total AC count and behavioral AC count
 
       HARD CONSTRAINT: Read-only. Do not modify any artifacts. Do not modify any files outside of .ai/iter-run-temp/.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when scope.md is written. Emit STATUS: fail only if you could not produce a coherent scope summary (e.g. roadmap or iteration ID is missing).
 
   tool run_sentinel_baseline
     label: "Run Sentinel Baseline"
@@ -201,6 +229,7 @@ workflow IterRun
     label: "PAR Scope Reviewer A — Pre-Flight Readiness"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -233,12 +262,17 @@ workflow IterRun
 
       For each check: PASS or FAIL with specific broken references.
 
-      Overall: ✅ Ready for implementation | ❌ Blocked: [specific missing/broken artifacts]
+      Conclude with the list of blocking issues (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every check passed (Ready for implementation). Emit STATUS: fail when any check found a blocking artifact (Blocked); the aggregator routes failures into the adjustment loop.
 
   agent par_run_scope_reviewer_b
     label: "PAR Scope Reviewer B — Implementation Feasibility"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -272,7 +306,11 @@ workflow IterRun
 
       For each check: PASS or FAIL with specific implementation concerns.
 
-      Overall: ✅ Scope approved | ❌ Revisions needed: [specific changes]
+      Conclude with the list of revisions needed (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every check passed (Scope approved). Emit STATUS: fail when any check found a feasibility blocker (Revisions needed); the aggregator routes failures into the adjustment loop.
 
   fan_in par_run_scope_join <- par_run_scope_reviewer_a, par_run_scope_reviewer_b
 
@@ -300,6 +338,7 @@ workflow IterRun
 
   agent adjust_run_scope
     label: "Adjust Run Scope"
+    auto_status: true
     prompt:
       The PAR scope review found issues with the iteration scope. Read the aggregated findings from par_run_scope_aggregate.
 
@@ -313,6 +352,12 @@ workflow IterRun
       Update the scope summary in .ai/iter-run-temp/scope.md to reflect corrections.
 
       HARD CONSTRAINT: Only modify files in docs/iterations/ and .ai/iter-run-temp/. Do not modify source code.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you applied the adjustments (re-runs PAR scope review). Emit STATUS: fail when you could not produce a coherent adjustment (pipeline halts so a human can intervene; an unbounded loop here would silently spin).
 
   # ── PHASE: Task Decomposition ────────────────────────────────────────────────
 
@@ -592,6 +637,7 @@ workflow IterRun
     label: "PAR Spec Reviewer A — Top-Down Trace"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -631,12 +677,17 @@ workflow IterRun
       - AC-N: IMPLEMENTED | MISSING | WRONG — [code file:line] — [explanation]
       - Evidence: ADEQUATE | WEAK | MISSING — [test file:line]
 
-      Overall: ✅ Spec compliant | ❌ Issues found: [list]
+      Conclude with the list of issues found (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every AC is IMPLEMENTED with ADEQUATE evidence (Spec compliant). Emit STATUS: fail when any AC is MISSING or WRONG, or evidence is WEAK or MISSING (Issues found); the aggregator routes failures to fix_spec_issues.
 
   agent par_spec_reviewer_b
     label: "PAR Spec Reviewer B — Bottom-Up Diff Audit"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -679,7 +730,11 @@ workflow IterRun
       **Unrequested Changes:** [list or "none"]
       **Missing Evidence:** [ACs with behavioral_impact but no new test]
 
-      Overall: ✅ All changes authorized | ❌ Issues found: [list]
+      Conclude with the list of issues found (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every change is authorized and behavioral ACs have new tests (All changes authorized). Emit STATUS: fail when any change is UNAUTHORIZED or evidence is missing (Issues found); the aggregator routes failures to fix_spec_issues.
 
   fan_in par_spec_join <- par_spec_reviewer_a, par_spec_reviewer_b
 
@@ -741,6 +796,7 @@ workflow IterRun
     label: "PAR Quality Reviewer A — Code Health"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -775,12 +831,17 @@ workflow IterRun
       **Issues:** Critical / Serious / Minor with file:line refs
       **Corpus Quality:** GOOD | WEAK with specific issues
 
-      Overall: ✅ Approved | ❌ Changes needed: [specific refactoring required]
+      Conclude with the specific refactoring required (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when there are no Critical or Serious issues and corpus quality is GOOD (Approved). Emit STATUS: fail when any Critical or Serious issue exists or corpus quality is WEAK (Changes needed); the aggregator routes failures to fix_quality_issues.
 
   agent par_quality_reviewer_b
     label: "PAR Quality Reviewer B — Future-Proofing"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -818,7 +879,11 @@ workflow IterRun
       **Navigability:** GOOD | POOR — [specific confusion points]
       **Coordination Creep:** NONE | [files becoming God objects]
 
-      Overall: ✅ Approved | ❌ Changes needed: [specific architectural changes]
+      Conclude with the specific architectural changes needed (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when Boxing-In is CLEAR, Navigability is GOOD, and Coordination Creep is NONE (Approved). Emit STATUS: fail when any category reports RISK, POOR, or named God objects (Changes needed); the aggregator routes failures to fix_quality_issues.
 
   fan_in par_quality_join <- par_quality_reviewer_a, par_quality_reviewer_b
 
@@ -1144,6 +1209,7 @@ workflow IterRun
 
     # Pre-iteration
     load_scope -> run_sentinel_baseline
+    load_scope -> Exit                             when ctx.outcome = fail      label: scope_load_failed
     run_sentinel_baseline -> consistency_audit
     consistency_audit -> par_run_scope_dispatch    when ctx.tool_stdout = consistent            label: consistent
     consistency_audit -> reconcile_state           when ctx.tool_stdout startswith inconsistent  label: inconsistent
@@ -1154,11 +1220,14 @@ workflow IterRun
     par_run_scope_dispatch -> par_run_scope_reviewer_a
     par_run_scope_dispatch -> par_run_scope_reviewer_b
     par_run_scope_reviewer_a -> par_run_scope_join
+    par_run_scope_reviewer_a -> par_run_scope_join when ctx.outcome = fail      label: reviewer_a_blocked
     par_run_scope_reviewer_b -> par_run_scope_join
+    par_run_scope_reviewer_b -> par_run_scope_join when ctx.outcome = fail      label: reviewer_b_revise
     par_run_scope_join -> par_run_scope_aggregate
     par_run_scope_aggregate -> decompose_tasks     when ctx.outcome = success   label: scope_approved
     par_run_scope_aggregate -> adjust_run_scope    when ctx.outcome = fail      label: scope_revise
-    adjust_run_scope -> par_run_scope_dispatch     restart: true
+    adjust_run_scope -> par_run_scope_dispatch     when ctx.outcome = success   restart: true   label: adjusted
+    adjust_run_scope -> Exit                       when ctx.outcome = fail      label: adjust_failed_human
 
     # Task decomposition
     decompose_tasks -> mark_iteration_in_progress  when ctx.outcome = success   label: decomposed
@@ -1187,7 +1256,9 @@ workflow IterRun
     par_spec_dispatch -> par_spec_reviewer_a
     par_spec_dispatch -> par_spec_reviewer_b
     par_spec_reviewer_a -> par_spec_join
+    par_spec_reviewer_a -> par_spec_join           when ctx.outcome = fail      label: spec_reviewer_a_issues
     par_spec_reviewer_b -> par_spec_join
+    par_spec_reviewer_b -> par_spec_join           when ctx.outcome = fail      label: spec_reviewer_b_issues
     par_spec_join -> par_spec_aggregate
     par_spec_aggregate -> par_quality_dispatch     when ctx.outcome = success   label: spec_pass
     par_spec_aggregate -> fix_spec_issues          when ctx.outcome = fail      label: spec_fail
@@ -1198,7 +1269,9 @@ workflow IterRun
     par_quality_dispatch -> par_quality_reviewer_a
     par_quality_dispatch -> par_quality_reviewer_b
     par_quality_reviewer_a -> par_quality_join
+    par_quality_reviewer_a -> par_quality_join     when ctx.outcome = fail      label: quality_reviewer_a_changes
     par_quality_reviewer_b -> par_quality_join
+    par_quality_reviewer_b -> par_quality_join     when ctx.outcome = fail      label: quality_reviewer_b_changes
     par_quality_join -> par_quality_aggregate
     par_quality_aggregate -> mark_task_done        when ctx.outcome = success   label: quality_pass
     par_quality_aggregate -> fix_quality_issues    when ctx.outcome = fail      label: quality_fail
@@ -1223,3 +1296,4 @@ workflow IterRun
     validate_wrap_up -> commit_iteration           when ctx.tool_stdout = wrapup-valid          label: valid
     validate_wrap_up -> wrap_up                    when ctx.tool_stdout startswith wrapup-invalid  label: invalid  restart: true
     commit_iteration -> Exit
+    commit_iteration -> Exit                       when ctx.outcome = fail      label: commit_failed
