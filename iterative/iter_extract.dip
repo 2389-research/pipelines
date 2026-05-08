@@ -13,8 +13,15 @@ workflow IterExtract
 
   agent Start
     label: Start
+    auto_status: true
     prompt:
-      Begin requirements extraction pipeline. Acknowledging pipeline start — do not read or write any files.
+      Acknowledge that the requirements extraction pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent Exit
     label: Exit
@@ -103,9 +110,11 @@ workflow IterExtract
 
       Report whether they are complete (all stories have ACs, all behavioral ACs have scenario refs, all scenarios link to stories, corpus has all entries).
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
+
+      Emit STATUS: success when the existing artifacts are complete and consistent (pipeline can exit). Emit STATUS: fail when artifacts are missing, incomplete, or inconsistent (pipeline will re-extract).
 
   tool chunk_spec
     label: "Chunk Spec by Headings"
@@ -237,6 +246,7 @@ workflow IterExtract
     label: "Extract Agent 1"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -296,10 +306,17 @@ workflow IterExtract
 
       HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the JSON file (or correctly skipped because no chunk was assigned). Emit STATUS: fail only if you could not produce a valid JSON file due to a tool error.
+
   agent extract_agent_2
     label: "Extract Agent 2"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -359,10 +376,17 @@ workflow IterExtract
 
       HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the JSON file (or correctly skipped because no chunk was assigned). Emit STATUS: fail only if you could not produce a valid JSON file due to a tool error.
+
   agent extract_agent_3
     label: "Extract Agent 3"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -421,6 +445,12 @@ workflow IterExtract
       After writing the JSON file, report what you extracted.
 
       HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the JSON file (or correctly skipped because no chunk was assigned). Emit STATUS: fail only if you could not produce a valid JSON file due to a tool error.
 
   fan_in extract_join <- extract_agent_1, extract_agent_2, extract_agent_3
 
@@ -776,9 +806,12 @@ workflow IterExtract
     validate_existing -> Exit                          when ctx.outcome = success   label: valid
     validate_existing -> chunk_spec                    when ctx.outcome = fail      label: invalid
     chunk_spec -> classify_chunks
+    chunk_spec -> Exit                                 when ctx.outcome = fail   label: chunk_failed
     classify_chunks -> pick_next_wave
+    classify_chunks -> Exit                            when ctx.outcome = fail   label: classify_failed
     pick_next_wave -> extract_wave                     when ctx.tool_stdout startswith wave-   label: has_wave
     pick_next_wave -> par_omission_dispatch            when ctx.tool_stdout = no-more         label: all_extracted
+    pick_next_wave -> Exit                             when ctx.outcome = fail   label: wave_pick_failed
     extract_wave -> extract_agent_1
     extract_wave -> extract_agent_2
     extract_wave -> extract_agent_3
@@ -786,7 +819,9 @@ workflow IterExtract
     extract_agent_2 -> extract_join
     extract_agent_3 -> extract_join
     extract_join -> persist_wave
+    extract_join -> Exit                               when ctx.outcome = fail   label: extract_join_failed
     persist_wave -> count_remaining_chunks
+    persist_wave -> Exit                               when ctx.outcome = fail   label: persist_failed
     count_remaining_chunks -> pick_next_wave           when ctx.tool_stdout startswith remaining-  label: more_chunks    restart: true
     count_remaining_chunks -> par_omission_dispatch    when ctx.tool_stdout = all-extracted      label: done_extracting
     par_omission_dispatch -> par_omission_reviewer_a
@@ -806,3 +841,4 @@ workflow IterExtract
     validate_extraction -> commit_extraction           when ctx.tool_stdout = validation-pass    label: valid
     validate_extraction -> aggregate_results           when ctx.tool_stdout startswith validation-fail  label: retry  restart: true
     commit_extraction -> Exit
+    commit_extraction -> Exit                          when ctx.outcome = fail   label: commit_failed
