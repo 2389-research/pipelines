@@ -165,6 +165,15 @@ workflow IterScope
       STATUS: success
       STATUS: fail
 
+  tool init_scope_counter
+    label: "Init Scope Round Counter"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-scope-temp
+      printf '0' > .ai/iter-scope-temp/.scope_rounds
+      printf 'initialized'
+
   tool check_citations
     label: "Check Story Citations"
     timeout: 15s
@@ -321,8 +330,26 @@ workflow IterScope
       STATUS: success
       STATUS: fail
 
+  tool count_scope_rounds
+    label: "Count Scope Review Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-scope-temp/.scope_rounds"
+      mkdir -p .ai/iter-scope-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 5 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   agent adjust_scope
     label: "Adjust Scope"
+    max_turns: 200
     prompt:
       Read the scope review findings from par_scope_aggregate. Adjust skeleton.md and iterations.md to address all raised issues.
 
@@ -429,8 +456,9 @@ workflow IterScope
     read_backlog -> define_skeleton
     define_skeleton -> order_iterations           when ctx.outcome = success   label: skeleton_defined
     define_skeleton -> Exit                       when ctx.outcome = fail      label: skeleton_failed
-    order_iterations -> check_citations           when ctx.outcome = success   label: ordered
+    order_iterations -> init_scope_counter        when ctx.outcome = success   label: ordered
     order_iterations -> Exit                      when ctx.outcome = fail      label: ordering_failed
+    init_scope_counter -> check_citations
     check_citations -> par_scope_dispatch         when ctx.tool_stdout = citations-ok         label: citations_ok
     check_citations -> fix_citations              when ctx.tool_stdout startswith citations-fail  label: citations_bad
     fix_citations -> check_citations              restart: true
@@ -440,8 +468,11 @@ workflow IterScope
     par_scope_reviewer_b -> par_scope_join
     par_scope_join -> par_scope_aggregate
     par_scope_aggregate -> write_roadmap          when ctx.outcome = success   label: approved
-    par_scope_aggregate -> adjust_scope           when ctx.outcome = fail      label: revise
-    adjust_scope -> check_citations               restart: true
+    par_scope_aggregate -> count_scope_rounds     when ctx.outcome = fail      label: revise
+    count_scope_rounds -> adjust_scope            when ctx.tool_stdout = continue       label: under_cap
+    count_scope_rounds -> write_roadmap           when ctx.tool_stdout = cap-reached    label: force_accept
+    adjust_scope -> check_citations               when ctx.outcome = success   restart: true   label: adjusted
+    adjust_scope -> write_roadmap                 when ctx.outcome = fail      label: adjust_failed_force
     write_roadmap -> validate_roadmap             when ctx.outcome = success   label: written
     write_roadmap -> Exit                         when ctx.outcome = fail      label: write_failed
     validate_roadmap -> commit_roadmap            when ctx.tool_stdout = roadmap-valid        label: valid
