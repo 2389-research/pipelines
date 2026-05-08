@@ -1131,10 +1131,12 @@ workflow SpecToSprintsDr
       printf 'committed-%s-sprints' "$count"
 
   edges
+    Start -> Exit                          when ctx.outcome = fail  label: start_failed
     Start -> find_spec
     find_spec -> setup_workspace  when ctx.tool_stdout != no_spec_found  label: spec_found
     find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found   label: no_spec
     find_spec -> no_spec_exit
+    no_spec_exit -> Exit                   when ctx.outcome = fail  label: no_spec_failed
     no_spec_exit -> Exit
     setup_workspace -> check_resume       when ctx.tool_stdout = ready          label: workspace_ready
     setup_workspace -> yq_install_gate    when ctx.tool_stdout = yq-not-found   label: yq_missing
@@ -1146,6 +1148,7 @@ workflow SpecToSprintsDr
     check_resume -> decompose_parallel    when ctx.tool_stdout startswith resume-decompose   label: resume_decompose
     check_resume -> analyze_spec          when ctx.tool_stdout = fresh-start                 label: fresh
     check_resume -> analyze_spec
+    analyze_spec -> Exit                   when ctx.outcome = fail  label: analyze_failed
     analyze_spec -> decompose_parallel
     decompose_parallel -> decompose_claude
     decompose_parallel -> decompose_gpt
@@ -1168,17 +1171,23 @@ workflow SpecToSprintsDr
     critique_gemini_on_gpt -> critique_join
     critique_join -> merge_decomposition
     check_resume -> redecompose_single      when ctx.tool_stdout = redecompose-mode  label: redecompose
+    redecompose_single -> Exit             when ctx.outcome = fail  label: redecompose_failed
     redecompose_single -> write_ledger_redecompose
     write_ledger_redecompose -> validate_output
+    merge_decomposition -> Exit            when ctx.outcome = fail  label: merge_failed
     merge_decomposition -> DecompositionManager
+    DecompositionManager -> Exit           when ctx.outcome = fail  label: dm_failed
     DecompositionManager -> present_plan
+    present_plan -> Exit                   when ctx.outcome = fail  label: present_failed
     present_plan -> approval_gate
     approval_gate -> apply_feedback  label: "[A] Revise plan"
     approval_gate -> skip_approval   label: "[S] Approve / Skip"
+    apply_feedback -> Exit                 when ctx.outcome = fail  label: apply_failed
     apply_feedback -> approval_gate  restart: true
     skip_approval -> write_sprint_docs
     yq_install_gate -> setup_workspace  label: "[S] Retry"  restart: true
     yq_install_gate -> Exit             label: "[A] Abort"
+    write_sprint_docs -> Exit              when ctx.outcome = fail  label: write_docs_failed
     write_sprint_docs -> write_ledger
     write_ledger -> validate_output
     validate_output -> commit_output       when ctx.tool_stdout = valid                          label: valid
