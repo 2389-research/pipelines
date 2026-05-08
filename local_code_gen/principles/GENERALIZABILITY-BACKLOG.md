@@ -16,42 +16,40 @@ runner.
 Pick this up after the v10 test cycle confirms the truncation fix and the
 single-session CloudFix architecture.
 
-## Tier 1 — Mechanical surface fixes (~2 hrs)
+## Tier 1 — Mechanical surface fixes ✓ DONE (2026-05-07)
 
-Add detection branches for languages we already partly support.
+Landed via the `local_code_gen/lib/lang_profile.sh` refactor. Languages
+detected by Setup and dispatched through the lib's per-language functions
+(`lang_test_cmd`, `lang_src_dirs`, `lang_test_count_pattern`, etc.) so
+`sprint_runner_qwen.dip` and `sprint_exec_qwen.dip` no longer have any
+hardcoded language branches.
 
-| Where (file:line) | Currently | Add |
-|---|---|---|
-| `sprint_runner_qwen.dip:72-78` (Setup) | uv / npm / go | cargo, bundle, mvn/gradle, dotnet |
-| `sprint_runner_qwen.dip:239-250` (RunTests) | go test, npm test, uv run pytest | cargo test, bundle exec rspec, mvn test, dotnet test |
-| `sprint_runner_qwen.dip:341-349` (LocalFix FILE_LIST) | `.go` / `.ts`+`.js` / `.py` | `.rs`, `.rb`, `.java`, `.cs`, `.ex` |
-| `sprint_runner_qwen.dip:496-507` (Audit test count) | `^func Test`, `describe\|it\|test\(`, `^def test_` | Rust `#[test]`, Ruby `def test_` (RSpec), Java `@Test` |
-| `sprint_runner_qwen.dip:143` (LocalFix syntax check) | `gofmt`, `py_compile`, `node --check` (deprecated) | replace `node --check` with `node -c`; consider `cargo check` for Rust |
+Currently first-class: **python, go, node, rust, ruby, java-maven,
+java-gradle**. Each language gets:
+- proj_root detection (Setup / RunTests / LocalFix all use `detect_proj_root`)
+- deps install command (`lang_install_cmd`)
+- test runner command (`lang_test_cmd`)
+- source-dir + glob + prune patterns for context bundle (`lang_src_dirs`,
+  `lang_src_glob`, `lang_src_glob_extras`, `lang_find_prune`)
+- failure-block + failure-summary + failing-test-files extractors
+  (`lang_failure_block`, `lang_failure_summary`, `lang_failing_test_files`)
+- test-count regex for Audit (`lang_test_count_pattern` +
+  `lang_test_grep_includes`)
+- per-file syntax pre-check (`lang_syntax_check`)
 
-Also broaden the existing Node test-count regex (line 502-503) — it only
-matches Mocha/Jest. Vitest, Cypress, and async patterns slip through.
+Adding a new language now means editing **one file**: `lib/lang_profile.sh`.
+No dip changes needed.
 
-## Tier 2 — Prompt parametrization (~1 hr)
+What's NOT first-class yet: .NET (csproj/sln), Elixir, Swift, etc.
+Adding them is one PR-sized change to lang_profile.sh.
 
-`CloudFix` prompt at `sprint_runner_qwen.dip:554-555` literally
-hardcodes:
+## Tier 2 — Prompt parametrization ✓ DONE (2026-05-07)
 
-```bash
-cd backend && uv run pytest -x --tb=short
-```
-
-We're telling the model to run pytest. Fix:
-
-1. `Setup` writes `.ai/test_command.txt` based on detected language.
-   Examples:
-   - Python: `cd backend && uv run pytest -x --tb=short 2>&1 | tail -80`
-   - Go: `cd backend && go test ./... 2>&1 | tail -80`
-   - Rust: `cargo test --lib 2>&1 | tail -80`
-2. `CloudFix` prompt reads `.ai/test_command.txt` and invokes whatever's
-   there.
-
-`LocalFix` is already cleaner — picker prompt is language-agnostic; only
-its FILE_LIST construction is language-specific (covered in tier 1).
+`Setup` writes `.ai/test_command.txt` (and `.ai/lang.txt`) based on
+`lang_test_cmd` / `detect_lang` for the project. `CloudFix`'s prompt
+now reads `.ai/test_command.txt` rather than hardcoding `uv run pytest`.
+Per-language example shapes are listed inline in the prompt for cases
+where the model wants a default before catting the file.
 
 ## Tier 3 — Architect language pack (~1 day, blocked on tier 1)
 
