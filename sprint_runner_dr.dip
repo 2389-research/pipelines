@@ -267,17 +267,25 @@ workflow SprintRunnerDr
       5. Concrete next steps for recovery
 
   edges
+    Start -> check_yq                  when ctx.outcome = success
+    Start -> check_yq                  when ctx.outcome = fail   label: start_failed_continue
     Start -> check_yq
     check_yq -> check_ledger           when ctx.tool_stdout = yq-ok         label: yq_ok
     check_yq -> yq_missing             when ctx.tool_stdout = yq-not-found  label: yq_missing
     check_yq -> Exit
+    yq_missing -> Exit                 when ctx.outcome = success
+    yq_missing -> Exit                 when ctx.outcome = fail   label: report_failed_exit
     yq_missing -> Exit
     check_ledger -> Exit               when ctx.tool_stdout = all_done       label: all_done
     check_ledger -> no_ledger_exit     when ctx.tool_stdout = no_ledger     label: no_ledger
     check_ledger -> deps_blocked_exit  when ctx.tool_stdout = deps_blocked  label: deps_blocked
     check_ledger -> execute_sprint     when ctx.tool_stdout startswith next- label: next_sprint
     check_ledger -> Exit
+    no_ledger_exit -> Exit             when ctx.outcome = success
+    no_ledger_exit -> Exit             when ctx.outcome = fail   label: report_failed_exit
     no_ledger_exit -> Exit
+    deps_blocked_exit -> Exit          when ctx.outcome = success
+    deps_blocked_exit -> Exit          when ctx.outcome = fail   label: report_failed_exit
     deps_blocked_exit -> Exit
     execute_sprint -> report_progress  when ctx.outcome = success           label: sprint_done
     execute_sprint -> handle_failure   when ctx.outcome = fail              label: sprint_failed
@@ -293,4 +301,6 @@ workflow SprintRunnerDr
     redecompose_sprint -> failure_summary    when ctx.outcome = fail     label: redecompose_failed
     splice_ledger -> report_redecompose
     report_redecompose -> check_ledger       restart: true
+    failure_summary -> Exit            when ctx.outcome = success
+    failure_summary -> Exit            when ctx.outcome = fail   label: report_failed_exit
     failure_summary -> Exit

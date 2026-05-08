@@ -916,6 +916,8 @@ workflow SprintExecDr
     CheckYq -> FindNextSprint          when ctx.tool_stdout = yq-ok         label: yq_ok
     CheckYq -> YqMissing               when ctx.tool_stdout = yq-not-found  label: yq_missing
     CheckYq -> YqMissing
+    YqMissing -> Exit                   when ctx.outcome = success
+    YqMissing -> Exit                   when ctx.outcome = fail  label: report_failed_exit
     YqMissing -> Exit
     FindNextSprint -> SetCurrentSprint  when ctx.tool_stdout startswith found-  label: sprint_found
     FindNextSprint -> Exit             when ctx.tool_stdout = all-done         label: all_done
@@ -1003,4 +1005,6 @@ workflow SprintExecDr
     CompleteSprint -> Exit
     MarkFailed -> RecoveryManager
     RecoveryManager -> FailureSummary
+    FailureSummary -> Exit              when ctx.outcome = success
+    FailureSummary -> Exit              when ctx.outcome = fail  label: report_failed_exit
     FailureSummary -> Exit
