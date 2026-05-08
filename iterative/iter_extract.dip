@@ -18,8 +18,15 @@ workflow IterExtract
 
   agent Exit
     label: Exit
+    auto_status: true
     prompt:
-      Requirements extraction pipeline complete.
+      Acknowledge that the requirements extraction pipeline is complete. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent no_spec_exit
     label: "No Spec Found"
@@ -569,8 +576,21 @@ workflow IterExtract
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when there are no critical omissions remaining.
-      Use STATUS: fail when critical omissions were found that require re-extraction.
+      STATUS semantics — this is a routing signal, not a crash signal:
+
+      Use STATUS: success when:
+        - No critical omissions were found, OR
+        - Findings were only minor/serious and patches were written to .ai/iter-extract-temp/extraction_patches.json,
+        - i.e., the run can proceed straight to coverage ledger without forcing remediation.
+
+      Use STATUS: fail ONLY when critical omissions were identified AND patches addressing them
+      have been written to .ai/iter-extract-temp/extraction_patches.json. STATUS: fail routes the
+      run into the gap-remediation loop (build_coverage_ledger -> patch_extractions), which reads
+      the patches file. The patches file MUST exist on disk before you emit STATUS: fail.
+
+      If you cannot read the reviewer outputs at all, summarize the issue and emit STATUS: success
+      so the pipeline proceeds to coverage assessment (which will detect any real gaps independently).
+      Do not use STATUS: fail to signal aggregate-internal errors.
 
   agent build_coverage_ledger
     label: "Build Coverage Ledger"
@@ -776,6 +796,7 @@ workflow IterExtract
     par_omission_reviewer_b -> par_omission_join
     par_omission_join -> par_omission_aggregate
     par_omission_aggregate -> build_coverage_ledger
+    par_omission_aggregate -> build_coverage_ledger    when ctx.outcome = fail   label: gaps_to_remediate
     build_coverage_ledger -> aggregate_results         when ctx.outcome = success   label: full_coverage
     build_coverage_ledger -> patch_extractions          when ctx.outcome = fail      label: has_gaps
     patch_extractions -> build_coverage_ledger          when ctx.outcome = success   restart: true  label: patched
