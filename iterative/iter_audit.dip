@@ -13,13 +13,27 @@ workflow IterAudit
 
   agent Start
     label: Start
+    auto_status: true
     prompt:
-      Begin iteration audit pipeline. Acknowledging pipeline start — do not read or write any files.
+      Acknowledge that the iteration audit pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent Exit
     label: Exit
+    auto_status: true
     prompt:
-      Iteration audit pipeline complete.
+      Acknowledge that the iteration audit pipeline is complete. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   tool read_iteration_state
     label: "Read Iteration State"
@@ -136,6 +150,7 @@ workflow IterAudit
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -176,11 +191,18 @@ workflow IterAudit
 
       Unrequested features: [file:line changes not traceable to any AC] or "none"
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every story is PASS with all ACs IMPLEMENTED and no unrequested features. Emit STATUS: fail when any AC is MISSING or WRONG, any story is FAIL, or unrequested features were found. The aggregator routes failures into gap-story creation.
+
   agent par_tier1_auditor_b
     label: "Tier 1 Auditor B — Evidence Seam Adequacy"
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -229,6 +251,12 @@ workflow IterAudit
 
       Corpus gaps: [scenarios without entries or with TBD commands] or "none"
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every scenario is ADEQUATE with seam MATCH and the test PASSES, and corpus gaps are "none". Emit STATUS: fail when any scenario is WEAK or MISSING, seam is MISMATCH, test FAILs/ERRORs, or any TBD commands were found. The aggregator routes failures into gap-story creation.
+
   fan_in par_tier1_join <- par_tier1_auditor_a, par_tier1_auditor_b
 
   agent par_tier1_aggregate
@@ -250,12 +278,11 @@ workflow IterAudit
       - Unrequested features found
       - Observable behavior without corpus entries
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when all stories have adequate evidence for all ACs.
-      Use STATUS: fail when any story has a failing AC or weak evidence at wrong seam.
+      Emit STATUS: success when all stories have adequate evidence for all ACs (tier 1 clean). Emit STATUS: fail when any story has a failing AC or weak evidence at the wrong seam (synthesis still runs and writes gap stories — do not halt the pipeline).
 
   parallel par_tier2_dispatch -> par_tier2_auditor_a, par_tier2_auditor_b
 
@@ -264,6 +291,7 @@ workflow IterAudit
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -319,11 +347,18 @@ workflow IterAudit
         - Missing observables: list any not evidenced in output
         - Error diagnosis: infrastructure | real-breakage (if ERROR)
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every impacted scenario is PASS with full observable coverage. Emit STATUS: fail when any scenario FAILs/ERRORs or has missing observables, or any TBD command was found. The aggregator routes failures into gap-story creation.
+
   agent par_tier2_auditor_b
     label: "Tier 2 Auditor B — Drift Detector"
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -375,6 +410,12 @@ workflow IterAudit
         - Scope creep: NONE | list of uncovered new behaviors
         - Recommendation: keep as-is | update preconditions | update steps | update observables | rewrite | add new scenario
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every impacted scenario is NO-DRIFT with all five drift categories NONE. Emit STATUS: fail when any scenario is DRIFTED or any drift category reports a description (or any TBD command was found). The aggregator routes failures into gap-story creation.
+
   fan_in par_tier2_join <- par_tier2_auditor_a, par_tier2_auditor_b
 
   agent par_tier2_aggregate
@@ -396,12 +437,11 @@ workflow IterAudit
       - Behavioral drift descriptions for any scenario that needs updating
       - Recommended actions for each flagged scenario
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when all impacted scenarios still correctly represent system behavior.
-      Use STATUS: fail when any scenario fails its test or has unaddressed behavioral drift.
+      Emit STATUS: success when all impacted scenarios still correctly represent system behavior (tier 2 clean). Emit STATUS: fail when any scenario fails its test or has unaddressed behavioral drift (synthesis still runs and writes gap stories — do not halt the pipeline).
 
   parallel par_tier3_dispatch -> par_tier3_auditor_a, par_tier3_auditor_b
 
@@ -410,6 +450,7 @@ workflow IterAudit
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -463,11 +504,18 @@ workflow IterAudit
         - Stdout summary: first/last few lines or "empty"
         - Stderr summary: first/last few lines or "empty"
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every sentinel ran (you produced raw execution data) AND no scenario had a TBD command. Emit STATUS: fail when any TBD sentinel command was found in the corpus (the regression safety net has a gap — synthesis must still run to write gap stories). Note: a sentinel exit code of FAIL/EXEC-ERROR/TIMEOUT is not your STATUS — you faithfully record results regardless. Auditor B classifies regressions.
+
   agent par_tier3_auditor_b
     label: "Tier 3 Auditor B — Regression Classifier"
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -530,12 +578,19 @@ workflow IterAudit
       - Total improvements: N
       - Total stable-pass: N
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when there are zero REGRESSIONs and zero FLAKY classifications (the regression safety net is intact). Emit STATUS: fail when any REGRESSION or FLAKY result is detected, or any TBD sentinel was found, or no baseline was available (synthesis still runs and writes gap stories — do not halt the pipeline).
+
   fan_in par_tier3_join <- par_tier3_auditor_a, par_tier3_auditor_b
 
   agent par_tier3_aggregate
     label: "Tier 3 Aggregate"
     model: gemini-3-flash-preview
     provider: gemini
+    auto_status: true
     prompt:
       Read both Tier 3 PAR reviewer outputs from par_tier3_auditor_a and par_tier3_auditor_b.
 
@@ -551,12 +606,11 @@ workflow IterAudit
       - Total confirmed improvements
       - Uncertain results requiring manual verification
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when there are zero confirmed regressions and zero uncertain results.
-      Use STATUS: fail when any regression is confirmed or any result is uncertain.
+      Emit STATUS: success when there are zero confirmed regressions and zero uncertain results (tier 3 clean). Emit STATUS: fail when any regression is confirmed or any result is uncertain (synthesis still runs and writes gap stories — do not halt the pipeline).
 
   agent synthesize_audit
     label: "Synthesize Audit"
@@ -590,17 +644,17 @@ workflow IterAudit
       - Which story/scenario/AC is affected
       - Severity (CRITICAL for regressions, HIGH for failing ACs, MEDIUM for weak evidence/drift)
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when verdict is CLEAN (all tiers pass).
-      Use STATUS: fail when verdict is GAPS FOUND (any tier fails).
+      Emit STATUS: success when verdict is CLEAN (all three tier findings files indicate no gaps). Emit STATUS: fail when verdict is GAPS FOUND (any tier reports failures, weak evidence, drift, regressions, or scope violations) — this routes the pipeline into write_gap_stories.
 
   agent write_gap_stories
     label: "Write Gap Stories"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       Read the audit synthesis from synthesize_audit. Create gap stories for every failing finding.
 
@@ -634,6 +688,12 @@ workflow IterAudit
 
       Write .ai/iter-audit-result.txt with the single word:
       gaps
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when all gap stories were written, the roadmap was updated with a follow-up iteration, and .ai/iter-audit-result.txt contains "gaps". Emit STATUS: fail only if a tool error prevented writing one of these artifacts.
 
   tool commit_gaps
     label: "Commit Gaps"
@@ -676,23 +736,33 @@ workflow IterAudit
     par_tier1_dispatch -> par_tier1_auditor_b
     par_tier1_auditor_a -> par_tier1_join
     par_tier1_auditor_b -> par_tier1_join
+    par_tier1_auditor_a -> par_tier1_join          when ctx.outcome = fail      label: tier1a_findings
+    par_tier1_auditor_b -> par_tier1_join          when ctx.outcome = fail      label: tier1b_findings
     par_tier1_join -> par_tier1_aggregate
     par_tier1_aggregate -> par_tier2_dispatch
+    par_tier1_aggregate -> par_tier2_dispatch      when ctx.outcome = fail      label: tier1_gaps_continue
     par_tier2_dispatch -> par_tier2_auditor_a
     par_tier2_dispatch -> par_tier2_auditor_b
     par_tier2_auditor_a -> par_tier2_join
     par_tier2_auditor_b -> par_tier2_join
+    par_tier2_auditor_a -> par_tier2_join          when ctx.outcome = fail      label: tier2a_findings
+    par_tier2_auditor_b -> par_tier2_join          when ctx.outcome = fail      label: tier2b_findings
     par_tier2_join -> par_tier2_aggregate
     par_tier2_aggregate -> par_tier3_dispatch
+    par_tier2_aggregate -> par_tier3_dispatch      when ctx.outcome = fail      label: tier2_gaps_continue
     par_tier3_dispatch -> par_tier3_auditor_a
     par_tier3_dispatch -> par_tier3_auditor_b
     par_tier3_auditor_a -> par_tier3_join
     par_tier3_auditor_b -> par_tier3_join
+    par_tier3_auditor_a -> par_tier3_join          when ctx.outcome = fail      label: tier3a_findings
+    par_tier3_auditor_b -> par_tier3_join          when ctx.outcome = fail      label: tier3b_findings
     par_tier3_join -> par_tier3_aggregate
     par_tier3_aggregate -> synthesize_audit
+    par_tier3_aggregate -> synthesize_audit        when ctx.outcome = fail      label: tier3_gaps_continue
     synthesize_audit -> report_clean              when ctx.outcome = success   label: clean
     synthesize_audit -> write_gap_stories         when ctx.outcome = fail      label: gaps_found
     write_gap_stories -> commit_gaps
+    write_gap_stories -> Exit                      when ctx.outcome = fail      label: write_failed
     commit_gaps -> report_gaps
     report_gaps -> Exit
     report_clean -> Exit
