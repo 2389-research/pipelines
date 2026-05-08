@@ -11,17 +11,19 @@ workflow SprintExecDr
 
   agent Start
     label: Start
+    max_turns: 1
     prompt:
       Acknowledge that the sprint execution pipeline is starting. Report ready status.
 
-      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start. If you do anything else, the pipeline fails.
+      HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT create, modify, or delete anything. Do NOT call any tools. Your ONLY job is to acknowledge the pipeline start with a one-line response.
 
   agent Exit
     label: Exit
+    max_turns: 1
     prompt:
-      The sprint execution pipeline is complete. Report final status.
+      The sprint execution pipeline is complete. Acknowledge completion.
 
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT run tests. Do NOT debug anything. Your ONLY job is to acknowledge completion. If prior nodes left work undone, that is not your problem — the pipeline will handle retries.
+      HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT create, modify, or delete anything. Do NOT call any tools. Your ONLY job is to acknowledge completion with a one-line response.
 
   tool EnsureLedger
     label: "Ensure Ledger"
@@ -973,6 +975,7 @@ workflow SprintExecDr
       printf 'normal-reviews'
 
   edges
+    Start -> Exit              when ctx.outcome = fail  label: start_failed
     Start -> EnsureLedger
     EnsureLedger -> EnsureManagerJournals
     EnsureManagerJournals -> CheckYq
@@ -989,6 +992,7 @@ workflow SprintExecDr
     SetCurrentSprint -> ReadSprint  when ctx.tool_stdout startswith current-  label: sprint_found
     SetCurrentSprint -> Exit        when ctx.tool_stdout = all-done           label: all_done
     SetCurrentSprint -> Exit
+    ReadSprint -> Exit         when ctx.outcome = fail  label: read_failed
     ReadSprint -> PlanManager
     PlanManager -> CheckBootstrap  when ctx.outcome = success  label: go
     PlanManager -> MarkFailed      when ctx.outcome = fail     label: hold
@@ -1032,6 +1036,7 @@ workflow SprintExecDr
     EscalateValidation -> MarkFailed         label: "abort"
     RewriteValidation -> ValidateDispatch    when ctx.outcome = success  label: rewrote_validation  restart: true
     RewriteValidation -> EscalateValidation  when ctx.outcome = fail     label: rewrite_failed
+    CommitSprintWork -> Exit   when ctx.outcome = fail  label: commit_failed
     CommitSprintWork -> CheckBootstrapSkip
     CheckBootstrapSkip -> ValidateDoD      when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
     CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
@@ -1056,6 +1061,7 @@ workflow SprintExecDr
     CritiqueGeminiOnClaude -> CritiquesJoin
     CritiqueGeminiOnCodex -> CritiquesJoin
     CritiquesJoin -> ReviewManager
+    ReviewManager -> Exit      when ctx.outcome = fail  label: review_mgr_failed
     ReviewManager -> ReviewAnalysis
     ReviewAnalysis -> ValidateDoD       when ctx.outcome = success  label: pass
     ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
@@ -1068,6 +1074,7 @@ workflow SprintExecDr
     CompleteSprint -> Exit
     MarkFailed -> SnapshotForRecovery
     SnapshotForRecovery -> RecoveryManager
+    RecoveryManager -> Exit                  when ctx.outcome = fail  label: recovery_failed
     RecoveryManager -> EnforceRecoveryBoundary
     EnforceRecoveryBoundary -> FailureSummary
     FailureSummary -> Exit              when ctx.outcome = success
