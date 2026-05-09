@@ -734,6 +734,7 @@ workflow IterAudit
     no_state_exit -> Exit
     par_tier1_dispatch -> par_tier1_auditor_a
     par_tier1_dispatch -> par_tier1_auditor_b
+    par_tier1_dispatch -> par_tier1_aggregate      when ctx.outcome = fail      label: tolerated
     par_tier1_auditor_a -> par_tier1_join
     par_tier1_auditor_b -> par_tier1_join
     par_tier1_auditor_a -> par_tier1_join          when ctx.outcome = fail      label: tier1a_findings
@@ -743,6 +744,7 @@ workflow IterAudit
     par_tier1_aggregate -> par_tier2_dispatch      when ctx.outcome = fail      label: tier1_gaps_continue
     par_tier2_dispatch -> par_tier2_auditor_a
     par_tier2_dispatch -> par_tier2_auditor_b
+    par_tier2_dispatch -> par_tier2_aggregate      when ctx.outcome = fail      label: tolerated
     par_tier2_auditor_a -> par_tier2_join
     par_tier2_auditor_b -> par_tier2_join
     par_tier2_auditor_a -> par_tier2_join          when ctx.outcome = fail      label: tier2a_findings
@@ -752,6 +754,7 @@ workflow IterAudit
     par_tier2_aggregate -> par_tier3_dispatch      when ctx.outcome = fail      label: tier2_gaps_continue
     par_tier3_dispatch -> par_tier3_auditor_a
     par_tier3_dispatch -> par_tier3_auditor_b
+    par_tier3_dispatch -> par_tier3_aggregate      when ctx.outcome = fail      label: tolerated
     par_tier3_auditor_a -> par_tier3_join
     par_tier3_auditor_b -> par_tier3_join
     par_tier3_auditor_a -> par_tier3_join          when ctx.outcome = fail      label: tier3a_findings

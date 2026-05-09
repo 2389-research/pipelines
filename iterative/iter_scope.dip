@@ -520,6 +520,7 @@ workflow IterScope
     fix_citations -> Exit                         when ctx.outcome = fail      label: fix_citations_failed
     par_scope_dispatch -> par_scope_reviewer_a
     par_scope_dispatch -> par_scope_reviewer_b
+    par_scope_dispatch -> par_scope_aggregate     when ctx.outcome = fail      label: tolerated
     par_scope_reviewer_a -> par_scope_join
     par_scope_reviewer_a -> par_scope_join        when ctx.outcome = fail      label: reviewer_a_revise
     par_scope_reviewer_b -> par_scope_join

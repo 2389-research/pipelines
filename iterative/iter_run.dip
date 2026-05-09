@@ -1219,6 +1219,7 @@ workflow IterRun
     # PAR scope review
     par_run_scope_dispatch -> par_run_scope_reviewer_a
     par_run_scope_dispatch -> par_run_scope_reviewer_b
+    par_run_scope_dispatch -> par_run_scope_aggregate when ctx.outcome = fail      label: tolerated
     par_run_scope_reviewer_a -> par_run_scope_join
     par_run_scope_reviewer_a -> par_run_scope_join when ctx.outcome = fail      label: reviewer_a_blocked
     par_run_scope_reviewer_b -> par_run_scope_join
@@ -1255,6 +1256,7 @@ workflow IterRun
     # PAR spec-compliance (Stage 1)
     par_spec_dispatch -> par_spec_reviewer_a
     par_spec_dispatch -> par_spec_reviewer_b
+    par_spec_dispatch -> par_spec_aggregate        when ctx.outcome = fail      label: tolerated
     par_spec_reviewer_a -> par_spec_join
     par_spec_reviewer_a -> par_spec_join           when ctx.outcome = fail      label: spec_reviewer_a_issues
     par_spec_reviewer_b -> par_spec_join
@@ -1268,6 +1270,7 @@ workflow IterRun
     # PAR code-quality (Stage 2)
     par_quality_dispatch -> par_quality_reviewer_a
     par_quality_dispatch -> par_quality_reviewer_b
+    par_quality_dispatch -> par_quality_aggregate  when ctx.outcome = fail      label: tolerated
     par_quality_reviewer_a -> par_quality_join
     par_quality_reviewer_a -> par_quality_join     when ctx.outcome = fail      label: quality_reviewer_a_changes
     par_quality_reviewer_b -> par_quality_join
