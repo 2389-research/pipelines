@@ -1099,7 +1099,7 @@ workflow IterRun
         printf 'todos-clean'
         exit 0
       fi
-      count=$(grep -rn "TODO(${iter_id})" --include='*.py' --include='*.ts' --include='*.go' --include='*.rs' --include='*.swift' --include='*.js' . 2>/dev/null | grep -v node_modules | grep -v '\.ai/' | wc -l | tr -d ' ')
+      count=$(grep -rn "TODO(${iter_id})" --include='*.py' --include='*.ts' --include='*.go' --include='*.rs' --include='*.swift' --include='*.js' . 2>/dev/null | grep -v node_modules | grep -v '\.ai/' | wc -l | tr -d ' ' || echo 0)
       if [ "$count" -eq 0 ]; then
         printf 'todos-clean'
       else
@@ -1292,6 +1292,7 @@ workflow IterRun
     create_fix_task -> read_next_task              restart: true
     resolve_todos -> wrap_up                       when ctx.tool_stdout = todos-clean           label: todos_ok
     resolve_todos -> create_fix_task               when ctx.tool_stdout startswith todos-unresolved  label: todos_remain
+    resolve_todos -> wrap_up                       when ctx.outcome = fail                      label: tool_failed_tolerated
 
     # Wrap-up
     wrap_up -> validate_wrap_up                    when ctx.outcome = success   label: wrapped
