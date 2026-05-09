@@ -17,3 +17,9 @@ Iterative development pipelines for incremental feature delivery with PAR (Paral
 ```bash
 tracker iterative/iter_dev.dip
 ```
+
+Pipeline state lives under `docs/iterations/` in the project being built (requirements, roadmap, behavior scenarios, behavior corpus, iteration log).
+
+## Inspiration
+
+These pipelines draw inspiration from Obra's superpowers project — the iterative-development skill in particular. The behavior-evidence loop, PAR review gates, and walking-skeleton scoping pattern are adapted from that workflow into tracker-driven `.dip` form. This is not superpowers; it is a separate implementation that borrows the shape of the idea.

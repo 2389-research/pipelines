@@ -13,25 +13,39 @@ workflow IterScope
 
   agent Start
     label: Start
+    auto_status: true
     prompt:
-      Begin walking skeleton and roadmap pipeline. Acknowledging pipeline start — do not read or write any files.
+      Acknowledge that the walking skeleton and roadmap pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent Exit
     label: Exit
+    auto_status: true
     prompt:
-      Walking skeleton and roadmap pipeline complete.
+      Acknowledge that the walking skeleton and roadmap pipeline is complete. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   tool check_scope_resume
     label: "Check Scope Resume Point"
     timeout: 10s
     command:
       set -euo pipefail
-      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$req_count" -eq 0 ]; then
         printf 'no-requirements'
         exit 0
       fi
-      if [ -f docs/superpowers/iterations/roadmap.md ] && grep -q '## Walking skeleton' docs/superpowers/iterations/roadmap.md; then
+      if [ -f docs/iterations/roadmap.md ] && grep -q '## Walking skeleton' docs/iterations/roadmap.md; then
         printf 'has-roadmap'
         exit 0
       fi
@@ -43,7 +57,7 @@ workflow IterScope
     prompt:
       Requirements must be extracted before defining the walking skeleton and roadmap.
 
-      The requirements directory docs/superpowers/iterations/requirements/ is empty or does not exist.
+      The requirements directory docs/iterations/requirements/ is empty or does not exist.
 
       Please run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.
 
@@ -53,26 +67,29 @@ workflow IterScope
     label: "Validate Existing Roadmap"
     auto_status: true
     prompt:
-      Read and validate the existing roadmap at docs/superpowers/iterations/roadmap.md.
+      Read and validate the existing roadmap at docs/iterations/roadmap.md.
 
       Check:
       1. The roadmap has a "## Walking skeleton" section with ITER-0000 defined
-      2. Every STORY-NNNN cited in the roadmap exists in docs/superpowers/iterations/requirements/
+      2. Every STORY-NNNN cited in the roadmap exists in docs/iterations/requirements/
       3. Each iteration section has **Stories:**, **Rationale:**, **Status:**, and **Impacted scenarios:** fields
       4. At least one JOURNEY-NNNN scenario is cited as the walking skeleton's journey scenario
 
       Report what is valid and what is missing or broken.
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
+
+      Emit STATUS: success when the existing roadmap is complete and consistent (pipeline can exit). Emit STATUS: fail when the roadmap is missing fields, has broken citations, or is otherwise invalid (pipeline will rebuild).
 
   agent read_backlog
     label: "Read Backlog"
     model: gemini-3-flash-preview
     provider: gemini
+    auto_status: true
     prompt:
-      Read all epic files in docs/superpowers/iterations/requirements/ — scan epic headers, story titles, status fields, and AC proof obligations. Also read docs/superpowers/iterations/behavior-scenarios.md for scenario coverage.
+      Read all epic files in docs/iterations/requirements/ — scan epic headers, story titles, status fields, and AC proof obligations. Also read docs/iterations/behavior-scenarios.md for scenario coverage.
 
       Write a backlog summary to .ai/iter-scope-temp/backlog_summary.md listing:
       - Total epics and total stories (pending vs done)
@@ -81,11 +98,17 @@ workflow IterScope
 
       Create the .ai/iter-scope-temp/ directory if it does not exist.
 
-      HARD CONSTRAINT: Do NOT modify any files in docs/superpowers/iterations/. Only write to .ai/iter-scope-temp/backlog_summary.md.
+      HARD CONSTRAINT: Do NOT modify any files in docs/iterations/. Only write to .ai/iter-scope-temp/backlog_summary.md.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the backlog summary. Emit STATUS: fail only if you could not produce the summary due to a tool error.
 
   agent define_skeleton
     label: "Define Walking Skeleton"
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     reasoning_effort: high
     goal_gate: true
     auto_status: true
@@ -94,8 +117,8 @@ workflow IterScope
 
       Read:
       1. .ai/iter-scope-temp/backlog_summary.md
-      2. All epic files in docs/superpowers/iterations/requirements/
-      3. docs/superpowers/iterations/behavior-scenarios.md
+      2. All epic files in docs/iterations/requirements/
+      3. docs/iterations/behavior-scenarios.md
 
       ## Walking Skeleton Requirements
 
@@ -122,13 +145,15 @@ workflow IterScope
       **Harness-first task:** Design and build E2E test harness before product features
       **Sentinel corpus seeds:** <which scenarios become sentinels>
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
+      Emit STATUS: success when skeleton.md is written and includes a journey scenario citation. Emit STATUS: fail only if you could not produce a valid skeleton definition.
+
   agent order_iterations
     label: "Order Iterations"
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     reasoning_effort: high
     goal_gate: true
     auto_status: true
@@ -137,8 +162,8 @@ workflow IterScope
 
       Read:
       1. .ai/iter-scope-temp/skeleton.md (walking skeleton definition)
-      2. All epic files in docs/superpowers/iterations/requirements/
-      3. docs/superpowers/iterations/behavior-scenarios.md
+      2. All epic files in docs/iterations/requirements/
+      3. docs/iterations/behavior-scenarios.md
 
       ## Rules
 
@@ -161,9 +186,20 @@ workflow IterScope
       **Look-ahead:** <blocks/blocked-by analysis>
       **Story splits:** <any stories split, with AC breakdown> or "None"
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
+
+      Emit STATUS: success when iterations.md is written. Emit STATUS: fail only if you could not produce a valid iteration ordering.
+
+  tool init_scope_counter
+    label: "Init Scope Round Counter"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-scope-temp
+      printf '0' > .ai/iter-scope-temp/.scope_rounds
+      printf 'initialized'
 
   tool check_citations
     label: "Check Story Citations"
@@ -175,7 +211,7 @@ workflow IterScope
         [ -f "$f" ] || continue
         grep -oE 'STORY-[0-9]+[a-z]?' "$f" | sort -u | while IFS= read -r story_id; do
           base_id=$(printf '%s' "$story_id" | sed 's/[a-z]$//')
-          if ! grep -qr "$base_id" docs/superpowers/iterations/requirements/ 2>/dev/null; then
+          if ! grep -qr "$base_id" docs/iterations/requirements/ 2>/dev/null; then
             printf '%s\n' "$story_id" >> .ai/iter-scope-temp/missing-ids.txt
           fi
         done
@@ -191,13 +227,14 @@ workflow IterScope
 
   agent fix_citations
     label: "Fix Citations"
+    auto_status: true
     prompt:
-      Read the citation check results — some STORY-NNNN IDs in .ai/iter-scope-temp/skeleton.md or .ai/iter-scope-temp/iterations.md do not match any story in docs/superpowers/iterations/requirements/.
+      Read the citation check results — some STORY-NNNN IDs in .ai/iter-scope-temp/skeleton.md or .ai/iter-scope-temp/iterations.md do not match any story in docs/iterations/requirements/.
 
       Read:
       1. .ai/iter-scope-temp/skeleton.md
       2. .ai/iter-scope-temp/iterations.md
-      3. All epic files in docs/superpowers/iterations/requirements/ to find the correct IDs
+      3. All epic files in docs/iterations/requirements/ to find the correct IDs
 
       For each missing ID, find the story that was intended (by title match or context) and correct the ID in skeleton.md and/or iterations.md.
 
@@ -205,12 +242,19 @@ workflow IterScope
 
       Update both files with correct citations only.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you updated the temp files with corrected citations. Emit STATUS: fail only if you could not write the corrections.
+
   parallel par_scope_dispatch -> par_scope_reviewer_a, par_scope_reviewer_b
 
   agent par_scope_reviewer_a
     label: "PAR Scope Reviewer A — Structural Linkage"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -225,8 +269,8 @@ workflow IterScope
       Read:
       1. .ai/iter-scope-temp/skeleton.md
       2. .ai/iter-scope-temp/iterations.md
-      3. docs/superpowers/iterations/requirements/ (all epic files)
-      4. docs/superpowers/iterations/behavior-scenarios.md
+      3. docs/iterations/requirements/ (all epic files)
+      4. docs/iterations/behavior-scenarios.md
 
       ### 1. Citation Integrity (your PRIMARY focus)
       For EACH story ID in the skeleton and iterations:
@@ -251,12 +295,17 @@ workflow IterScope
       - **Scenario Coverage:** PASS | [list of uncovered ACs]
       - **Story Splitting:** PASS | [stories to split with AC breakdown]
 
-      Overall: APPROVE | REVISE — with specific structural fixes needed
+      Conclude with specific structural fixes needed (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when all three sections are PASS (this is your APPROVE verdict). Emit STATUS: fail when any section reports issues that need revision (this is your REVISE verdict). The aggregator routes failures into the adjustment loop.
 
   agent par_scope_reviewer_b
     label: "PAR Scope Reviewer B — Strategic Risk"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -271,8 +320,8 @@ workflow IterScope
       Read:
       1. .ai/iter-scope-temp/skeleton.md
       2. .ai/iter-scope-temp/iterations.md
-      3. docs/superpowers/iterations/requirements/ (all epic files)
-      4. docs/superpowers/iterations/behavior-scenarios.md
+      3. docs/iterations/requirements/ (all epic files)
+      4. docs/iterations/behavior-scenarios.md
 
       ### 1. Scope Creep (your PRIMARY focus)
       - Is ITER-0000 minimal? Could ANY story be deferred without breaking the skeleton?
@@ -297,7 +346,11 @@ workflow IterScope
       - **Boxing-In:** PASS | [risks with specific downstream iterations affected]
       - **Ordering Risk:** PASS | [reordering recommendations]
 
-      Overall: APPROVE | REVISE — with specific strategic changes needed
+      Conclude with specific strategic changes needed (if any), then end with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when all three sections are PASS (this is your APPROVE verdict). Emit STATUS: fail when any section reports issues that need revision (this is your REVISE verdict). The aggregator routes failures into the adjustment loop.
 
   fan_in par_scope_join <- par_scope_reviewer_a, par_scope_reviewer_b
 
@@ -309,33 +362,59 @@ workflow IterScope
     prompt:
       Read both PAR reviewer outputs from par_scope_reviewer_a and par_scope_reviewer_b.
 
+      Each reviewer ended their report with STATUS: success (APPROVE) or STATUS: fail (REVISE).
+
       Aggregate the findings:
       - Same issue found by both reviewers = high confidence, must be addressed
       - Unique finding from one reviewer = still actionable, include it
       - Severity disagreement between reviewers = take the worst (higher) severity
 
-      If both reviewers say APPROVE, output STATUS: success.
-      If either reviewer says REVISE, output STATUS: fail with a consolidated list of specific changes required.
-
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
+      Emit STATUS: success when both reviewers emitted STATUS: success (no revisions needed; pipeline proceeds to write_roadmap). Emit STATUS: fail when either reviewer emitted STATUS: fail; include a consolidated list of specific changes required so the adjustment agent can apply them.
+
+  tool count_scope_rounds
+    label: "Count Scope Review Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-scope-temp/.scope_rounds"
+      mkdir -p .ai/iter-scope-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 5 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   agent adjust_scope
     label: "Adjust Scope"
+    max_turns: 200
+    auto_status: true
     prompt:
       Read the scope review findings from par_scope_aggregate. Adjust skeleton.md and iterations.md to address all raised issues.
 
       Read:
       1. .ai/iter-scope-temp/skeleton.md
       2. .ai/iter-scope-temp/iterations.md
-      3. docs/superpowers/iterations/requirements/ (all epic files, if story splits are needed)
+      3. docs/iterations/requirements/ (all epic files, if story splits are needed)
 
       Apply any recommended story splits by:
       1. Updating .ai/iter-scope-temp/skeleton.md and .ai/iter-scope-temp/iterations.md with the split story IDs (STORY-NNNNa, STORY-NNNNb)
-      2. Updating the affected epic files in docs/superpowers/iterations/requirements/ to reflect the split stories
+      2. Updating the affected epic files in docs/iterations/requirements/ to reflect the split stories
 
-      Address every REVISE item from the scope review. Update both temp files with the corrected scope.
+      Address every issue called out by par_scope_aggregate (it emitted STATUS: fail because the reviewers found revisions). Update both temp files with the corrected scope.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you applied the adjustments and the temp files are updated (re-runs the citation check and PAR review). Emit STATUS: fail when you could not produce a coherent adjustment (pipeline force-accepts current scope and proceeds to write_roadmap).
 
   agent write_roadmap
     label: "Write Roadmap"
@@ -345,7 +424,7 @@ workflow IterScope
     prompt:
       Read .ai/iter-scope-temp/skeleton.md and .ai/iter-scope-temp/iterations.md.
 
-      Write docs/superpowers/iterations/roadmap.md in this exact format:
+      Write docs/iterations/roadmap.md in this exact format:
 
       # Roadmap
 
@@ -369,11 +448,13 @@ workflow IterScope
 
       Continue for all iterations from iterations.md.
 
-      If story splits were applied in iterations.md, also update the affected epic files in docs/superpowers/iterations/requirements/ to reflect the split stories (STORY-NNNNa, STORY-NNNNb format).
+      If story splits were applied in iterations.md, also update the affected epic files in docs/iterations/requirements/ to reflect the split stories (STORY-NNNNa, STORY-NNNNb format).
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
+
+      Emit STATUS: success when docs/iterations/roadmap.md is written. Emit STATUS: fail only if you could not produce a valid roadmap.
 
   tool validate_roadmap
     label: "Validate Roadmap"
@@ -381,24 +462,24 @@ workflow IterScope
     command:
       set -euo pipefail
       fail_reason=""
-      if [ ! -f docs/superpowers/iterations/roadmap.md ]; then
+      if [ ! -f docs/iterations/roadmap.md ]; then
         printf 'roadmap-invalid-file-missing'
         exit 0
       fi
-      if ! grep -q '## Walking skeleton' docs/superpowers/iterations/roadmap.md; then
+      if ! grep -q '## Walking skeleton' docs/iterations/roadmap.md; then
         printf 'roadmap-invalid-missing-walking-skeleton-section'
         exit 0
       fi
-      iter_count=$(grep -c '^### ITER-' docs/superpowers/iterations/roadmap.md 2>/dev/null || true)
+      iter_count=$(grep -c '^### ITER-' docs/iterations/roadmap.md 2>/dev/null || true)
       if [ "$iter_count" -eq 0 ]; then
         printf 'roadmap-invalid-no-iter-sections'
         exit 0
       fi
-      if ! grep -q '\*\*Status:\*\*' docs/superpowers/iterations/roadmap.md; then
+      if ! grep -q '\*\*Status:\*\*' docs/iterations/roadmap.md; then
         printf 'roadmap-invalid-missing-status-fields'
         exit 0
       fi
-      if ! grep -q 'STORY-' docs/superpowers/iterations/roadmap.md; then
+      if ! grep -q 'STORY-' docs/iterations/roadmap.md; then
         printf 'roadmap-invalid-no-story-refs'
         exit 0
       fi
@@ -409,7 +490,7 @@ workflow IterScope
     timeout: 30s
     command:
       set -euo pipefail
-      git add docs/superpowers/iterations/
+      git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
       else
@@ -427,23 +508,33 @@ workflow IterScope
     validate_existing_roadmap -> Exit             when ctx.outcome = success   label: valid
     validate_existing_roadmap -> read_backlog     when ctx.outcome = fail      label: invalid
     read_backlog -> define_skeleton
+    read_backlog -> Exit                          when ctx.outcome = fail      label: backlog_failed
     define_skeleton -> order_iterations           when ctx.outcome = success   label: skeleton_defined
     define_skeleton -> Exit                       when ctx.outcome = fail      label: skeleton_failed
-    order_iterations -> check_citations           when ctx.outcome = success   label: ordered
+    order_iterations -> init_scope_counter        when ctx.outcome = success   label: ordered
     order_iterations -> Exit                      when ctx.outcome = fail      label: ordering_failed
+    init_scope_counter -> check_citations
     check_citations -> par_scope_dispatch         when ctx.tool_stdout = citations-ok         label: citations_ok
     check_citations -> fix_citations              when ctx.tool_stdout startswith citations-fail  label: citations_bad
     fix_citations -> check_citations              restart: true
+    fix_citations -> Exit                         when ctx.outcome = fail      label: fix_citations_failed
     par_scope_dispatch -> par_scope_reviewer_a
     par_scope_dispatch -> par_scope_reviewer_b
+    par_scope_dispatch -> par_scope_aggregate     when ctx.outcome = fail      label: tolerated
     par_scope_reviewer_a -> par_scope_join
+    par_scope_reviewer_a -> par_scope_join        when ctx.outcome = fail      label: reviewer_a_revise
     par_scope_reviewer_b -> par_scope_join
+    par_scope_reviewer_b -> par_scope_join        when ctx.outcome = fail      label: reviewer_b_revise
     par_scope_join -> par_scope_aggregate
     par_scope_aggregate -> write_roadmap          when ctx.outcome = success   label: approved
-    par_scope_aggregate -> adjust_scope           when ctx.outcome = fail      label: revise
-    adjust_scope -> check_citations               restart: true
+    par_scope_aggregate -> count_scope_rounds     when ctx.outcome = fail      label: revise
+    count_scope_rounds -> adjust_scope            when ctx.tool_stdout = continue       label: under_cap
+    count_scope_rounds -> write_roadmap           when ctx.tool_stdout = cap-reached    label: force_accept
+    adjust_scope -> check_citations               when ctx.outcome = success   restart: true   label: adjusted
+    adjust_scope -> write_roadmap                 when ctx.outcome = fail      label: adjust_failed_force
     write_roadmap -> validate_roadmap             when ctx.outcome = success   label: written
     write_roadmap -> Exit                         when ctx.outcome = fail      label: write_failed
     validate_roadmap -> commit_roadmap            when ctx.tool_stdout = roadmap-valid        label: valid
     validate_roadmap -> write_roadmap             when ctx.tool_stdout startswith roadmap-invalid  label: invalid  restart: true
     commit_roadmap -> Exit
+    commit_roadmap -> Exit                        when ctx.outcome = fail      label: commit_failed

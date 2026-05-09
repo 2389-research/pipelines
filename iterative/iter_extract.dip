@@ -13,13 +13,27 @@ workflow IterExtract
 
   agent Start
     label: Start
+    auto_status: true
     prompt:
-      Begin requirements extraction pipeline. Acknowledging pipeline start — do not read or write any files.
+      Acknowledge that the requirements extraction pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent Exit
     label: Exit
+    auto_status: true
     prompt:
-      Requirements extraction pipeline complete.
+      Acknowledge that the requirements extraction pipeline is complete. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   agent no_spec_exit
     label: "No Spec Found"
@@ -46,7 +60,7 @@ workflow IterExtract
           exit 0
         fi
       done
-      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './docs/iterations/*' -not -path './.ai/*' | sort | head -1)
       if [ -n "$first" ]; then
         printf '%s' "$first" > .ai/iter-extract-temp/spec_path.txt
         printf '%s' "$first"
@@ -62,11 +76,11 @@ workflow IterExtract
       has_requirements=false
       has_scenarios=false
       has_temp=false
-      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$req_count" -gt 0 ]; then
         has_requirements=true
       fi
-      if [ -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+      if [ -f docs/iterations/behavior-scenarios.md ]; then
         has_scenarios=true
       fi
       temp_count=$(ls .ai/iter-extract-temp/extraction_*.json 2>/dev/null | wc -l | tr -d ' ')
@@ -87,18 +101,20 @@ workflow IterExtract
     label: "Validate Existing Artifacts"
     auto_status: true
     prompt:
-      Read and validate the existing extraction artifacts in docs/superpowers/iterations/.
+      Read and validate the existing extraction artifacts in docs/iterations/.
 
       Check:
-      - docs/superpowers/iterations/requirements/ for per-epic .md files with STORY- IDs
-      - docs/superpowers/iterations/behavior-scenarios.md for SCENARIO- and JOURNEY- IDs
-      - docs/superpowers/iterations/behavior-corpus.md for the corpus table
+      - docs/iterations/requirements/ for per-epic .md files with STORY- IDs
+      - docs/iterations/behavior-scenarios.md for SCENARIO- and JOURNEY- IDs
+      - docs/iterations/behavior-corpus.md for the corpus table
 
       Report whether they are complete (all stories have ACs, all behavioral ACs have scenario refs, all scenarios link to stories, corpus has all entries).
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
+
+      Emit STATUS: success when the existing artifacts are complete and consistent (pipeline can exit). Emit STATUS: fail when artifacts are missing, incomplete, or inconsistent (pipeline will re-extract).
 
   tool chunk_spec
     label: "Chunk Spec by Headings"
@@ -230,6 +246,7 @@ workflow IterExtract
     label: "Extract Agent 1"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -289,10 +306,17 @@ workflow IterExtract
 
       HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the JSON file (or correctly skipped because no chunk was assigned). Emit STATUS: fail only if you could not produce a valid JSON file due to a tool error.
+
   agent extract_agent_2
     label: "Extract Agent 2"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -352,10 +376,17 @@ workflow IterExtract
 
       HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the JSON file (or correctly skipped because no chunk was assigned). Emit STATUS: fail only if you could not produce a valid JSON file due to a tool error.
+
   agent extract_agent_3
     label: "Extract Agent 3"
     model: claude-sonnet-4-6
     provider: anthropic
+    auto_status: true
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -415,6 +446,12 @@ workflow IterExtract
 
       HARD CONSTRAINT: Write ONLY the extraction JSON file. Do NOT modify any other files.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when you wrote the JSON file (or correctly skipped because no chunk was assigned). Emit STATUS: fail only if you could not produce a valid JSON file due to a tool error.
+
   fan_in extract_join <- extract_agent_1, extract_agent_2, extract_agent_3
 
   tool persist_wave
@@ -444,6 +481,7 @@ workflow IterExtract
     label: "PAR Omission Reviewer A — Textual Coverage"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -485,10 +523,18 @@ workflow IterExtract
 
       Write patches to .ai/iter-extract-temp/omission_patches_a.json using the extraction JSON format.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when patches were written (or when no omissions were found and patches are intentionally empty).
+      Use STATUS: fail only if you could not read the spec or extractions and produced no analysis.
+
   agent par_omission_reviewer_b
     label: "PAR Omission Reviewer B — Semantic Intent"
     model: claude-opus-4-7
     provider: anthropic
+    auto_status: true
     prompt:
       ## Competitive Context
 
@@ -530,6 +576,13 @@ workflow IterExtract
 
       Write patches to .ai/iter-extract-temp/omission_patches_b.json using the extraction JSON format.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Use STATUS: success when patches were written (or when no omissions were found and patches are intentionally empty).
+      Use STATUS: fail only if you could not read the spec or extractions and produced no analysis.
+
   fan_in par_omission_join <- par_omission_reviewer_a, par_omission_reviewer_b
 
   agent par_omission_aggregate
@@ -553,8 +606,21 @@ workflow IterExtract
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when there are no critical omissions remaining.
-      Use STATUS: fail when critical omissions were found that require re-extraction.
+      STATUS semantics — this is a routing signal, not a crash signal:
+
+      Use STATUS: success when:
+        - No critical omissions were found, OR
+        - Findings were only minor/serious and patches were written to .ai/iter-extract-temp/extraction_patches.json,
+        - i.e., the run can proceed straight to coverage ledger without forcing remediation.
+
+      Use STATUS: fail ONLY when critical omissions were identified AND patches addressing them
+      have been written to .ai/iter-extract-temp/extraction_patches.json. STATUS: fail routes the
+      run into the gap-remediation loop (build_coverage_ledger -> patch_extractions), which reads
+      the patches file. The patches file MUST exist on disk before you emit STATUS: fail.
+
+      If you cannot read the reviewer outputs at all, summarize the issue and emit STATUS: success
+      so the pipeline proceeds to coverage assessment (which will detect any real gaps independently).
+      Do not use STATUS: fail to signal aggregate-internal errors.
 
   agent build_coverage_ledger
     label: "Build Coverage Ledger"
@@ -628,7 +694,7 @@ workflow IterExtract
       1. STORIES: Combine all stories. Deduplicate by title similarity. Group into epics by epic_theme. Assign stable IDs:
          - EPIC-001, EPIC-002, etc.
          - STORY-0001, STORY-0002, etc. (global, not per-epic)
-         Write per-epic files to docs/superpowers/iterations/requirements/EPIC-NNN-<theme>.md
+         Write per-epic files to docs/iterations/requirements/EPIC-NNN-<theme>.md
 
          Each epic file format:
          # EPIC-NNN — <Theme>
@@ -646,16 +712,16 @@ workflow IterExtract
          - SCENARIO-0001 for surface/contract/failure-recovery
          - JOURNEY-0001 for journey scenarios
          Resolve owning_story_titles to STORY-NNNN IDs.
-         Write to docs/superpowers/iterations/behavior-scenarios.md
+         Write to docs/iterations/behavior-scenarios.md
 
       3. CORPUS: Build behavior-corpus.md table from scenario list.
          Journey scenarios → sentinel cadence. Surface scenarios → iteration cadence.
          Set command to TBD.
-         Write to docs/superpowers/iterations/behavior-corpus.md
+         Write to docs/iterations/behavior-corpus.md
 
       4. Back-link scenarios to story ACs by appending scenario:<ID> to AC lines.
 
-      Create the docs/superpowers/iterations/ and docs/superpowers/iterations/requirements/ directories.
+      Create the docs/iterations/ and docs/iterations/requirements/ directories.
 
       After writing all files, verify:
       - Every story has at least one AC
@@ -663,7 +729,7 @@ workflow IterExtract
       - Every scenario has owning_stories resolved to STORY IDs
       - Behavior corpus has an entry for every scenario
 
-      HARD CONSTRAINT: Only write to docs/superpowers/iterations/. Do NOT modify the original spec.
+      HARD CONSTRAINT: Only write to docs/iterations/. Do NOT modify the original spec.
 
       End your response with exactly one of:
       STATUS: success
@@ -678,28 +744,28 @@ workflow IterExtract
     command:
       set -euo pipefail
       fail_reason=""
-      req_count=$(ls docs/superpowers/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$req_count" -eq 0 ]; then
         fail_reason="no-requirement-files"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/behavior-scenarios.md ]; then
+      if [ ! -f docs/iterations/behavior-scenarios.md ]; then
         fail_reason="missing-behavior-scenarios"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if [ ! -f docs/superpowers/iterations/behavior-corpus.md ]; then
+      if [ ! -f docs/iterations/behavior-corpus.md ]; then
         fail_reason="missing-behavior-corpus"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if ! grep -qr 'STORY-' docs/superpowers/iterations/requirements/; then
+      if ! grep -qr 'STORY-' docs/iterations/requirements/; then
         fail_reason="no-story-ids"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
       fi
-      if ! grep -qE 'SCENARIO-|JOURNEY-' docs/superpowers/iterations/behavior-scenarios.md; then
+      if ! grep -qE 'SCENARIO-|JOURNEY-' docs/iterations/behavior-scenarios.md; then
         fail_reason="no-scenario-ids"
         printf 'validation-fail-%s' "$fail_reason"
         exit 0
@@ -711,7 +777,16 @@ workflow IterExtract
     timeout: 30s
     command:
       set -euo pipefail
-      git add docs/superpowers/iterations/
+      if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        git init -q
+        if [ -z "$(git config user.email 2>/dev/null)" ]; then
+          git config user.email "iterative-pipeline@local"
+          git config user.name "Iterative Pipeline"
+        fi
+        git add -A
+        git commit -q --allow-empty -m "chore: initialize repository for iterative pipeline"
+      fi
+      git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
       else
@@ -731,9 +806,12 @@ workflow IterExtract
     validate_existing -> Exit                          when ctx.outcome = success   label: valid
     validate_existing -> chunk_spec                    when ctx.outcome = fail      label: invalid
     chunk_spec -> classify_chunks
+    chunk_spec -> Exit                                 when ctx.outcome = fail   label: chunk_failed
     classify_chunks -> pick_next_wave
+    classify_chunks -> Exit                            when ctx.outcome = fail   label: classify_failed
     pick_next_wave -> extract_wave                     when ctx.tool_stdout startswith wave-   label: has_wave
     pick_next_wave -> par_omission_dispatch            when ctx.tool_stdout = no-more         label: all_extracted
+    pick_next_wave -> Exit                             when ctx.outcome = fail   label: wave_pick_failed
     extract_wave -> extract_agent_1
     extract_wave -> extract_agent_2
     extract_wave -> extract_agent_3
@@ -741,15 +819,19 @@ workflow IterExtract
     extract_agent_2 -> extract_join
     extract_agent_3 -> extract_join
     extract_join -> persist_wave
+    extract_join -> Exit                               when ctx.outcome = fail   label: extract_join_failed
     persist_wave -> count_remaining_chunks
+    persist_wave -> Exit                               when ctx.outcome = fail   label: persist_failed
     count_remaining_chunks -> pick_next_wave           when ctx.tool_stdout startswith remaining-  label: more_chunks    restart: true
     count_remaining_chunks -> par_omission_dispatch    when ctx.tool_stdout = all-extracted      label: done_extracting
     par_omission_dispatch -> par_omission_reviewer_a
     par_omission_dispatch -> par_omission_reviewer_b
+    par_omission_dispatch -> par_omission_aggregate     when ctx.outcome = fail   label: tolerated
     par_omission_reviewer_a -> par_omission_join
     par_omission_reviewer_b -> par_omission_join
     par_omission_join -> par_omission_aggregate
     par_omission_aggregate -> build_coverage_ledger
+    par_omission_aggregate -> build_coverage_ledger    when ctx.outcome = fail   label: gaps_to_remediate
     build_coverage_ledger -> aggregate_results         when ctx.outcome = success   label: full_coverage
     build_coverage_ledger -> patch_extractions          when ctx.outcome = fail      label: has_gaps
     patch_extractions -> build_coverage_ledger          when ctx.outcome = success   restart: true  label: patched
@@ -759,3 +841,4 @@ workflow IterExtract
     validate_extraction -> commit_extraction           when ctx.tool_stdout = validation-pass    label: valid
     validate_extraction -> aggregate_results           when ctx.tool_stdout startswith validation-fail  label: retry  restart: true
     commit_extraction -> Exit
+    commit_extraction -> Exit                          when ctx.outcome = fail   label: commit_failed

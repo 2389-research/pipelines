@@ -14,6 +14,7 @@ workflow IterDev
   agent Start
     label: Start
     max_turns: 1
+    auto_status: true
     prompt:
       Acknowledge that the iterative development pipeline is starting.
 
@@ -24,13 +25,26 @@ workflow IterDev
 
       HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start.
 
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
+
   agent Exit
     label: Exit
     max_turns: 1
+    auto_status: true
     prompt:
       Iterative development pipeline complete. Report final status.
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success.
 
   tool check_resume
     label: "Check Resume State"
@@ -38,7 +52,7 @@ workflow IterDev
     command:
       #!/bin/sh
       set -euo pipefail
-      iter_dir="docs/superpowers/iterations"
+      iter_dir="docs/iterations"
       if [ ! -d "$iter_dir" ]; then
         printf 'fresh'
         exit 0
@@ -81,7 +95,7 @@ workflow IterDev
     timeout: 10s
     command:
       set -euo pipefail
-      roadmap="docs/superpowers/iterations/roadmap.md"
+      roadmap="docs/iterations/roadmap.md"
       audit_result=".ai/iter-audit-result.txt"
       if [ ! -f "$roadmap" ]; then
         printf 'more-iterations'
@@ -113,7 +127,7 @@ workflow IterDev
     timeout: 10s
     command:
       set -euo pipefail
-      roadmap="docs/superpowers/iterations/roadmap.md"
+      roadmap="docs/iterations/roadmap.md"
       if [ ! -f "$roadmap" ]; then
         printf 'progress-no-roadmap'
         exit 0
@@ -139,8 +153,8 @@ workflow IterDev
 
       Read .ai/iter-loop-context.txt if it exists — it contains prior attempt history. Use it to detect repeated failures on the same iteration.
 
-      Read the iteration log at docs/superpowers/iterations/iteration-log.md to understand what failed.
-      Read the roadmap at docs/superpowers/iterations/roadmap.md to understand the current state.
+      Read the iteration log at docs/iterations/iteration-log.md to understand what failed.
+      Read the roadmap at docs/iterations/roadmap.md to understand the current state.
 
       Assess the failure by category:
       1. Task too large — the iteration scope was too broad for one pass → recommend redecompose (return success to retry with smaller scope)
@@ -153,16 +167,15 @@ workflow IterDev
 
       IMPORTANT: Write your assessment to .ai/iter-loop-context.txt by APPENDING (do not overwrite). Include: attempt number, failure category, what was tried, what to try differently. This gives the next attempt memory of prior failures.
 
-      End your response with exactly one of:
+      End with exactly one of:
       STATUS: success
       STATUS: fail
 
-      Use STATUS: success when retrying is likely to succeed.
-      Use STATUS: fail when the pipeline should stop and a human should intervene.
+      Emit STATUS: success when the failure is recoverable (transient error, task-too-large with redecompose plan, model-too-weak with escalation, or first/second attempt at the iteration). Emit STATUS: fail when the failure is unrecoverable: the plan is wrong, the same iteration has failed three or more times, or the failure category requires human intervention.
 
   agent final_audit
     label: "Final Behavior-Evidence Audit"
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
     fidelity: full
@@ -172,11 +185,11 @@ workflow IterDev
 
       Read:
       1. The original spec (find via .ai/iter-extract-temp/chunk_manifest.txt or find *.md in project root)
-      2. docs/superpowers/iterations/requirements/ (all epic files)
-      3. docs/superpowers/iterations/behavior-scenarios.md
-      4. docs/superpowers/iterations/behavior-corpus.md
-      5. docs/superpowers/iterations/roadmap.md
-      6. docs/superpowers/iterations/iteration-log.md
+      2. docs/iterations/requirements/ (all epic files)
+      3. docs/iterations/behavior-scenarios.md
+      4. docs/iterations/behavior-corpus.md
+      5. docs/iterations/roadmap.md
+      6. docs/iterations/iteration-log.md
 
       ## Your Job
 
@@ -197,22 +210,26 @@ workflow IterDev
          - Evidence at weaker seam than required
          - Manual-residual that could be automated
 
-      If ALL surfaces have adequate evidence: write "FINAL_AUDIT_CLEAN" to .ai/iter-audit-result.txt and touch docs/superpowers/iterations/.final-audit-clean.
+      If ALL surfaces have adequate evidence: write "FINAL_AUDIT_CLEAN" to .ai/iter-audit-result.txt and touch docs/iterations/.final-audit-clean.
 
       If gaps found: write gap descriptions to .ai/iter-audit-result.txt, create gap stories in requirements/, update roadmap with new iteration.
 
-      End with STATUS: success (clean) or STATUS: fail (gaps found).
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when every externally observable requirement has passing behavior evidence at the correct seam (audit clean — write the FINAL_AUDIT_CLEAN sentinel). Emit STATUS: fail when any gap was found (gap stories were written and the loop should continue with a remediation iteration).
 
   tool update_final_progress
     label: "Update Final Progress"
     timeout: 5s
     command:
       set -euo pipefail
-      roadmap="docs/superpowers/iterations/roadmap.md"
+      roadmap="docs/iterations/roadmap.md"
       done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null || echo 0)
       total=$(grep -c '^\*\*Status:\*\*' "$roadmap" 2>/dev/null || echo 0)
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      mkdir -p docs/superpowers/iterations
+      mkdir -p docs/iterations
       audit_result=$(cat .ai/iter-audit-result.txt 2>/dev/null || printf 'No audit result file found.')
       printf '%s\n%s\n\n%s\n\n%s\n\n%s\n' \
         "# Final Progress Report" \
@@ -220,21 +237,28 @@ workflow IterDev
         "## Iterations Completed" \
         "$done_count of $total iterations done." \
         "## Audit Result" \
-        > docs/superpowers/iterations/final-progress.md
-      printf '%s\n' "$audit_result" >> docs/superpowers/iterations/final-progress.md
+        > docs/iterations/final-progress.md
+      printf '%s\n' "$audit_result" >> docs/iterations/final-progress.md
       printf 'final-progress-written'
 
   agent already_complete_exit
     label: "Already Complete"
     max_turns: 1
+    auto_status: true
     prompt:
       This project was already completed in a previous run of the iterative development pipeline.
 
       The .final-audit-clean sentinel file exists, indicating the final behavior-evidence audit passed in a prior session.
 
-      Read docs/superpowers/iterations/final-progress.md (if it exists) and docs/superpowers/iterations/roadmap.md to report a summary of what was completed.
+      Read docs/iterations/final-progress.md (if it exists) and docs/iterations/roadmap.md to report a summary of what was completed.
 
       HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to report the completed state.
+
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Always emit STATUS: success — this node only runs when the project is already complete.
 
   tool write_loop_context
     label: "Write Loop Context for Restart"
@@ -262,7 +286,7 @@ workflow IterDev
     check_resume -> run_iteration              when ctx.tool_stdout startswith resume-run       label: resume_run
     check_resume -> final_audit                when ctx.tool_stdout startswith resume-final     label: resume_final
     check_resume -> already_complete_exit      when ctx.tool_stdout = already-complete          label: done
-    check_resume -> bootstrap_extract
+    check_resume -> bootstrap_extract                                                            label: unknown_state_default_fresh
     already_complete_exit -> Exit
     bootstrap_extract -> bootstrap_scope       when ctx.outcome = success   label: extracted
     bootstrap_extract -> Exit                  when ctx.outcome = fail      label: extract_failed
@@ -274,13 +298,14 @@ workflow IterDev
     run_iteration -> iteration_failure_handler when ctx.outcome = fail      label: iteration_failed
     iteration_failure_handler -> run_iteration when ctx.outcome = success   restart: true  label: retry
     iteration_failure_handler -> Exit          when ctx.outcome = fail      label: give_up
-    audit_iteration -> report_loop_progress
+    audit_iteration -> report_loop_progress    when ctx.outcome = success   label: audit_clean
+    audit_iteration -> report_loop_progress    when ctx.outcome = fail      label: audit_gaps_continue
     report_loop_progress -> check_termination
     check_termination -> run_iteration         when ctx.tool_stdout = more-iterations          label: continue    restart: true
     check_termination -> final_audit           when ctx.tool_stdout startswith ready-for-final  label: final
     check_termination -> update_final_progress when ctx.tool_stdout = final-clean               label: all_clean
-    check_termination -> write_loop_context     when ctx.tool_stdout = final-gaps                label: more_work
-    check_termination -> Exit
+    check_termination -> write_loop_context    when ctx.tool_stdout = final-gaps                label: more_work
+    check_termination -> Exit                                                                   label: termination_unknown_halt
 
     # Final audit
     final_audit -> update_final_progress       when ctx.outcome = success   label: final_clean
@@ -288,9 +313,4 @@ workflow IterDev
 
     # Loop context feeds back into run_iteration
     write_loop_context -> run_iteration        restart: true
-    final_audit -> Exit
-    run_iteration -> Exit
-    iteration_failure_handler -> Exit
-    bootstrap_extract -> Exit
-    bootstrap_scope -> Exit
     update_final_progress -> Exit
