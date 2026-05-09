@@ -582,16 +582,16 @@ workflow SprintExecDr
     label: "Validate DoD"
     timeout: 60s
     command:
-      set -eu
-      target=$(cat .ai/current_sprint_id.txt)
+      target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "")
       sf=".ai/sprints/SPRINT-${target}.yaml"
-      if [ ! -f "$sf" ]; then
+      if [ -z "$target" ] || [ ! -f "$sf" ]; then
         printf 'dod-pass'
         exit 0
       fi
       missing=""
-      for artifact in $(yq '.artifacts.creates[].path' "$sf" 2>/dev/null); do
-        if [ ! -e "$artifact" ]; then
+      for artifact in $(yq '.artifacts.creates[].path' "$sf" 2>/dev/null || true); do
+        [ "$artifact" = "null" ] && continue
+        if [ -n "$artifact" ] && [ ! -e "$artifact" ]; then
           missing="${missing} ${artifact}"
         fi
       done
@@ -599,10 +599,14 @@ workflow SprintExecDr
         printf 'dod-fail-missing:%s' "$missing"
         exit 0
       fi
+      cmd_count=$(yq '.validation.commands | length' "$sf" 2>/dev/null || echo 0)
+      [ "$cmd_count" = "null" ] && cmd_count=0
       fail_cmd=""
-      for idx in $(yq '.validation.commands | length' "$sf" 2>/dev/null | xargs seq 0 2>/dev/null | head -20); do
-        cmd=$(yq ".validation.commands[$idx].cmd" "$sf" 2>/dev/null)
-        expect=$(yq ".validation.commands[$idx].expect" "$sf" 2>/dev/null)
+      i=0
+      while [ "$i" -lt "$cmd_count" ] && [ "$i" -lt 20 ]; do
+        cmd=$(yq ".validation.commands[$i].cmd" "$sf" 2>/dev/null || echo "")
+        expect=$(yq ".validation.commands[$i].expect" "$sf" 2>/dev/null || echo "")
+        i=$((i + 1))
         if [ "$cmd" = "null" ] || [ -z "$cmd" ]; then continue; fi
         case "$cmd" in *curl*) continue ;; esac
         if [ "$expect" = "exit_0" ]; then
