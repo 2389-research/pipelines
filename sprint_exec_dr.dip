@@ -51,6 +51,24 @@ workflow SprintExecDr
       done
       printf 'journals-ready'
 
+  tool EnsureGit
+    label: "Ensure git repo"
+    timeout: 30s
+    command:
+      set -eu
+      if git rev-parse --git-dir >/dev/null 2>&1; then
+        printf 'git-ready'
+        exit 0
+      fi
+      # No git repo — initialize one so CommitSprintWork has somewhere to commit.
+      git init -q
+      # Ensure there's an initial commit so subsequent commits have a parent.
+      if ! git rev-parse HEAD >/dev/null 2>&1; then
+        git add -A 2>/dev/null || true
+        git commit -m "chore: initial commit (auto-init by sprint_exec_dr)" --allow-empty -q
+      fi
+      printf 'git-ready'
+
   tool CheckYq
     label: "Check yq"
     timeout: 5s
@@ -978,7 +996,10 @@ workflow SprintExecDr
     Start -> Exit              when ctx.outcome = fail  label: start_failed
     Start -> EnsureLedger
     EnsureLedger -> EnsureManagerJournals
-    EnsureManagerJournals -> CheckYq
+    EnsureManagerJournals -> EnsureGit
+    EnsureGit -> CheckYq                when ctx.tool_stdout = git-ready  label: git_ok
+    EnsureGit -> Exit                   when ctx.outcome = fail           label: git_init_failed
+    EnsureGit -> CheckYq
     CheckYq -> FindNextSprint          when ctx.tool_stdout = yq-ok         label: yq_ok
     CheckYq -> YqMissing               when ctx.tool_stdout = yq-not-found  label: yq_missing
     CheckYq -> YqMissing
@@ -992,7 +1013,7 @@ workflow SprintExecDr
     SetCurrentSprint -> ReadSprint  when ctx.tool_stdout startswith current-  label: sprint_found
     SetCurrentSprint -> Exit        when ctx.tool_stdout = all-done           label: all_done
     SetCurrentSprint -> Exit
-    ReadSprint -> Exit         when ctx.outcome = fail  label: read_failed
+    ReadSprint -> MarkFailed   when ctx.outcome = fail  label: read_failed
     ReadSprint -> PlanManager
     PlanManager -> CheckBootstrap  when ctx.outcome = success  label: go
     PlanManager -> MarkFailed      when ctx.outcome = fail     label: hold
@@ -1036,7 +1057,7 @@ workflow SprintExecDr
     EscalateValidation -> MarkFailed         label: "abort"
     RewriteValidation -> ValidateDispatch    when ctx.outcome = success  label: rewrote_validation  restart: true
     RewriteValidation -> EscalateValidation  when ctx.outcome = fail     label: rewrite_failed
-    CommitSprintWork -> Exit   when ctx.outcome = fail  label: commit_failed
+    CommitSprintWork -> MarkFailed   when ctx.outcome = fail  label: commit_failed
     CommitSprintWork -> CheckBootstrapSkip
     CheckBootstrapSkip -> ValidateDoD      when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
     CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
@@ -1061,7 +1082,7 @@ workflow SprintExecDr
     CritiqueGeminiOnClaude -> CritiquesJoin
     CritiqueGeminiOnCodex -> CritiquesJoin
     CritiquesJoin -> ReviewManager
-    ReviewManager -> Exit      when ctx.outcome = fail  label: review_mgr_failed
+    ReviewManager -> MarkFailed   when ctx.outcome = fail  label: review_mgr_failed
     ReviewManager -> ReviewAnalysis
     ReviewAnalysis -> ValidateDoD       when ctx.outcome = success  label: pass
     ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
