@@ -199,8 +199,8 @@ workflow IterAudit
 
   agent par_tier1_auditor_b
     label: "Tier 1 Auditor B — Evidence Seam Adequacy"
-    model: claude-opus-4-7
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     reasoning_effort: high
     auto_status: true
     prompt:
@@ -355,8 +355,8 @@ workflow IterAudit
 
   agent par_tier2_auditor_b
     label: "Tier 2 Auditor B — Drift Detector"
-    model: claude-opus-4-7
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     reasoning_effort: high
     auto_status: true
     prompt:
@@ -443,6 +443,14 @@ workflow IterAudit
 
       Emit STATUS: success when all impacted scenarios still correctly represent system behavior (tier 2 clean). Emit STATUS: fail when any scenario fails its test or has unaddressed behavioral drift (synthesis still runs and writes gap stories — do not halt the pipeline).
 
+  # Tier 3 PAR runs sentinels twice on purpose. Auditor A produces a faithful raw
+  # execution record (no interpretation); Auditor B independently re-runs sentinels
+  # AND classifies each result against the baseline (regression / improvement /
+  # stable / flaky / new). The dual run is the adversarial check: if A misreports
+  # or its environment drifts, B's independent run catches it. Sentinel commands
+  # are read-only by contract, so dual execution is safe. Do NOT collapse this
+  # into a single run + shared-results pattern — that defeats the second-eyes
+  # property this PAR block was designed to provide.
   parallel par_tier3_dispatch -> par_tier3_auditor_a, par_tier3_auditor_b
 
   agent par_tier3_auditor_a
@@ -512,8 +520,8 @@ workflow IterAudit
 
   agent par_tier3_auditor_b
     label: "Tier 3 Auditor B — Regression Classifier"
-    model: claude-opus-4-7
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     reasoning_effort: high
     auto_status: true
     prompt:
