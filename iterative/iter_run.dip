@@ -1399,7 +1399,7 @@ workflow IterRun
     run_sentinel_scenarios -> resolve_todos        when ctx.tool_stdout = sentinel-pass         label: sentinel_ok
     run_sentinel_scenarios -> create_fix_task      when ctx.tool_stdout startswith sentinel-regression  label: regression
     create_fix_task -> read_next_task              restart: true
-    create_fix_task -> read_next_task              when ctx.outcome = fail      label: tolerated
+    create_fix_task -> read_next_task              when ctx.outcome = fail      restart: true   label: tolerated
     resolve_todos -> init_wrap_up_counter          when ctx.tool_stdout = todos-clean           label: todos_ok
     resolve_todos -> create_fix_task               when ctx.tool_stdout startswith todos-unresolved  label: todos_remain
     resolve_todos -> init_wrap_up_counter          when ctx.outcome = fail                      label: tool_failed_tolerated
