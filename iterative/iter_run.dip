@@ -318,6 +318,8 @@ workflow IterRun
 
       Emit STATUS: success when every check passed (Scope approved). Emit STATUS: fail when any check found a feasibility blocker (Revisions needed); the aggregator routes failures into the adjustment loop.
 
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
+
   fan_in par_run_scope_join <- par_run_scope_reviewer_a, par_run_scope_reviewer_b
 
   agent par_run_scope_aggregate
@@ -598,6 +600,8 @@ workflow IterRun
 
       HARD CONSTRAINT: Implement ONLY the current task. Do NOT implement future tasks. Do NOT modify .ai/ files other than task_status.txt and impl_status.txt updates. Do NOT read generated directories (node_modules, dist, build, .next).
 
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
+
   tool check_impl_status
     label: "Check Implementer Status"
     timeout: 5s
@@ -783,6 +787,8 @@ workflow IterRun
 
       Emit STATUS: success when every change is authorized and behavioral ACs have new tests (All changes authorized). Emit STATUS: fail when any change is UNAUTHORIZED or evidence is missing (Issues found); the aggregator routes failures to fix_spec_issues.
 
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
+
   fan_in par_spec_join <- par_spec_reviewer_a, par_spec_reviewer_b
 
   agent par_spec_aggregate
@@ -851,6 +857,8 @@ workflow IterRun
 
       Use STATUS: success when all spec issues are fixed and tests pass.
       Use STATUS: fail when issues cannot be resolved without more context or the fixes are insufficient.
+
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
 
   # ── PHASE: PAR Code-Quality Review (Stage 2) ─────────────────────────────────
 
@@ -949,6 +957,8 @@ workflow IterRun
 
       Emit STATUS: success when Boxing-In is CLEAR, Navigability is GOOD, and Coordination Creep is NONE (Approved). Emit STATUS: fail when any category reports RISK, POOR, or named God objects (Changes needed); the aggregator routes failures to fix_quality_issues.
 
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
+
   fan_in par_quality_join <- par_quality_reviewer_a, par_quality_reviewer_b
 
   agent par_quality_aggregate
@@ -1020,6 +1030,8 @@ workflow IterRun
 
       Use STATUS: success when all Critical and Serious quality issues are resolved.
       Use STATUS: fail when issues cannot be resolved without structural changes that are beyond this task's scope.
+
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
 
   # ── PHASE: Task Completion ───────────────────────────────────────────────────
 
@@ -1169,6 +1181,8 @@ workflow IterRun
 
       Use STATUS: success when the fix task has been created and the loop can continue.
       Use STATUS: fail when the regression cannot be addressed within this iteration.
+
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
 
   tool resolve_todos
     label: "Resolve TODOs"
