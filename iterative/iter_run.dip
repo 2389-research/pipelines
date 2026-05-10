@@ -48,6 +48,12 @@ workflow IterRun
       rm -f .ai/iter-run-temp/spec_review.md .ai/iter-run-temp/quality_review.md \
             .ai/iter-run-temp/context_brief.txt .ai/iter-run-temp/escalation_notes.txt \
             .ai/iter-run-temp/scope.md
+      # Reset orphaned in_progress tasks from a killed prior run so read_next_task picks them up
+      if [ -f .ai/iter-run-temp/task_status.txt ]; then
+        awk 'BEGIN{FS=OFS="|"} $2=="in_progress" {$2="pending"} {print}' \
+          .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
+        mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
+      fi
       if [ ! -f docs/iterations/roadmap.md ]; then
         printf 'no-roadmap'
         exit 0
@@ -514,6 +520,7 @@ workflow IterRun
       awk -v id="$next" 'BEGIN{FS=OFS="|"} $1==id && $2=="pending" {$2="in_progress"} {print}' \
         .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
       mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
+      rm -f .ai/iter-run-temp/impl_status.txt
       printf '0' > .ai/iter-run-temp/.spec_fix_rounds
       printf '0' > .ai/iter-run-temp/.quality_fix_rounds
       printf 'in-progress-%s' "$next"
