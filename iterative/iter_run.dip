@@ -336,6 +336,32 @@ workflow IterRun
       Use STATUS: success when scope is approved (no blocking issues).
       Use STATUS: fail when revisions are needed before implementation can begin.
 
+  tool init_run_scope_counter
+    label: "Init Run Scope Round Counter"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      printf '0' > .ai/iter-run-temp/.run_scope_rounds
+      printf 'initialized'
+
+  tool count_run_scope_rounds
+    label: "Count Run Scope Review Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-run-temp/.run_scope_rounds"
+      mkdir -p .ai/iter-run-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 3 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   agent adjust_run_scope
     label: "Adjust Run Scope"
     auto_status: true
@@ -488,6 +514,8 @@ workflow IterRun
       awk -v id="$next" 'BEGIN{FS=OFS="|"} $1==id && $2=="pending" {$2="in_progress"} {print}' \
         .ai/iter-run-temp/task_status.txt > .ai/iter-run-temp/task_status.txt.tmp
       mv .ai/iter-run-temp/task_status.txt.tmp .ai/iter-run-temp/task_status.txt
+      printf '0' > .ai/iter-run-temp/.spec_fix_rounds
+      printf '0' > .ai/iter-run-temp/.quality_fix_rounds
       printf 'in-progress-%s' "$next"
 
   agent implement_task
@@ -763,6 +791,23 @@ workflow IterRun
       Use STATUS: success when the implementation is spec-compliant with adequate evidence.
       Use STATUS: fail when spec violations or weak evidence were found.
 
+  tool count_spec_fix_rounds
+    label: "Count Spec Fix Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-run-temp/.spec_fix_rounds"
+      mkdir -p .ai/iter-run-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 4 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   agent fix_spec_issues
     label: "Fix Spec Issues"
     model: gpt-5.5
@@ -912,6 +957,23 @@ workflow IterRun
 
       Use STATUS: success when the code meets quality standards (no Critical or Serious issues).
       Use STATUS: fail when Critical or Serious issues were found that must be addressed.
+
+  tool count_quality_fix_rounds
+    label: "Count Quality Fix Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-run-temp/.quality_fix_rounds"
+      mkdir -p .ai/iter-run-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 4 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
 
   agent fix_quality_issues
     label: "Fix Quality Issues"
@@ -1157,6 +1219,32 @@ workflow IterRun
 
       HARD CONSTRAINT: Only modify files in docs/iterations/. Do not modify source code.
 
+  tool init_wrap_up_counter
+    label: "Init Wrap-Up Round Counter"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      printf '0' > .ai/iter-run-temp/.wrap_up_rounds
+      printf 'initialized'
+
+  tool count_wrap_up_rounds
+    label: "Count Wrap-Up Validation Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-run-temp/.wrap_up_rounds"
+      mkdir -p .ai/iter-run-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 2 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   tool validate_wrap_up
     label: "Validate Wrap-Up"
     timeout: 10s
@@ -1211,8 +1299,10 @@ workflow IterRun
     load_scope -> run_sentinel_baseline
     load_scope -> Exit                             when ctx.outcome = fail      label: scope_load_failed
     run_sentinel_baseline -> consistency_audit
-    consistency_audit -> par_run_scope_dispatch    when ctx.tool_stdout = consistent            label: consistent
+    consistency_audit -> init_run_scope_counter    when ctx.tool_stdout = consistent            label: consistent
     consistency_audit -> reconcile_state           when ctx.tool_stdout startswith inconsistent  label: inconsistent
+    init_run_scope_counter -> par_run_scope_dispatch
+    init_run_scope_counter -> par_run_scope_dispatch when ctx.outcome = fail   label: tolerated
     reconcile_state -> consistency_audit         when ctx.outcome = success   restart: true  label: reconciled
     reconcile_state -> Exit                       when ctx.outcome = fail      label: irreconcilable
 
@@ -1226,7 +1316,10 @@ workflow IterRun
     par_run_scope_reviewer_b -> par_run_scope_join when ctx.outcome = fail      label: reviewer_b_revise
     par_run_scope_join -> par_run_scope_aggregate
     par_run_scope_aggregate -> decompose_tasks     when ctx.outcome = success   label: scope_approved
-    par_run_scope_aggregate -> adjust_run_scope    when ctx.outcome = fail      label: scope_revise
+    par_run_scope_aggregate -> count_run_scope_rounds when ctx.outcome = fail   label: scope_revise
+    count_run_scope_rounds -> adjust_run_scope     when ctx.tool_stdout = continue       label: under_cap
+    count_run_scope_rounds -> decompose_tasks      when ctx.tool_stdout = cap-reached    label: scope_force_accept
+    count_run_scope_rounds -> adjust_run_scope     when ctx.outcome = fail               label: tolerated
     adjust_run_scope -> par_run_scope_dispatch     when ctx.outcome = success   restart: true   label: adjusted
     adjust_run_scope -> Exit                       when ctx.outcome = fail      label: adjust_failed_human
 
@@ -1264,7 +1357,10 @@ workflow IterRun
     par_spec_reviewer_b -> par_spec_join           when ctx.outcome = fail      label: spec_reviewer_b_issues
     par_spec_join -> par_spec_aggregate
     par_spec_aggregate -> par_quality_dispatch     when ctx.outcome = success   label: spec_pass
-    par_spec_aggregate -> fix_spec_issues          when ctx.outcome = fail      label: spec_fail
+    par_spec_aggregate -> count_spec_fix_rounds    when ctx.outcome = fail      label: spec_fail
+    count_spec_fix_rounds -> fix_spec_issues       when ctx.tool_stdout = continue       label: under_cap
+    count_spec_fix_rounds -> escalate_task         when ctx.tool_stdout = cap-reached    label: spec_force_escalate
+    count_spec_fix_rounds -> fix_spec_issues       when ctx.outcome = fail               label: tolerated
     fix_spec_issues -> par_spec_dispatch           when ctx.outcome = success   restart: true  label: spec_fixed
     fix_spec_issues -> escalate_task               when ctx.outcome = fail      label: spec_stuck
 
@@ -1278,7 +1374,10 @@ workflow IterRun
     par_quality_reviewer_b -> par_quality_join     when ctx.outcome = fail      label: quality_reviewer_b_changes
     par_quality_join -> par_quality_aggregate
     par_quality_aggregate -> mark_task_done        when ctx.outcome = success   label: quality_pass
-    par_quality_aggregate -> fix_quality_issues    when ctx.outcome = fail      label: quality_fail
+    par_quality_aggregate -> count_quality_fix_rounds when ctx.outcome = fail   label: quality_fail
+    count_quality_fix_rounds -> fix_quality_issues when ctx.tool_stdout = continue       label: under_cap
+    count_quality_fix_rounds -> escalate_task      when ctx.tool_stdout = cap-reached    label: quality_force_escalate
+    count_quality_fix_rounds -> fix_quality_issues when ctx.outcome = fail               label: tolerated
     fix_quality_issues -> par_quality_dispatch     when ctx.outcome = success   restart: true  label: quality_fixed
     fix_quality_issues -> escalate_task            when ctx.outcome = fail      label: quality_stuck
 
@@ -1294,14 +1393,19 @@ workflow IterRun
     run_sentinel_scenarios -> create_fix_task      when ctx.tool_stdout startswith sentinel-regression  label: regression
     create_fix_task -> read_next_task              restart: true
     create_fix_task -> read_next_task              when ctx.outcome = fail      label: tolerated
-    resolve_todos -> wrap_up                       when ctx.tool_stdout = todos-clean           label: todos_ok
+    resolve_todos -> init_wrap_up_counter          when ctx.tool_stdout = todos-clean           label: todos_ok
     resolve_todos -> create_fix_task               when ctx.tool_stdout startswith todos-unresolved  label: todos_remain
-    resolve_todos -> wrap_up                       when ctx.outcome = fail                      label: tool_failed_tolerated
+    resolve_todos -> init_wrap_up_counter          when ctx.outcome = fail                      label: tool_failed_tolerated
+    init_wrap_up_counter -> wrap_up
+    init_wrap_up_counter -> wrap_up                when ctx.outcome = fail               label: tolerated
 
     # Wrap-up
     wrap_up -> validate_wrap_up                    when ctx.outcome = success   label: wrapped
     wrap_up -> Exit                                when ctx.outcome = fail      label: wrapup_failed
     validate_wrap_up -> commit_iteration           when ctx.tool_stdout = wrapup-valid          label: valid
-    validate_wrap_up -> wrap_up                    when ctx.tool_stdout startswith wrapup-invalid  label: invalid  restart: true
+    validate_wrap_up -> count_wrap_up_rounds       when ctx.tool_stdout startswith wrapup-invalid  label: invalid
+    count_wrap_up_rounds -> wrap_up                when ctx.tool_stdout = continue       restart: true   label: under_cap
+    count_wrap_up_rounds -> commit_iteration       when ctx.tool_stdout = cap-reached    label: wrapup_force_accept
+    count_wrap_up_rounds -> wrap_up                when ctx.outcome = fail               restart: true   label: tolerated
     commit_iteration -> Exit
     commit_iteration -> Exit                       when ctx.outcome = fail      label: commit_failed

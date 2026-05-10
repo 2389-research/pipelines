@@ -260,6 +260,23 @@ workflow IterDev
 
       Always emit STATUS: success — this node only runs when the project is already complete.
 
+  tool count_final_audit_rounds
+    label: "Count Final Audit Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/.final_audit_rounds"
+      mkdir -p .ai
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 2 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   tool write_loop_context
     label: "Write Loop Context for Restart"
     timeout: 10s
@@ -309,7 +326,10 @@ workflow IterDev
 
     # Final audit
     final_audit -> update_final_progress       when ctx.outcome = success   label: final_clean
-    final_audit -> write_loop_context          when ctx.outcome = fail      label: final_gaps
+    final_audit -> count_final_audit_rounds    when ctx.outcome = fail      label: final_gaps
+    count_final_audit_rounds -> write_loop_context  when ctx.tool_stdout = continue       label: under_cap
+    count_final_audit_rounds -> Exit                when ctx.tool_stdout = cap-reached    label: final_audit_force_exit
+    count_final_audit_rounds -> write_loop_context  when ctx.outcome = fail               label: tolerated
 
     # Loop context feeds back into run_iteration
     write_loop_context -> run_iteration        restart: true
