@@ -818,6 +818,9 @@ workflow IterExtract
     extract_agent_1 -> extract_join
     extract_agent_2 -> extract_join
     extract_agent_3 -> extract_join
+    extract_agent_1 -> extract_join                    when ctx.outcome = fail   label: extract_1_tolerated
+    extract_agent_2 -> extract_join                    when ctx.outcome = fail   label: extract_2_tolerated
+    extract_agent_3 -> extract_join                    when ctx.outcome = fail   label: extract_3_tolerated
     extract_join -> persist_wave
     extract_join -> Exit                               when ctx.outcome = fail   label: extract_join_failed
     persist_wave -> count_remaining_chunks
@@ -829,6 +832,8 @@ workflow IterExtract
     par_omission_dispatch -> par_omission_aggregate     when ctx.outcome = fail   label: tolerated
     par_omission_reviewer_a -> par_omission_join
     par_omission_reviewer_b -> par_omission_join
+    par_omission_reviewer_a -> par_omission_join       when ctx.outcome = fail   label: omission_a_findings
+    par_omission_reviewer_b -> par_omission_join       when ctx.outcome = fail   label: omission_b_findings
     par_omission_join -> par_omission_aggregate
     par_omission_aggregate -> build_coverage_ledger
     par_omission_aggregate -> build_coverage_ledger    when ctx.outcome = fail   label: gaps_to_remediate
