@@ -1240,6 +1240,7 @@ workflow IterRun
     read_next_task -> mark_task_in_progress        when ctx.tool_stdout startswith task-        label: has_task
     read_next_task -> run_impacted_scenarios        when ctx.tool_stdout = all-tasks-done       label: tasks_done
     mark_task_in_progress -> implement_task
+    mark_task_in_progress -> implement_task        when ctx.outcome = fail      label: tolerated
     implement_task -> check_impl_status            when ctx.outcome = success   label: implemented
     implement_task -> check_impl_status            when ctx.outcome = fail      label: impl_issue
     implement_task -> check_impl_status
@@ -1283,13 +1284,16 @@ workflow IterRun
 
     # Task completion → loop
     mark_task_done -> update_task_progress
+    mark_task_done -> update_task_progress         when ctx.outcome = fail      label: tolerated
     update_task_progress -> read_next_task         restart: true
 
     # Post-iteration
     run_impacted_scenarios -> run_sentinel_scenarios
+    run_impacted_scenarios -> run_sentinel_scenarios when ctx.outcome = fail    label: tolerated
     run_sentinel_scenarios -> resolve_todos        when ctx.tool_stdout = sentinel-pass         label: sentinel_ok
     run_sentinel_scenarios -> create_fix_task      when ctx.tool_stdout startswith sentinel-regression  label: regression
     create_fix_task -> read_next_task              restart: true
+    create_fix_task -> read_next_task              when ctx.outcome = fail      label: tolerated
     resolve_todos -> wrap_up                       when ctx.tool_stdout = todos-clean           label: todos_ok
     resolve_todos -> create_fix_task               when ctx.tool_stdout startswith todos-unresolved  label: todos_remain
     resolve_todos -> wrap_up                       when ctx.outcome = fail                      label: tool_failed_tolerated
