@@ -76,14 +76,14 @@ workflow IterExtract
       has_requirements=false
       has_scenarios=false
       has_temp=false
-      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ') || req_count=0
       if [ "$req_count" -gt 0 ]; then
         has_requirements=true
       fi
       if [ -f docs/iterations/behavior-scenarios.md ]; then
         has_scenarios=true
       fi
-      temp_count=$(ls .ai/iter-extract-temp/extraction_*.json 2>/dev/null | wc -l | tr -d ' ')
+      temp_count=$(ls .ai/iter-extract-temp/extraction_*.json 2>/dev/null | wc -l | tr -d ' ') || temp_count=0
       if [ "$temp_count" -gt 0 ]; then
         has_temp=true
       fi
@@ -744,7 +744,7 @@ workflow IterExtract
     command:
       set -euo pipefail
       fail_reason=""
-      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ') || req_count=0
       if [ "$req_count" -eq 0 ]; then
         fail_reason="no-requirement-files"
         printf 'validation-fail-%s' "$fail_reason"

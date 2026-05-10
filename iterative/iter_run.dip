@@ -1099,7 +1099,7 @@ workflow IterRun
         printf 'todos-clean'
         exit 0
       fi
-      count=$(grep -rn "TODO(${iter_id})" --include='*.py' --include='*.ts' --include='*.go' --include='*.rs' --include='*.swift' --include='*.js' . 2>/dev/null | grep -v node_modules | grep -v '\.ai/' | wc -l | tr -d ' ' || echo 0)
+      count=$(grep -rn "TODO(${iter_id})" --include='*.py' --include='*.ts' --include='*.go' --include='*.rs' --include='*.swift' --include='*.js' . 2>/dev/null | grep -v node_modules | grep -v '\.ai/' | wc -l | tr -d ' ') || count=0
       if [ "$count" -eq 0 ]; then
         printf 'todos-clean'
       else
