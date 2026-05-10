@@ -296,6 +296,26 @@ workflow IterDev
         "$now" "$iter_id" "$audit_result" >> .ai/iter-loop-context.txt
       printf 'context-written'
 
+  tool write_workflow_status_success
+    label: "Write Workflow Status (success)"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai
+      printf 'success' > .ai/iter-workflow-status.txt.tmp
+      mv .ai/iter-workflow-status.txt.tmp .ai/iter-workflow-status.txt
+      printf 'workflow-status-success'
+
+  tool write_workflow_status_fail
+    label: "Write Workflow Status (fail)"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai
+      printf 'fail' > .ai/iter-workflow-status.txt.tmp
+      mv .ai/iter-workflow-status.txt.tmp .ai/iter-workflow-status.txt
+      printf 'workflow-status-fail'
+
   edges
     Start -> check_resume
     check_resume -> bootstrap_extract          when ctx.tool_stdout = fresh                     label: fresh_start
@@ -304,17 +324,17 @@ workflow IterDev
     check_resume -> final_audit                when ctx.tool_stdout startswith resume-final     label: resume_final
     check_resume -> already_complete_exit      when ctx.tool_stdout = already-complete          label: done
     check_resume -> bootstrap_extract                                                            label: unknown_state_default_fresh
-    already_complete_exit -> Exit
+    already_complete_exit -> write_workflow_status_success
     bootstrap_extract -> bootstrap_scope       when ctx.outcome = success   label: extracted
-    bootstrap_extract -> Exit                  when ctx.outcome = fail      label: extract_failed
+    bootstrap_extract -> write_workflow_status_fail   when ctx.outcome = fail      label: extract_failed
     bootstrap_scope -> run_iteration           when ctx.outcome = success   label: scoped
-    bootstrap_scope -> Exit                    when ctx.outcome = fail      label: scope_failed
+    bootstrap_scope -> write_workflow_status_fail     when ctx.outcome = fail      label: scope_failed
 
     # Main loop
     run_iteration -> audit_iteration           when ctx.outcome = success   label: iteration_done
     run_iteration -> iteration_failure_handler when ctx.outcome = fail      label: iteration_failed
     iteration_failure_handler -> run_iteration when ctx.outcome = success   restart: true  label: retry
-    iteration_failure_handler -> Exit          when ctx.outcome = fail      label: give_up
+    iteration_failure_handler -> write_workflow_status_fail when ctx.outcome = fail      label: give_up
     audit_iteration -> report_loop_progress    when ctx.outcome = success   label: audit_clean
     audit_iteration -> report_loop_progress    when ctx.outcome = fail      label: audit_gaps_continue
     report_loop_progress -> check_termination
@@ -322,15 +342,21 @@ workflow IterDev
     check_termination -> final_audit           when ctx.tool_stdout startswith ready-for-final  label: final
     check_termination -> update_final_progress when ctx.tool_stdout = final-clean               label: all_clean
     check_termination -> write_loop_context    when ctx.tool_stdout = final-gaps                label: more_work
-    check_termination -> Exit                                                                   label: termination_unknown_halt
+    check_termination -> write_workflow_status_fail                                              label: termination_unknown_halt
 
     # Final audit
     final_audit -> update_final_progress       when ctx.outcome = success   label: final_clean
     final_audit -> count_final_audit_rounds    when ctx.outcome = fail      label: final_gaps
     count_final_audit_rounds -> write_loop_context  when ctx.tool_stdout = continue       label: under_cap
-    count_final_audit_rounds -> Exit                when ctx.tool_stdout = cap-reached    label: final_audit_force_exit
+    count_final_audit_rounds -> write_workflow_status_fail when ctx.tool_stdout = cap-reached    label: final_audit_force_exit
     count_final_audit_rounds -> write_loop_context  when ctx.outcome = fail               label: tolerated
 
     # Loop context feeds back into run_iteration
     write_loop_context -> run_iteration        restart: true
-    update_final_progress -> Exit
+    update_final_progress -> write_workflow_status_success
+
+    # Workflow status writers terminate at Exit (atomic STATUS file written first)
+    write_workflow_status_success -> Exit
+    write_workflow_status_success -> Exit      when ctx.outcome = fail      label: tolerated
+    write_workflow_status_fail -> Exit
+    write_workflow_status_fail -> Exit         when ctx.outcome = fail      label: tolerated
