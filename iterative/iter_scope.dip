@@ -192,6 +192,49 @@ workflow IterScope
 
       Emit STATUS: success when iterations.md is written. Emit STATUS: fail only if you could not produce a valid iteration ordering.
 
+  tool init_skeleton_heading_counter
+    label: "Init Skeleton Heading Retry Counter"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-scope-temp
+      printf '0' > .ai/iter-scope-temp/.skeleton_heading_rounds.tmp
+      mv .ai/iter-scope-temp/.skeleton_heading_rounds.tmp .ai/iter-scope-temp/.skeleton_heading_rounds
+      printf 'initialized'
+
+  tool validate_skeleton_heading
+    label: "Validate Skeleton Heading"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      skeleton_file=".ai/iter-scope-temp/skeleton.md"
+      if [ ! -f "$skeleton_file" ]; then
+        printf 'skeleton-missing'
+        exit 0
+      fi
+      if grep -qE '^## Walking Skeleton \(ITER-0000\)' "$skeleton_file"; then
+        printf 'heading-ok'
+      else
+        printf 'heading-bad'
+      fi
+
+  tool count_skeleton_retry
+    label: "Count Skeleton Heading Retry"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-scope-temp/.skeleton_heading_rounds"
+      mkdir -p .ai/iter-scope-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 2 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
+
   tool init_scope_counter
     label: "Init Scope Round Counter"
     timeout: 5s
@@ -507,10 +550,19 @@ workflow IterScope
     no_requirements_exit -> Exit
     validate_existing_roadmap -> Exit             when ctx.outcome = success   label: valid
     validate_existing_roadmap -> read_backlog     when ctx.outcome = fail      label: invalid
-    read_backlog -> define_skeleton
+    read_backlog -> init_skeleton_heading_counter
     read_backlog -> Exit                          when ctx.outcome = fail      label: backlog_failed
-    define_skeleton -> order_iterations           when ctx.outcome = success   label: skeleton_defined
+    init_skeleton_heading_counter -> define_skeleton
+    init_skeleton_heading_counter -> define_skeleton  when ctx.outcome = fail   label: tolerated
+    define_skeleton -> validate_skeleton_heading  when ctx.outcome = success   label: skeleton_defined
     define_skeleton -> Exit                       when ctx.outcome = fail      label: skeleton_failed
+    validate_skeleton_heading -> order_iterations when ctx.tool_stdout = heading-ok      label: heading_valid
+    validate_skeleton_heading -> count_skeleton_retry when ctx.tool_stdout = heading-bad     label: heading_drift
+    validate_skeleton_heading -> count_skeleton_retry when ctx.tool_stdout = skeleton-missing label: skeleton_missing
+    validate_skeleton_heading -> order_iterations when ctx.outcome = fail      label: tolerated
+    count_skeleton_retry -> define_skeleton       when ctx.tool_stdout = continue       restart: true   label: retry_skeleton
+    count_skeleton_retry -> Exit                  when ctx.tool_stdout = cap-reached    label: skeleton_drift_failed
+    count_skeleton_retry -> Exit                  when ctx.outcome = fail               label: tolerated
     order_iterations -> init_scope_counter        when ctx.outcome = success   label: ordered
     order_iterations -> Exit                      when ctx.outcome = fail      label: ordering_failed
     init_scope_counter -> check_citations

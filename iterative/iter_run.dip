@@ -525,6 +525,18 @@ workflow IterRun
       printf '0' > .ai/iter-run-temp/.quality_fix_rounds
       printf 'in-progress-%s' "$next"
 
+  tool mark_task_failure
+    label: "Mark Task Tracking Failure"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      printf 'task tracking broken: mark_task_in_progress failed at %s\n' "$now" \
+        > .ai/iter-run-temp/.task_tracking_error.tmp
+      mv .ai/iter-run-temp/.task_tracking_error.tmp .ai/iter-run-temp/.task_tracking_error
+      printf 'task-failure-marked'
+
   agent implement_task
     label: "Implement Task"
     model: gpt-5.5
@@ -1340,7 +1352,9 @@ workflow IterRun
     read_next_task -> mark_task_in_progress        when ctx.tool_stdout startswith task-        label: has_task
     read_next_task -> run_impacted_scenarios        when ctx.tool_stdout = all-tasks-done       label: tasks_done
     mark_task_in_progress -> implement_task
-    mark_task_in_progress -> implement_task        when ctx.outcome = fail      label: tolerated
+    mark_task_in_progress -> mark_task_failure     when ctx.outcome = fail      label: tracking_broken
+    mark_task_failure -> wrap_up
+    mark_task_failure -> wrap_up                   when ctx.outcome = fail      label: tolerated
     implement_task -> check_impl_status            when ctx.outcome = success   label: implemented
     implement_task -> check_impl_status            when ctx.outcome = fail      label: impl_issue
     implement_task -> check_impl_status
