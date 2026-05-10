@@ -40,7 +40,7 @@ workflow IterScope
     timeout: 10s
     command:
       set -euo pipefail
-      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ')
+      req_count=$(ls docs/iterations/requirements/*.md 2>/dev/null | wc -l | tr -d ' ') || req_count=0
       if [ "$req_count" -eq 0 ]; then
         printf 'no-requirements'
         exit 0
@@ -209,7 +209,7 @@ workflow IterScope
       rm -f .ai/iter-scope-temp/missing-ids.txt
       for f in .ai/iter-scope-temp/skeleton.md .ai/iter-scope-temp/iterations.md; do
         [ -f "$f" ] || continue
-        grep -oE 'STORY-[0-9]+[a-z]?' "$f" | sort -u | while IFS= read -r story_id; do
+        { grep -oE 'STORY-[0-9]+[a-z]?' "$f" || true; } | sort -u | while IFS= read -r story_id; do
           base_id=$(printf '%s' "$story_id" | sed 's/[a-z]$//')
           if ! grep -qr "$base_id" docs/iterations/requirements/ 2>/dev/null; then
             printf '%s\n' "$story_id" >> .ai/iter-scope-temp/missing-ids.txt
