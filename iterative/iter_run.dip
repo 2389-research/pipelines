@@ -276,8 +276,8 @@ workflow IterRun
 
   agent par_run_scope_reviewer_b
     label: "PAR Scope Reviewer B — Implementation Feasibility"
-    model: claude-opus-4-7
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     auto_status: true
     prompt:
       ## Competitive Context
@@ -732,8 +732,8 @@ workflow IterRun
 
   agent par_spec_reviewer_b
     label: "PAR Spec Reviewer B — Bottom-Up Diff Audit"
-    model: claude-opus-4-7
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     auto_status: true
     prompt:
       ## Competitive Context
@@ -903,8 +903,8 @@ workflow IterRun
 
   agent par_quality_reviewer_b
     label: "PAR Quality Reviewer B — Future-Proofing"
-    model: claude-opus-4-7
-    provider: anthropic
+    model: gpt-5.5
+    provider: openai
     auto_status: true
     prompt:
       ## Competitive Context
