@@ -686,14 +686,13 @@ workflow IterAudit
       - Add a new follow-up iteration section (ITER-XXXX-gap-remediation or similar) containing all gap story IDs
       - Set its status to pending
 
-      Write .ai/iter-audit-result.txt with the single word:
-      gaps
+      Do NOT write .ai/iter-audit-result.txt — the mark_audit_result_gaps tool runs after this agent and writes the 'gaps' verdict atomically.
 
       End with exactly one of:
       STATUS: success
       STATUS: fail
 
-      Emit STATUS: success when all gap stories were written, the roadmap was updated with a follow-up iteration, and .ai/iter-audit-result.txt contains "gaps". Emit STATUS: fail only if a tool error prevented writing one of these artifacts.
+      Emit STATUS: success when all gap stories were written and the roadmap was updated with a follow-up iteration. Emit STATUS: fail only if a tool error prevented writing one of these artifacts.
 
   tool commit_gaps
     label: "Commit Gaps"
@@ -718,15 +717,43 @@ workflow IterAudit
     label: "Report Clean"
     timeout: 5s
     command:
-      # Overwrite stale gaps from prior iterations so orchestrator sees clean state
-      printf 'AUDIT_CLEAN' > .ai/iter-audit-result.txt
+      set -euo pipefail
+      mkdir -p .ai
+      # Overwrite stale gaps from prior iterations so orchestrator sees clean state (atomic)
+      printf 'AUDIT_CLEAN' > .ai/iter-audit-result.txt.tmp
+      mv .ai/iter-audit-result.txt.tmp .ai/iter-audit-result.txt
       printf 'clean'
+
+  tool init_audit_state
+    label: "Init Audit State"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-audit-temp
+      # Truncate tier findings before each audit run so aggregate writes start from a clean slate
+      : > .ai/iter-audit-temp/tier1_findings.md
+      : > .ai/iter-audit-temp/tier2_findings.md
+      : > .ai/iter-audit-temp/tier3_findings.md
+      printf 'audit-state-initialized'
+
+  tool mark_audit_result_gaps
+    label: "Mark Audit Result Gaps"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai
+      # Atomically write the 'gaps' verdict so a partial write never corrupts orchestrator state
+      printf 'gaps' > .ai/iter-audit-result.txt.tmp
+      mv .ai/iter-audit-result.txt.tmp .ai/iter-audit-result.txt
+      printf 'gaps-marked'
 
   edges
     Start -> read_iteration_state
     read_iteration_state -> no_state_exit          when ctx.tool_stdout startswith state-missing  label: no_state
-    read_iteration_state -> check_tbd_scenarios     when ctx.tool_stdout startswith state-ready    label: ready
-    read_iteration_state -> check_tbd_scenarios
+    read_iteration_state -> init_audit_state       when ctx.tool_stdout startswith state-ready    label: ready
+    read_iteration_state -> init_audit_state
+    init_audit_state -> check_tbd_scenarios
+    init_audit_state -> check_tbd_scenarios        when ctx.outcome = fail      label: tolerated
     check_tbd_scenarios -> par_tier1_dispatch      when ctx.tool_stdout startswith tbd-check-ok   label: no_tbds
     check_tbd_scenarios -> tbd_gate_fail           when ctx.tool_stdout startswith tbd-check-fail label: has_tbds
     check_tbd_scenarios -> par_tier1_dispatch
@@ -764,8 +791,10 @@ workflow IterAudit
     par_tier3_aggregate -> synthesize_audit        when ctx.outcome = fail      label: tier3_gaps_continue
     synthesize_audit -> report_clean              when ctx.outcome = success   label: clean
     synthesize_audit -> write_gap_stories         when ctx.outcome = fail      label: gaps_found
-    write_gap_stories -> commit_gaps
+    write_gap_stories -> mark_audit_result_gaps
     write_gap_stories -> Exit                      when ctx.outcome = fail      label: write_failed
+    mark_audit_result_gaps -> commit_gaps
+    mark_audit_result_gaps -> commit_gaps          when ctx.outcome = fail      label: tolerated
     commit_gaps -> report_gaps
     report_gaps -> Exit
     report_clean -> Exit
