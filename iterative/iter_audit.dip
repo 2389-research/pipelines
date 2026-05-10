@@ -257,6 +257,8 @@ workflow IterAudit
 
       Emit STATUS: success when every scenario is ADEQUATE with seam MATCH and the test PASSES, and corpus gaps are "none". Emit STATUS: fail when any scenario is WEAK or MISSING, seam is MISMATCH, test FAILs/ERRORs, or any TBD commands were found. The aggregator routes failures into gap-story creation.
 
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
+
   fan_in par_tier1_join <- par_tier1_auditor_a, par_tier1_auditor_b
 
   agent par_tier1_aggregate
@@ -415,6 +417,8 @@ workflow IterAudit
       STATUS: fail
 
       Emit STATUS: success when every impacted scenario is NO-DRIFT with all five drift categories NONE. Emit STATUS: fail when any scenario is DRIFTED or any drift category reports a description (or any TBD command was found). The aggregator routes failures into gap-story creation.
+
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
 
   fan_in par_tier2_join <- par_tier2_auditor_a, par_tier2_auditor_b
 
@@ -591,6 +595,8 @@ workflow IterAudit
       STATUS: fail
 
       Emit STATUS: success when there are zero REGRESSIONs and zero FLAKY classifications (the regression safety net is intact). Emit STATUS: fail when any REGRESSION or FLAKY result is detected, or any TBD sentinel was found, or no baseline was available (synthesis still runs and writes gap stories — do not halt the pipeline).
+
+      FINAL LINE RULE: The very last line of your response MUST be exactly `STATUS: success` or `STATUS: fail` — no markdown wrapper, no trailing prose, no whitespace after. Treat this rule as inviolable.
 
   fan_in par_tier3_join <- par_tier3_auditor_a, par_tier3_auditor_b
 

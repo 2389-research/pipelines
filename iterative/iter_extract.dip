@@ -653,8 +653,11 @@ workflow IterExtract
       - Sections with coverage: N
       - Sections with gaps: N (list them)
 
-      End with STATUS: success if no critical gaps (all sections have at least one story).
-      End with STATUS: fail if any section has zero stories.
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when no critical gaps remain (all sections have at least one story). Emit STATUS: fail when any section has zero stories.
 
   agent patch_extractions
     label: "Patch Extraction Gaps"
@@ -676,8 +679,11 @@ workflow IterExtract
 
       If no stories can be extracted (section is purely informational with no requirements), mark it as "informational — no stories needed" in the ledger.
 
-      End with STATUS: success when all gaps are addressed (either patched or marked informational).
-      End with STATUS: fail if you cannot extract from a section that clearly contains requirements.
+      End with exactly one of:
+      STATUS: success
+      STATUS: fail
+
+      Emit STATUS: success when all gaps are addressed (either patched or marked informational). Emit STATUS: fail when you cannot extract from a section that clearly contains requirements.
 
   agent aggregate_results
     label: "Aggregate Results"
