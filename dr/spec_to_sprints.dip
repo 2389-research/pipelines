@@ -739,6 +739,24 @@ workflow SpecToSprints
 
   human approval_gate
     label: "Approve Sprint Plan"
+    mode: freeform
+    default: approve
+    prompt:
+      The sprint plan has been generated and is **available on disk for review**:
+
+      - `.ai/sprint_plan.md`               — full plan with all sprints
+      - `.ai/sprints/SPRINT-*.md`          — per-sprint narratives (if write_sprint_docs has run; otherwise still pending)
+      - `.ai/spec_analysis.md`             — the analyzed spec this plan is built from
+
+      Open these in your editor before deciding. The TUI cannot scroll back through the
+      `present_plan` summary that was just emitted; the on-disk files are the source of truth.
+
+      Options:
+      - **approve**  — ship this plan, proceed to write sprint files
+      - **adjust**   — describe what you'd like changed; `apply_feedback` will rewrite `.ai/sprint_plan.md` and re-prompt
+      - **skip**     — continue without explicit approval (same effect as approve, but logs it differently)
+
+      Default: approve
 
   agent apply_feedback
     label: "Apply Feedback"
