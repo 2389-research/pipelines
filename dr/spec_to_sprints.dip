@@ -1,6 +1,6 @@
 # ABOUTME: Resilient spec-to-sprints decomposition pipeline — fork of spec_to_sprints_yaml_v2 for self-healing recovery primitives.
 # ABOUTME: Baseline cosmetic fork; subsequent commits add writes-contract recovery, validate_output escalation, and tightened agent boundaries.
-workflow SpecToSprintsDr
+workflow SpecToSprints
   goal: "Decompose a specification into .ai/ledger.yaml and SPRINT-*.md + SPRINT-*.yaml files ready for sprint_exec_yaml_v2.dip execution, using multi-model tournament decomposition with DecompositionManager quality gate, human approval, and optional single-sprint re-decomposition mode."
   start: Start
   exit: Exit

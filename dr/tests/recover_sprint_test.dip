@@ -22,7 +22,7 @@ workflow TestRecoverSprint
       Acknowledge the test is complete. HARD CONSTRAINT: do not read or write any files, do not call any tools.
 
   subgraph recover_sprint
-    ref: ../parts/recover_sprint.dip
+    ref: ../parts/recovery/recover_sprint.dip
 
   tool AssertRecoveryArtifacts
     label: "Assert recovery artifacts exist"

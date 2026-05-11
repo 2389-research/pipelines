@@ -1,6 +1,6 @@
 # ABOUTME: Resilient sprint execution pipeline — fork of sprint_exec_yaml_v2 with self-healing recovery primitives.
 # ABOUTME: Adds validation dispatch (script/sct/cmd), per-failure-class escalation gates, and counter-based stuck-loop detection.
-workflow SprintExecDr
+workflow SprintExec
   goal: "Execute the next incomplete sprint from .ai/ledger.yaml through implementation, validation, multi-model review, and completion. v2 adds PlanManager (pre-execution gate), ReviewManager (evidence synthesis), and RecoveryManager (failure triage) with dedicated journals and selective cross-reading."
   start: Start
   exit: Exit
@@ -26,7 +26,7 @@ workflow SprintExecDr
       HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT create, modify, or delete anything. Do NOT call any tools. Your ONLY job is to acknowledge completion with a one-line response.
 
   subgraph recover_sprint
-    ref: parts/recover_sprint.dip
+    ref: parts/recovery/recover_sprint.dip
 
   tool EnsureLedger
     label: "Ensure Ledger"

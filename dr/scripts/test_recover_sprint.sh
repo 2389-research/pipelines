@@ -1,6 +1,6 @@
 #!/bin/sh
-# ABOUTME: Run parts/recover_sprint.dip against a fixture inside a temp workspace.
-# ABOUTME: Usage: scripts/test_recover_sprint.sh [fixture-name]   (default: recover-scope-failure)
+# ABOUTME: Run dr/parts/recovery/recover_sprint.dip against a fixture inside a temp workspace.
+# ABOUTME: Usage: dr/scripts/test_recover_sprint.sh [fixture-name]   (default: recover-scope-failure)
 set -eu
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
