@@ -1070,48 +1070,66 @@ workflow SpecToSprints
     fidelity: full
     max_turns: 30
     prompt:
-      validate_output has failed 3 consecutive times. The errors and the
-      previous attempt's output are still on disk. Rather than rewriting
-      everything from scratch (which has already failed three times),
-      apply surgical fixes to the existing files.
+      validate_output has failed 3 consecutive times. Apply surgical fixes
+      to the existing files. Do NOT rewrite from scratch — that approach
+      has already failed three times.
 
-      Read:
-      1. The validate_output stdout (in the previous tool call's context)
-         — it contains a space-separated list of error tokens like
-         `missing-stack-build-SPRINT-005.yaml`, `null-stack-lang-SPRINT-000.yaml`,
-         `missing-validation-SPRINT-012.yaml`, `oversized-sprint-SPRINT-016.yaml-18-dod-items`.
-      2. The current files under .ai/sprints/ (use ls + read).
-      3. .ai/spec_analysis.md to find canonical stack values when populating null fields.
+      ## STEP 1 — Read the error-token taxonomy
 
-      For each error token, identify the file and field at fault, and
-      patch it in place using `yq -i` for YAML or careful section
-      replacement for MD. Examples:
-      - `missing-stack-build-SPRINT-005.yaml` → set `stack.build` to a
-        sensible value from the spec analysis (or `npm run build` for
-        node, `cargo build` for rust, etc.)
-      - `null-stack-lang-SPRINT-000.yaml` → look up the lang from
-        spec_analysis and set it
-      - `missing-validation-SPRINT-012.yaml` → add a `validation:` block
-        with a runnable command from the spec
-      - `oversized-sprint-SPRINT-NNN.yaml-N-dod-items` → trim the dod
-        list; this signals the sprint is too broad and should be
-        narrowed in scope (don't redecompose here, just trim)
-      - `ledger-yaml-mismatch` / `ledger-md-mismatch` → re-run the
-        ledger writer logic by emitting a fresh .ai/ledger.yaml from
-        the SPRINT-*.yaml files on disk
+      Your FIRST tool call MUST be reading this file:
 
-      Hard rules:
-      - DO NOT rewrite files from scratch. Surgical patches only.
-      - DO NOT change the SPRINT IDs or the number of sprints.
+          dr/docs/validation_error_taxonomy.md
+
+      It contains the complete mapping of every error token to its fix
+      recipe. The token alone is the fix instruction. DO NOT search the
+      codebase for the validator script; DO NOT grep for the error
+      strings. The taxonomy file is authoritative.
+
+      ## STEP 2 — Read the actual errors
+
+      The validate_output stdout from the previous tool call is in your
+      context (look at `episode_summaries` / `last_response`). It's a
+      space-separated list of tokens after `invalid-`. Parse it.
+
+      You may also want:
+      - `ls .ai/sprints/` to see the current sprint files
+      - `.ai/spec_analysis.md` to find canonical stack values (lang,
+        runner, test, lint, build) when populating null/missing stack
+        fields
+
+      ## STEP 3 — Apply fixes in batches by category
+
+      Group error tokens by the recipe section in the taxonomy. Loop
+      through each category with a single small script when possible
+      (e.g., one bash for-loop that handles all `missing-scope-*.md`
+      tokens, another for `missing-stack-build-*.yaml`, etc.). This is
+      faster and more reliable than per-token tool calls.
+
+      ## STEP 4 — Verify before exiting
+
+      For each category you touched, run the verification command from
+      the taxonomy (e.g., `yq -e '.dod' file.yaml` for `missing-dod`
+      tokens). Don't claim success until verification passes for every
+      token you addressed.
+
+      ## Hard rules (also in the taxonomy, repeating here for clarity)
+
+      - DO NOT rewrite files from scratch — only surgical patches.
+      - DO NOT change SPRINT IDs or the number of sprints.
       - DO NOT touch .ai/spec_analysis.md or .ai/sprint_plan.md.
       - DO NOT modify project source files outside .ai/.
-      - Use `yq -i` for in-place YAML edits; use `sed` carefully or
-        write a small awk/python script for MD edits.
+      - Use `yq -i` for in-place YAML edits.
 
-      Verify before exiting: re-run the validate_output checks mentally
-      on each file you touched. If you can't fix everything in this
-      turn, fix what you can and STATUS:fail; the human escalation gate
-      will pick it up.
+      ## Turn budget awareness
+
+      You have 30 turns. If you find yourself spending turns searching
+      for "where does this error come from" — STOP. Re-read the
+      taxonomy. The token is the fix.
+
+      If you genuinely cannot fix something (e.g., a token shape not
+      covered in the taxonomy), STATUS:fail with a specific note about
+      which token blocked you. EscalateOutput will pick it up. Better
+      to escalate with a clear handoff than burn turns guessing.
 
   human EscalateOutput
     label: "Sprint output validation stuck — pick how to proceed"
