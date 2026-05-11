@@ -502,7 +502,7 @@ workflow IterRun
         printf 'all-tasks-done'
         exit 0
       fi
-      next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
+      next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1 || true)
       if [ -z "$next" ]; then
         printf 'all-tasks-done'
       else
@@ -514,7 +514,7 @@ workflow IterRun
     timeout: 5s
     command:
       set -euo pipefail
-      next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
+      next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1 || true)
       if [ -z "$next" ]; then
         printf 'no-pending-task'
         exit 1
@@ -1040,7 +1040,7 @@ workflow IterRun
     timeout: 5s
     command:
       set -euo pipefail
-      task_id=$(grep '|in_progress' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1)
+      task_id=$(grep '|in_progress' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1 || true)
       if [ -z "$task_id" ]; then
         printf 'no-in-progress-task'
         exit 1
