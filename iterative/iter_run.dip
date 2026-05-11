@@ -58,11 +58,14 @@ workflow IterRun
         printf 'no-roadmap'
         exit 0
       fi
-      # Find the first iteration section containing Status: pending
+      # Find the first iteration section containing Status: pending.
+      # Match any heading level (## or ###) and capture suffix variants like
+      # ITER-0001a or ITER-0001a-i so split/sub-iterations are not skipped.
       iter_id=$(awk '
-        /^### ITER-/ {
-          match($0, /ITER-[0-9]+/)
-          if (RSTART > 0) { cur = substr($0, RSTART, RLENGTH) }
+        /^##+ / {
+          if (match($0, /ITER-[0-9]+[a-z]*(-[ivx]+)?/)) {
+            cur = substr($0, RSTART, RLENGTH)
+          }
         }
         /\*\*Status:\*\* pending/ && cur != "" {
           print cur

@@ -45,7 +45,7 @@ workflow IterScope
         printf 'no-requirements'
         exit 0
       fi
-      if [ -f docs/iterations/roadmap.md ] && grep -q '## Walking skeleton' docs/iterations/roadmap.md; then
+      if [ -f docs/iterations/roadmap.md ] && grep -q '^### ITER-0000' docs/iterations/roadmap.md; then
         printf 'has-roadmap'
         exit 0
       fi
@@ -70,7 +70,7 @@ workflow IterScope
       Read and validate the existing roadmap at docs/iterations/roadmap.md.
 
       Check:
-      1. The roadmap has a "## Walking skeleton" section with ITER-0000 defined
+      1. The roadmap has a "### ITER-0000 — Walking skeleton" heading defining ITER-0000
       2. Every STORY-NNNN cited in the roadmap exists in docs/iterations/requirements/
       3. Each iteration section has **Stories:**, **Rationale:**, **Status:**, and **Impacted scenarios:** fields
       4. At least one JOURNEY-NNNN scenario is cited as the walking skeleton's journey scenario
@@ -471,7 +471,7 @@ workflow IterScope
 
       # Roadmap
 
-      ## Walking skeleton (ITER-0000)
+      ### ITER-0000 — Walking skeleton
 
       **Intent:** <one-line>
       **Design rationale:** <why>
@@ -509,7 +509,7 @@ workflow IterScope
         printf 'roadmap-invalid-file-missing'
         exit 0
       fi
-      if ! grep -q '## Walking skeleton' docs/iterations/roadmap.md; then
+      if ! grep -q '^### ITER-0000' docs/iterations/roadmap.md; then
         printf 'roadmap-invalid-missing-walking-skeleton-section'
         exit 0
       fi
