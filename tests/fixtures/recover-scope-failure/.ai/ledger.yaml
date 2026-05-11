@@ -1,0 +1,21 @@
+project:
+  name: "TestProject"
+  stack:
+    lang: "javascript"
+    runner: "npm"
+    test: "vitest"
+    lint: "eslint"
+    build: "null"
+  created_at: "2026-01-01T00:00:00Z"
+
+sprints:
+  - id: "001"
+    title: "Multi-Subsystem Sprint That Mixes Concerns"
+    status: in_progress
+    bootstrap: false
+    depends_on: []
+    complexity: high
+    created_at: "2026-01-01T00:00:00Z"
+    updated_at: "2026-01-01T00:00:00Z"
+    attempts: 2
+    total_cost: "0.00"

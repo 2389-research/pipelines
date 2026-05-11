@@ -3,3 +3,10 @@
 output.txt
 runs/
 .ai/
+# fixture .ai/ trees are part of the test surface — explicitly tracked
+!tests/fixtures/*/.ai
+!tests/fixtures/*/.ai/**
+# one-off scaffold from `tracker init`, not part of our pipelines
+build_product.dip
+# dipx bundles are build artifacts
+*.dipx

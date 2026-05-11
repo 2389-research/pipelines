@@ -1,0 +1,61 @@
+id: "001"
+title: "Multi-Subsystem Sprint That Mixes Concerns"
+status: in_progress
+bootstrap: false
+depends_on: []
+complexity: high
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist: []
+  sprints_must_be_complete: []
+
+artifacts:
+  creates:
+    - path: "src/auth/"
+      type: module
+    - path: "src/billing/"
+      type: module
+    - path: "src/reports/"
+      type: module
+    - path: "src/notifications/"
+      type: module
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "npx vitest run"
+      expect: exit_0
+
+dod:
+  - "Phone+OTP auth flow works end to end"
+  - "Email+password auth with bcrypt"
+  - "Subscription billing webhook handlers"
+  - "Stripe customer creation"
+  - "Daily aggregate reports cron"
+  - "Weekly cohort reports cron"
+  - "SMS notification dispatch"
+  - "Email notification dispatch via SES"
+  - "In-app notification feed"
+  - "Push notifications (iOS + Android)"
+  - "Admin dashboard for billing inspection"
+  - "Audit logs for all auth events"
+
+history:
+  attempts:
+    - date: "2026-01-01T01:00:00Z"
+      run_id: "20260101T010000Z"
+      outcome: fail
+      reason: "implementation_failed"
+      attempt: 1
+      started_at: "2026-01-01T00:00:00Z"
+    - date: "2026-01-01T02:30:00Z"
+      run_id: "20260101T023000Z"
+      outcome: fail
+      reason: "validation_failed_repeatedly"
+      attempt: 2
+      started_at: "2026-01-01T01:30:00Z"
