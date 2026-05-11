@@ -25,6 +25,9 @@ workflow SprintExecDr
 
       HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT create, modify, or delete anything. Do NOT call any tools. Your ONLY job is to acknowledge completion with a one-line response.
 
+  subgraph recover_sprint
+    ref: parts/recover_sprint.dip
+
   tool EnsureLedger
     label: "Ensure Ledger"
     timeout: 30s
@@ -651,167 +654,9 @@ workflow SprintExecDr
       rm -f .ai/current_attempt_started_at.txt .ai/current_attempt_number.txt
       printf 'completed-%s' "$target"
 
-  tool MarkFailed
-    label: "Mark Failed"
-    timeout: 30s
-    command:
-      set -eu
-      target=$(cat .ai/current_sprint_id.txt)
-      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      started_at=$(cat .ai/current_attempt_started_at.txt 2>/dev/null || printf '%s' "$now")
-      attempt_no=$(cat .ai/current_attempt_number.txt 2>/dev/null || printf '1')
-      run_id=$(date -u +%Y%m%dT%H%M%SZ)
-      yq -i "(.sprints[] | select(.id == \"$target\")).status = \"failed\" | (.sprints[] | select(.id == \"$target\")).updated_at = \"$now\"" .ai/ledger.yaml
-      sf=".ai/sprints/SPRINT-${target}.yaml"
-      if [ -f "$sf" ]; then
-        hist_type=$(yq '.history | type' "$sf" 2>/dev/null || printf 'null')
-        if [ "$hist_type" = "!!seq" ]; then
-          yq -i '.history = {"attempts": []}' "$sf"
-        elif [ "$hist_type" = "null" ] || [ "$hist_type" = "" ]; then
-          yq -i '.history.attempts = []' "$sf"
-        else
-          has_att=$(yq '.history.attempts | type' "$sf" 2>/dev/null || printf 'null')
-          if [ "$has_att" != "!!seq" ]; then
-            yq -i '.history.attempts = []' "$sf"
-          fi
-        fi
-        yq -i ".status = \"failed\" | .history.attempts += [{\"date\": \"$now\", \"run_id\": \"$run_id\", \"outcome\": \"fail\", \"reason\": \"pipeline_failed\", \"attempt\": $attempt_no, \"started_at\": \"$started_at\"}]" "$sf"
-      fi
-      rm -f .ai/current_attempt_started_at.txt .ai/current_attempt_number.txt
-      printf 'failed-%s' "$target"
-
   human HumanBootstrapGate
     label: "Bootstrap Failed — Human Intervention"
     mode: choice
-
-  agent RecoveryManager
-    label: "Recovery Manager"
-    model: gemini-3-flash-preview
-    provider: gemini
-    reasoning_effort: high
-    prompt:
-      You are the Recovery Manager for sprint execution. Your job is to perform root-cause analysis on a failed sprint and recommend a recovery strategy.
-
-      Read .ai/current_sprint_id.txt to get the sprint ID. Then read:
-      1. .ai/sprints/SPRINT-<id>.yaml — check history.attempts for prior failure patterns
-      2. .ai/sprints/SPRINT-<id>.md — the narrative description
-      3. .ai/managers/plan-journal.md — find PlanManager's entry for this sprint. Were its risk flags the cause?
-      4. .ai/ledger.yaml — check this sprint's attempt count and dependency sprint outcomes
-
-      ## Root Cause Analysis
-
-      Classify the failure into one of three categories:
-      - **Implementation failure:** The code was wrong but the sprint scope is sound. A retry with better implementation guidance could succeed.
-      - **Scope failure:** The sprint is too large, too vague, or mixes unrelated concerns. It needs to be broken into smaller sub-sprints via re-decomposition.
-      - **Dependency failure:** A prior sprint left gaps (missing APIs, incomplete types, broken tests) that make this sprint impossible as-written.
-
-      ## Signals for REDECOMPOSE
-
-      Recommend redecomposition when:
-      - The sprint has failed 2+ attempts with different root causes each time (scope is too broad)
-      - The sprint touches more than 3 subsystems
-      - The sprint DoD has more than 10 items
-      - Multiple reviewers flagged "sprint is too large" or "mixed concerns"
-
-      ## Output
-
-      Write a recovery analysis to .ai/sprints/SPRINT-<id>-recovery-analysis.md with:
-      - Root cause category (implementation / scope / dependency)
-      - Specific failure detail
-      - Whether PlanManager's risk flags predicted this
-      - Recommendation: RETRY, REDECOMPOSE, or ABANDON
-      - If REDECOMPOSE: write .ai/redecompose-request.yaml with this format:
-        mode: redecompose
-        failed_sprint_id: "<id>"
-        failed_sprint_title: "<title>"
-        scope: "<original scope from sprint YAML>"
-        failure_reason: "<your root cause analysis>"
-        recovery_recommendation: "<how to split>"
-        depends_on_from_original: [<dep list from sprint YAML>]
-        original_dependents: [<dependents list from sprint YAML>]
-
-      Then append a section to .ai/managers/recovery-journal.md using this format:
-
-      ## Sprint <id> — <title>
-      **Date:** <current ISO timestamp>
-      **Root cause:** implementation | scope | dependency
-      **Failure detail:** <specific description>
-      **PlanManager alignment:** <did risk flags predict this?>
-      **Recommendation:** RETRY | REDECOMPOSE | ABANDON
-      **Recovery notes:** <what should change>
-
-      ## ALLOWED FILE OUTPUTS (exhaustive — no others permitted)
-
-      You may write to exactly these three paths, and nothing else:
-      1. `.ai/sprints/SPRINT-<id>-recovery-analysis.md` — required
-      2. `.ai/redecompose-request.yaml` — only if recommendation is REDECOMPOSE
-      3. `.ai/managers/recovery-journal.md` — append only, never overwrite
-
-      After those writes, STOP. Do not run any further tools.
-
-      ## EXPLICITLY FORBIDDEN — even if it seems helpful
-
-      - Do NOT create new SPRINT-XX{A,B,C,...}.yaml or .md files. The pipeline's `redecompose_sprint` step will create them via `splice_ledger`.
-      - Do NOT modify `.ai/ledger.yaml`. The `splice_ledger` tool will mark statuses, write `superseded_by`, and rewrite dependents — and it does this correctly. If you do it yourself, you create conflicts that fail the run.
-      - Do NOT modify any existing `.ai/sprints/SPRINT-*.yaml` or `.md` files (besides the recovery-analysis).
-      - Do NOT touch project source files. You are a planner, not an implementer.
-      - Do NOT invoke `git`, `yq -i`, `npm`, `node`, or any state-mutating shell command beyond writing the three allowed paths.
-
-      The pipeline has dedicated tools for every state mutation downstream of you. Trust them. Your job ends when the three allowed files are written.
-
-      A boundary-enforcement tool runs after you and rolls back any forbidden writes.
-
-  tool SnapshotForRecovery
-    label: "Snapshot ledger + sprint files before RecoveryManager"
-    timeout: 10s
-    command:
-      set -eu
-      snap_dir=".ai/.recovery-snapshot"
-      mkdir -p "$snap_dir"
-      cp .ai/ledger.yaml "$snap_dir/ledger.yaml"
-      ls .ai/sprints/ 2>/dev/null | sort > "$snap_dir/sprints-before.list" || true
-      printf 'recovery-snapshot-taken'
-
-  tool EnforceRecoveryBoundary
-    label: "Enforce RecoveryManager boundary — roll back forbidden writes"
-    timeout: 15s
-    command:
-      set -eu
-      snap_dir=".ai/.recovery-snapshot"
-      if [ ! -d "$snap_dir" ] || [ ! -f "$snap_dir/ledger.yaml" ]; then
-        printf 'no-snapshot-skipping-enforcement'
-        exit 0
-      fi
-      violations=""
-      # Roll back ledger if it changed
-      if ! cmp -s "$snap_dir/ledger.yaml" .ai/ledger.yaml 2>/dev/null; then
-        cp "$snap_dir/ledger.yaml" .ai/ledger.yaml
-        violations="$violations ledger.yaml"
-      fi
-      # Detect and remove any newly created sprint files except *-recovery-analysis.md
-      ls .ai/sprints/ 2>/dev/null | sort > "$snap_dir/sprints-after.list" || true
-      new_files=$(comm -13 "$snap_dir/sprints-before.list" "$snap_dir/sprints-after.list" 2>/dev/null | grep -v -- '-recovery-analysis\.md$' || true)
-      if [ -n "$new_files" ]; then
-        for f in $new_files; do
-          rm -f ".ai/sprints/$f"
-          violations="$violations $f"
-        done
-      fi
-      rm -rf "$snap_dir"
-      if [ -n "$violations" ]; then
-        printf 'recovery-boundary-violated-rolled-back:%s' "$violations" | tr '\n' ' '
-        # Emit success — we rolled back, the pipeline can continue normally
-        exit 0
-      fi
-      printf 'recovery-boundary-clean'
-
-  agent FailureSummary
-    label: "Failure Summary"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    reasoning_effort: high
-    prompt:
-      Summarize why sprint execution failed, what remains unresolved, and concrete next steps for recovery.
 
   parallel ReviewParallel -> ReviewClaude, ReviewCodex, ReviewGemini
 
@@ -939,7 +784,7 @@ workflow SprintExecDr
     auto_status: true
     max_retries: 3
     retry_target: ImplementSprint
-    fallback_target: MarkFailed
+    fallback_target: recover_sprint
     prompt:
       Synthesize all reviews and critiques into one verdict.
 
@@ -1017,21 +862,21 @@ workflow SprintExecDr
     SetCurrentSprint -> ReadSprint  when ctx.tool_stdout startswith current-  label: sprint_found
     SetCurrentSprint -> Exit        when ctx.tool_stdout = all-done           label: all_done
     SetCurrentSprint -> Exit
-    ReadSprint -> MarkFailed   when ctx.outcome = fail  label: read_failed
+    ReadSprint -> recover_sprint   when ctx.outcome = fail  label: read_failed
     ReadSprint -> PlanManager
     PlanManager -> CheckBootstrap  when ctx.outcome = success  label: go
-    PlanManager -> MarkFailed      when ctx.outcome = fail     label: hold
-    PlanManager -> MarkFailed
+    PlanManager -> recover_sprint      when ctx.outcome = fail     label: hold
+    PlanManager -> recover_sprint
     CheckBootstrap -> MarkInProgress
     MarkInProgress -> Exit             when ctx.tool_stdout startswith already-completed  label: skip_completed
     MarkInProgress -> SnapshotLedger
     SnapshotLedger -> ImplementSprint
     ImplementSprint -> CheckLedgerIntegrity  when ctx.outcome = success  label: impl_done
     ImplementSprint -> ResumeCheck           when ctx.outcome = fail     label: impl_interrupted
-    ImplementSprint -> MarkFailed
+    ImplementSprint -> recover_sprint
     CheckLedgerIntegrity -> ValidateDispatch  when ctx.outcome = success  label: ledger_ok
-    CheckLedgerIntegrity -> MarkFailed        when ctx.outcome = fail     label: ledger_tampered
-    CheckLedgerIntegrity -> MarkFailed
+    CheckLedgerIntegrity -> recover_sprint        when ctx.outcome = fail     label: ledger_tampered
+    CheckLedgerIntegrity -> recover_sprint
     ValidateDispatch -> ValidateScript  when ctx.tool_stdout = script  label: script_path
     ValidateDispatch -> ValidateBuild   when ctx.tool_stdout = cmd     label: cmd_path
     ValidateDispatch -> ValidateBuild   when ctx.tool_stdout = sct     label: sct_fallback_to_cmd
@@ -1040,28 +885,28 @@ workflow SprintExecDr
     ValidateScript -> RewriteValidation   when ctx.tool_stdout contains rewrite-validation   label: rewrite
     ValidateScript -> CommitSprintWork    when ctx.outcome = success  label: validated_via_script
     ValidateScript -> ImplementSprint     when ctx.outcome = fail     label: fix_script_validation  restart: true
-    ValidateScript -> MarkFailed
+    ValidateScript -> recover_sprint
     ResumeCheck -> ImplementSprint          when ctx.tool_stdout startswith resume-            label: resume              restart: true
     ResumeCheck -> CheckBootstrapOnFailure  when ctx.tool_stdout startswith max-resumes-       label: max_exhausted
-    ResumeCheck -> MarkFailed               when ctx.outcome = fail                            label: resume_failed
-    ResumeCheck -> MarkFailed
+    ResumeCheck -> recover_sprint               when ctx.outcome = fail                            label: resume_failed
+    ResumeCheck -> recover_sprint
     CheckBootstrapOnFailure -> HumanBootstrapGate  when ctx.tool_stdout = bootstrap-failed  label: bootstrap_gate
-    CheckBootstrapOnFailure -> MarkFailed         when ctx.tool_stdout = normal-failed     label: normal_exit
-    CheckBootstrapOnFailure -> MarkFailed
+    CheckBootstrapOnFailure -> recover_sprint         when ctx.tool_stdout = normal-failed     label: normal_exit
+    CheckBootstrapOnFailure -> recover_sprint
     HumanBootstrapGate -> SnapshotLedger  label: "[S] Retry"  restart: true
-    HumanBootstrapGate -> MarkFailed      label: "[A] Abort"
+    HumanBootstrapGate -> recover_sprint      label: "[A] Abort"
     ValidateBuild -> EscalateValidation  when ctx.tool_stdout contains escalate-validation  label: escalate
     ValidateBuild -> RewriteValidation   when ctx.tool_stdout contains rewrite-validation   label: rewrite
     ValidateBuild -> CommitSprintWork    when ctx.outcome = success  label: validated
     ValidateBuild -> ImplementSprint     when ctx.outcome = fail     label: fix_validation  restart: true
-    ValidateBuild -> MarkFailed
+    ValidateBuild -> recover_sprint
     EscalateValidation -> ValidateBuild      label: "retry"    restart: true
     EscalateValidation -> RewriteValidation  label: "rewrite"  restart: true
     EscalateValidation -> CommitSprintWork   label: "skip"
-    EscalateValidation -> MarkFailed         label: "abort"
+    EscalateValidation -> recover_sprint         label: "abort"
     RewriteValidation -> ValidateDispatch    when ctx.outcome = success  label: rewrote_validation  restart: true
     RewriteValidation -> EscalateValidation  when ctx.outcome = fail     label: rewrite_failed
-    CommitSprintWork -> MarkFailed   when ctx.outcome = fail  label: commit_failed
+    CommitSprintWork -> recover_sprint   when ctx.outcome = fail  label: commit_failed
     CommitSprintWork -> CheckBootstrapSkip
     CheckBootstrapSkip -> ValidateDoD      when ctx.tool_stdout = bootstrap-skip-reviews  label: bootstrap_done
     CheckBootstrapSkip -> ReviewParallel   when ctx.tool_stdout = normal-reviews          label: normal_review
@@ -1086,22 +931,17 @@ workflow SprintExecDr
     CritiqueGeminiOnClaude -> CritiquesJoin
     CritiqueGeminiOnCodex -> CritiquesJoin
     CritiquesJoin -> ReviewManager
-    ReviewManager -> MarkFailed   when ctx.outcome = fail  label: review_mgr_failed
+    ReviewManager -> recover_sprint   when ctx.outcome = fail  label: review_mgr_failed
     ReviewManager -> ReviewAnalysis
     ReviewAnalysis -> ValidateDoD       when ctx.outcome = success  label: pass
-    ReviewAnalysis -> MarkFailed        when ctx.outcome = fail     label: fail
-    ReviewAnalysis -> MarkFailed
+    ReviewAnalysis -> recover_sprint        when ctx.outcome = fail     label: fail
+    ReviewAnalysis -> recover_sprint
     ValidateDoD -> CompleteSprint       when ctx.tool_stdout = dod-pass           label: dod_verified
     ValidateDoD -> ImplementSprint      when ctx.tool_stdout startswith dod-fail label: dod_rework  restart: true
     ValidateDoD -> CompleteSprint
     CompleteSprint -> Exit              when ctx.outcome = success  label: done
-    CompleteSprint -> MarkFailed         when ctx.outcome = fail     label: complete_failed
+    CompleteSprint -> recover_sprint         when ctx.outcome = fail     label: complete_failed
     CompleteSprint -> Exit
-    MarkFailed -> SnapshotForRecovery
-    SnapshotForRecovery -> RecoveryManager
-    RecoveryManager -> Exit                  when ctx.outcome = fail  label: recovery_failed
-    RecoveryManager -> EnforceRecoveryBoundary
-    EnforceRecoveryBoundary -> FailureSummary
-    FailureSummary -> Exit              when ctx.outcome = success
-    FailureSummary -> Exit              when ctx.outcome = fail  label: report_failed_exit
-    FailureSummary -> Exit
+    recover_sprint -> Exit              when ctx.outcome = success  label: recovery_complete
+    recover_sprint -> Exit              when ctx.outcome = fail     label: recovery_failed
+    recover_sprint -> Exit

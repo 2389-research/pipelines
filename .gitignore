@@ -10,3 +10,4 @@ runs/
 build_product.dip
 # dipx bundles are build artifacts
 *.dipx
+dist/
