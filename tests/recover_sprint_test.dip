@@ -1,0 +1,79 @@
+# ABOUTME: Isolated test for parts/recover_sprint.dip — exercises the recovery chain against a fixture.
+# ABOUTME: Run via scripts/test_recover_sprint.sh which sets up a clean workspace + invokes tracker.
+workflow TestRecoverSprint
+  goal: "Verify parts/recover_sprint.dip produces the expected artifacts (recovery-analysis, recovery-journal entry, redecompose-request) without violating its boundaries."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 3
+    fidelity: summary:medium
+
+  agent Start
+    label: Start
+    max_turns: 1
+    prompt:
+      Acknowledge the recover_sprint test is starting. HARD CONSTRAINT: do not read or write any files, do not call any tools.
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    prompt:
+      Acknowledge the test is complete. HARD CONSTRAINT: do not read or write any files, do not call any tools.
+
+  subgraph recover_sprint
+    ref: ../parts/recover_sprint.dip
+
+  tool AssertRecoveryArtifacts
+    label: "Assert recovery artifacts exist"
+    timeout: 10s
+    command:
+      target=$(cat .ai/current_sprint_id.txt 2>/dev/null || echo "")
+      if [ -z "$target" ]; then
+        echo "FAIL: .ai/current_sprint_id.txt missing or empty" >&2
+        exit 1
+      fi
+
+      analysis=".ai/sprints/SPRINT-${target}-recovery-analysis.md"
+      if [ ! -s "$analysis" ]; then
+        echo "FAIL: recovery-analysis missing at $analysis" >&2
+        exit 1
+      fi
+      if ! grep -qiE "(implementation|scope|dependency)" "$analysis"; then
+        echo "FAIL: recovery-analysis at $analysis is missing root-cause classification" >&2
+        exit 1
+      fi
+      if ! grep -qiE "(retry|redecompose|abandon)" "$analysis"; then
+        echo "FAIL: recovery-analysis at $analysis is missing recommendation" >&2
+        exit 1
+      fi
+
+      journal=".ai/managers/recovery-journal.md"
+      if [ ! -s "$journal" ]; then
+        echo "FAIL: recovery-journal missing at $journal" >&2
+        exit 1
+      fi
+      if ! grep -q "Sprint ${target}" "$journal"; then
+        echo "FAIL: recovery-journal missing entry for sprint $target" >&2
+        exit 1
+      fi
+
+      ledger_status=$(yq ".sprints[] | select(.id == \"$target\") | .status" .ai/ledger.yaml 2>/dev/null || echo "")
+      if [ "$ledger_status" != "failed" ]; then
+        echo "FAIL: ledger sprint $target status is '$ledger_status', expected 'failed'" >&2
+        exit 1
+      fi
+
+      echo "PASS: recovery-analysis present, journal appended, ledger.status=failed"
+      printf 'test-passed'
+
+  edges
+    Start -> recover_sprint                      when ctx.outcome = success
+    Start -> Exit                                when ctx.outcome = fail  label: start_failed
+    Start -> recover_sprint
+    recover_sprint -> AssertRecoveryArtifacts    when ctx.outcome = success
+    recover_sprint -> Exit                       when ctx.outcome = fail  label: subgraph_failed
+    recover_sprint -> AssertRecoveryArtifacts
+    AssertRecoveryArtifacts -> Exit              when ctx.outcome = success  label: assert_pass
+    AssertRecoveryArtifacts -> Exit              when ctx.outcome = fail     label: assert_fail
+    AssertRecoveryArtifacts -> Exit
