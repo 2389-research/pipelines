@@ -1,0 +1,69 @@
+id: "000"
+title: "Project Scaffold & Toolchain"
+status: completed
+bootstrap: true
+complexity: low
+depends_on: []
+dependents: ["001", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 001 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist: []
+  sprints_must_be_complete: []
+artifacts:
+  creates:
+    - path: "package.json"
+      type: config
+    - path: ".eslintrc"
+      type: config
+    - path: "jest.config.*"
+      type: module
+    - path: "Makefile"
+      type: config
+    - path: ".github/workflows/ci.yml"
+      type: config
+    - path: "README.md"
+      type: doc
+    - path: "docs/adr/001-tech-stack.md"
+      type: doc
+  modifies: []
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "`make build` (or equivalent) completes without errors"
+  - "`make lint` passes with zero warnings on the empty project"
+  - "`make test` runs the test harness successfully (0 tests, 0 failures)"
+  - "CI config file exists and defines build + lint + test steps"
+  - "README documents local setup steps, chosen stack, and available commands"
+  - "ADR documents language, framework, database, test framework, and linter choices with rationale"
+history:
+  attempts:
+    - date: "2026-05-11T18:04:44Z"
+      run_id: 20260511T180444Z
+      outcome: success
+      reason: completed
+      attempt: 1
+      started_at: "2026-05-11T18:02:12Z"
+    - date: "2026-05-11T19:04:58Z"
+      run_id: 20260511T190458Z
+      outcome: success
+      reason: completed
+      attempt: 1
+      started_at: "2026-05-11T19:03:01Z"

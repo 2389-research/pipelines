@@ -1,0 +1,79 @@
+id: "022"
+title: "Volunteer Dashboard, Post-Shift SMS & Engagement"
+status: planned
+bootstrap: false
+complexity: high
+
+depends_on: ["009", "010", "014", "017", "018"]
+dependents: ["023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 023 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/sms/provider.*"
+    - "src/services/qr_code.*"
+    - "src/services/registration_pipeline.*"
+    - "src/ui/staff/RunOfShow.*"
+    - "src/integrations/renxt/client.*"
+  sprints_must_be_complete: ["009", "010", "014", "017", "018"]
+
+artifacts:
+  creates:
+    - path: "src/ui/volunteer/Dashboard.*"
+      type: ui
+    - path: "src/ui/volunteer/ImpactCard.*"
+      type: ui
+    - path: "src/sms/templates/impact_card.*"
+      type: ui
+    - path: "src/sms/templates/next_commitment.*"
+      type: ui
+    - path: "src/sms/templates/open_opportunity.*"
+      type: ui
+    - path: "src/sms/templates/milestone.*"
+      type: ui
+    - path: "src/services/impact_data.*"
+      type: module
+    - path: "src/services/social_share.*"
+      type: module
+    - path: "src/ui/staff/Reports.*"
+      type: ui
+    - path: "tests/services/impact_data.test.*"
+      type: test
+    - path: "tests/sms/post_shift.test.*"
+      type: test
+    - path: "tests/ui/volunteer/dashboard.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Volunteer dashboard shows hours volunteered, shift history, upcoming shifts, and impact stats"
+  - "Volunteer dashboard is accessible via integrated navigation (same experience as discovery)"
+  - "Post-shift impact SMS fires immediately after shift ends with personalized impact data and social sharing link"
+  - "Next-commitment SMS fires ~15 minutes after impact card with exactly 3 upcoming opportunities"
+  - "Open-opportunity alerts send to opted-in volunteers when shifts need filling (proactive push per FR22)"
+  - "Milestone celebration SMS fires at configured hour milestones"
+  - "Staff reporting hub provides roster/search, registration reports, check-in reports, and waiver/orientation status with CSV export"
+  - "Shareable impact card page renders with volunteer data and is accessible by URL"
+  - "`make test` passes"
+
+history:
+  attempts: []

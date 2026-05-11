@@ -1,0 +1,68 @@
+id: "006"
+title: "Conversational Matching & Recommendation Engine"
+status: failed
+bootstrap: false
+complexity: medium
+
+depends_on: ["005"]
+dependents: []
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 014, 018, 023 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+  sprints_must_be_complete: ["005"]
+
+artifacts:
+  creates:
+    - path: "src/services/conversation_engine.*"
+      type: module
+    - path: "src/services/recommendation.*"
+      type: module
+    - path: "src/api/conversation.*"
+      type: api
+    - path: "src/ui/conversational/RecommendationCards.*"
+      type: ui
+    - path: "tests/services/conversation_engine.test.*"
+      type: test
+    - path: "tests/services/recommendation.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Conversation engine asks preference questions (activity type, time, location, solo/group) and maps answers to matching shifts"
+  - "Conversation handles nonlinear input (integration test: \"I have a group of 20 on Saturday\" triggers appropriate follow-up without requiring ordered questions)"
+  - "Recommendation engine returns matching shifts ranked by relevance to stated preferences"
+  - "Returning volunteer with history receives personalized suggestions (preferred locations/shift types) when authenticated"
+  - "User can switch to browse view at any point during conversation and return without losing answers"
+  - "Unit tests for recommendation matching cover at least 5 distinct preference scenarios"
+  - "Integration test: full conversation flow from first question to shift recommendation completes successfully"
+  - "`make test` passes"
+
+history:
+  attempts:
+    - date: "2026-05-11T18:44:39Z"
+      run_id: 20260511T184439Z
+      outcome: fail
+      reason: pipeline_failed
+      attempt: 1
+      started_at: "2026-05-11T18:20:14Z"

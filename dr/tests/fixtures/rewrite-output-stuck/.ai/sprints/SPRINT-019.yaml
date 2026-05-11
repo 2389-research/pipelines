@@ -1,0 +1,58 @@
+id: "019"
+title: "RE NXT Activity Sync & Batch Export Fallback"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["018"]
+dependents: ["023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: ["renxt"]
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 023 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/integrations/renxt/client.*"
+  sprints_must_be_complete: ["018"]
+
+artifacts:
+  creates:
+    - path: "src/integrations/renxt/sync.*"
+      type: module
+    - path: "src/integrations/renxt/batch_export.*"
+      type: module
+    - path: "src/services/sync_scheduler.*"
+      type: module
+    - path: "tests/integrations/renxt/sync.test.*"
+      type: test
+    - path: "tests/integrations/renxt/batch_export.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Volunteer activity events (registration, check-in, hours) enqueue sync jobs to RE NXT (integration test)"
+  - "Sync job retries on transient failure with configurable backoff (test using fake connector)"
+  - "Batch export job produces ImportOmatic-formatted files on a configurable schedule (golden-file test)"
+  - "Exception reporting remains available even when batch mode is active (test)"
+  - "Automated data export to RE NXT runs on schedule without manual intervention"
+  - "`make test` passes"
+
+history:
+  attempts: []

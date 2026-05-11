@@ -1,0 +1,82 @@
+id: "023"
+title: "Integration Verification & Launch Readiness"
+status: planned
+bootstrap: false
+complexity: low
+depends_on: ["000", "001", "002", "003", "004", "005", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021", "022", "024", "025", "026", "026"]
+dependents: []
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "package.json"
+    - "docker-compose.yml"
+    - "src/api/hello.*"
+    - "db/migrations/003_core_schema.*"
+    - "src/auth/phone_verification.*"
+    - "src/ui/conversational/ChatShell.*"
+    - "src/services/conversation_engine.*"
+    - "db/migrations/007_waivers.*"
+    - "db/migrations/008_orientation.*"
+    - "src/sms/provider.*"
+    - "src/services/qr_code.*"
+    - "db/migrations/011_groups.*"
+    - "src/ui/checkin/GroupCheckin.*"
+    - "db/migrations/013_stations.*"
+    - "src/services/registration_pipeline.*"
+    - "src/services/auto_assignment.*"
+    - "src/ui/staff/AssignmentBoard.*"
+    - "src/ui/staff/RunOfShow.*"
+    - "src/integrations/renxt/client.*"
+    - "src/integrations/renxt/sync.*"
+    - "src/api/skills_intake.*"
+    - "src/api/court_snap.*"
+    - "src/ui/volunteer/Dashboard.*"
+    - "src/services/recommendation.*"
+  sprints_must_be_complete: ["000", "001", "002", "003", "004", "005", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021", "022", "024", "025", "026"]
+artifacts:
+  creates:
+    - path: "tests/e2e/big_test.test.*"
+      type: test
+    - path: "tests/e2e/smoke.test.*"
+      type: test
+    - path: "tests/e2e/sms_sequence.test.*"
+      type: test
+    - path: "docs/pilot_readiness.md"
+      type: doc
+  modifies: []
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+    - cmd: "make e2e"
+      expect: exit_0
+    - cmd: "curl http://localhost:$PORT/health"
+      expect: exit_0
+dod:
+  - "Big Test scenario passes: 9 volunteer profiles (new individual, returning individual, group leader with 15 members, accessibility-needs volunteer, court-required volunteer, SNAP volunteer, skills-based applicant, RE NXT donor match, RE NXT low-confidence match) complete full pipeline"
+  - "Assignment test: mixed-constraint volunteer set produces valid auto-assignment plan; staff override does not break constraints"
+  - "SMS sequence test: full text sequence fires correctly (confirmation → reminder → post-shift impact → next-commitment prompt)"
+  - "`make build` succeeds"
+  - "`make lint` passes with zero warnings"
+  - "`make test` passes with zero failures"
+  - "`make e2e` passes with zero failures"
+  - "Application starts and serves traffic (health check returns 200, UI loads, API responds)"
+  - "System is validated at single pilot location (all flows tested against one location's data)"
+  - "No regressions from any prior sprint"
+history:
+  attempts: []

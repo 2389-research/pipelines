@@ -1,0 +1,57 @@
+id: "018"
+title: "RE NXT Integration & Donor Matching"
+status: planned
+bootstrap: false
+complexity: high
+depends_on: ["004", "005", "026", "026"]
+dependents: ["019", "022", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: ["renxt"]
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 019 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "src/auth/phone_verification.*"
+    - "src/ui/conversational/ChatShell.*"
+    - "src/services/conversation_engine.*"
+  sprints_must_be_complete: ["004", "005", "026"]
+artifacts:
+  creates:
+    - path: "src/integrations/renxt/client.*"
+      type: module
+    - path: "src/integrations/renxt/matcher.*"
+      type: module
+    - path: "src/services/donor_personalization.*"
+      type: module
+    - path: "src/ui/staff/ExceptionReport.*"
+      type: ui
+    - path: "src/api/renxt.*"
+      type: api
+    - path: "tests/integrations/renxt/matcher.test.*"
+      type: test
+    - path: "tests/services/donor_personalization.test.*"
+      type: test
+  modifies: []
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "On signup/login, system queries RE NXT for matching records by email and phone (integration test with mocked RE NXT)"
+  - "Records with ≥90% confidence are auto-linked; <90% are not (unit test with at least 5 match/no-match scenarios)"
+  - "Linked volunteer records are tagged with donor status, giving level, and corporate affiliation"
+  - "Conversational flow displays donor acknowledgement greeting when an early match is found (integration test verifying the UI message appears)"
+  - "Sub-90% matches surface in staff exception report with confidence scores, reasons, and candidate details"
+  - "Staff can confirm, reject, or merge exception matches via the UI with audit logging"
+  - "`make test` passes"
+history:
+  attempts: []

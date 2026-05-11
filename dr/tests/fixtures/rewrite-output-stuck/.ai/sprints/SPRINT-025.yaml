@@ -1,0 +1,58 @@
+id: "025"
+title: "Recommendation Engine, Personalisation & UI"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["024"]
+dependents: ["026"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not modify src/services/conversation_engine.js state machine logic"
+    - "do not implement nonlinear/adaptive slot-filling logic"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/services/conversation_engine.js"
+    - "src/api/conversation.js"
+  sprints_must_be_complete: ["024"]
+
+artifacts:
+  creates:
+    - path: "src/services/recommendation.js"
+      type: module
+    - path: "src/ui/conversational/RecommendationCards.js"
+      type: ui
+    - path: "tests/services/recommendation.test.js"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Recommendation module exposes a `rankShifts(preferences, shifts)` function that scores and returns shifts sorted by relevance to the preference object"
+  - "Ranking algorithm considers all four preference dimensions (activity type, time, location, group size) when scoring"
+  - "Authenticated path: when volunteer history is provided, `rankShifts` merges preferred locations and past shift types into scoring for personalised results (FR15)"
+  - "RecommendationCards UI component renders a ranked list of recommended shifts from the recommendation service output"
+  - "RecommendationCards includes a browse-view handoff affordance that preserves the current preference state when switching modes"
+  - "Unit tests cover at least 5 distinct preference scenarios including one authenticated-personalisation scenario"
+  - "Integration test: full linear conversation flow (via conversation engine) through to ranked shift recommendation completes successfully"
+  - "`make test` passes"
+
+history:
+  attempts: []

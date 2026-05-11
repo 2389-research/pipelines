@@ -1,0 +1,61 @@
+id: "002"
+title: "Hello World End-to-End Proof"
+status: completed
+bootstrap: true
+complexity: low
+depends_on: ["001"]
+dependents: ["003", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 003 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "docker-compose.yml"
+  sprints_must_be_complete: ["001"]
+artifacts:
+  creates:
+    - path: "src/api/hello.*"
+      type: api
+    - path: "db/migrations/002_hello.*"
+      type: migration
+    - path: "src/ui/HelloPage.*"
+      type: ui
+    - path: "tests/e2e/hello.test.*"
+      type: test
+  modifies: []
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "Sample API endpoint reads from and writes to the database"
+  - "Sample UI page renders in a browser and calls the API endpoint"
+  - "One passing integration test exercises the full stack: HTTP request → API → DB → response assertion"
+  - "`make test` passes including the new integration test"
+  - "`make build` produces a runnable artifact (server starts and serves the UI page)"
+history:
+  attempts:
+    - date: "2026-05-11T18:18:14Z"
+      run_id: 20260511T181814Z
+      outcome: success
+      reason: completed
+      attempt: 1
+      started_at: "2026-05-11T18:15:10Z"
+    - date: "2026-05-11T19:10:56Z"
+      run_id: 20260511T191056Z
+      outcome: success
+      reason: completed
+      attempt: 1
+      started_at: "2026-05-11T19:09:39Z"

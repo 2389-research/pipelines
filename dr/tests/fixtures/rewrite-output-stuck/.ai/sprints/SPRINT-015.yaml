@@ -1,0 +1,61 @@
+id: "015"
+title: "Auto-Assignment Engine"
+status: planned
+bootstrap: false
+complexity: high
+
+depends_on: ["011", "013"]
+dependents: ["016", "017", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 016 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "db/migrations/011_groups.*"
+    - "db/migrations/013_stations.*"
+  sprints_must_be_complete: ["011", "013"]
+
+artifacts:
+  creates:
+    - path: "src/services/auto_assignment.*"
+      type: module
+    - path: "src/models/assignment.*"
+      type: model
+    - path: "src/api/assignments.*"
+      type: api
+    - path: "tests/services/auto_assignment.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Algorithm generates a draft assignment plan given registered volunteers and station configuration"
+  - "Group cohesion: all members of a group are assigned to the same station (test with 3+ groups)"
+  - "Accessibility: volunteers with accessibility needs are assigned only to compatible stations (test with mixed accessibility)"
+  - "Capacity: no station exceeds its maximum capacity (test with over-subscription scenario)"
+  - "Minimum staffing: under-filled stations are prioritized before over-staffing any station (test)"
+  - "Balancing: volunteers are distributed as evenly as practical after hard constraints are met (test)"
+  - "Algorithm produces a valid partial plan and flags violations when constraints are unsatisfiable (graceful degradation test)"
+  - "Generated plan is flagged as \"draft\" requiring explicit staff approval to publish"
+  - "Integration test: generate assignment for 30+ volunteers across 5+ stations with mixed constraints passes"
+  - "`make test` passes"
+
+history:
+  attempts: []

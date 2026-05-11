@@ -1,0 +1,62 @@
+id: "008"
+title: "Orientation Tracking"
+status: planned
+bootstrap: false
+complexity: low
+
+depends_on: ["005"]
+dependents: ["010", "014", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 010 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+  sprints_must_be_complete: ["005"]
+
+artifacts:
+  creates:
+    - path: "db/migrations/008_orientation.*"
+      type: migration
+    - path: "src/models/orientation.*"
+      type: model
+    - path: "src/ui/orientation/VideoPlayer.*"
+      type: ui
+    - path: "src/api/orientation.*"
+      type: api
+    - path: "src/services/orientation.*"
+      type: module
+    - path: "tests/api/orientation.test.*"
+      type: test
+    - path: "tests/services/orientation.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Orientation video renders in the conversational UI with a tracked player"
+  - "Completion is recorded only after verified viewing threshold, not on link click alone (unit test)"
+  - "Orientation completion status is stored on the volunteer record and queryable via API"
+  - "Staff can mark in-person orientation as completed for a volunteer via staff-authenticated API endpoint"
+  - "Both digital and staff-led completion paths set the same orientation status flag"
+  - "`make test` passes with orientation unit and integration tests"
+
+history:
+  attempts: []

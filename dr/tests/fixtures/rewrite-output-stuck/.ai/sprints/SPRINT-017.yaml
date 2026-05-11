@@ -1,0 +1,62 @@
+id: "017"
+title: "Staff Operations Dashboard (Run of Show & Weekly Planning)"
+status: planned
+bootstrap: false
+complexity: high
+
+depends_on: ["010", "015", "016"]
+dependents: ["020", "021", "022", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 020 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/services/qr_code.*"
+    - "src/services/auto_assignment.*"
+    - "src/ui/staff/AssignmentBoard.*"
+  sprints_must_be_complete: ["010", "015", "016"]
+
+artifacts:
+  creates:
+    - path: "src/ui/staff/RunOfShow.*"
+      type: ui
+    - path: "src/ui/staff/WeeklyPlanning.*"
+      type: ui
+    - path: "src/api/operations.*"
+      type: api
+    - path: "src/services/export.*"
+      type: module
+    - path: "tests/ui/staff/run_of_show.test.*"
+      type: test
+    - path: "tests/api/operations.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Run-of-show view displays all shifts for a day with attendee counts, assignment status, and flags per shift"
+  - "Each staff member sees only their assigned location/shifts; operations staff sees all locations (role-based test for both cases)"
+  - "Weekly planning view shows 7-day aggregated view with registrations, staffing gaps, and attention-needed flags"
+  - "Shifts with registrations below minimum staffing are highlighted in both views"
+  - "CSV export produces valid files for run-of-show and weekly planning datasets (golden-file test)"
+  - "`make test` passes"
+
+history:
+  attempts: []

@@ -1,0 +1,62 @@
+id: "012"
+title: "Group Check-In, On-Site Member Capture & Donor Flags"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["010", "011"]
+dependents: ["023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 023 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/services/qr_code.*"
+    - "db/migrations/011_groups.*"
+  sprints_must_be_complete: ["010", "011"]
+
+artifacts:
+  creates:
+    - path: "src/ui/checkin/GroupCheckin.*"
+      type: ui
+    - path: "src/ui/checkin/MemberCapture.*"
+      type: ui
+    - path: "src/services/donor_flag.*"
+      type: module
+    - path: "src/ui/checkin/DonorBadge.*"
+      type: ui
+    - path: "tests/ui/checkin/group_checkin.test.*"
+      type: test
+    - path: "tests/services/donor_flag.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Group leader QR scan initiates group check-in flow showing registered group size"
+  - "Leader confirms or adjusts headcount at check-in"
+  - "On-site capture form collects name, phone, email for each member not pre-registered"
+  - "Captured group members are created as canonical Volunteer records linked to their group (not orphaned — test verifies record exists in volunteers table)"
+  - "Group member waiver signing is prompted during on-site capture for members without completed waivers"
+  - "Donor/corporate-partner flag appears to staff for volunteers with donor_status populated on their record (test with seeded donor data; live RE NXT population in Sprint 018 — staff-facing only, NOT visible to volunteer — authorization test)"
+  - "`make test` passes"
+
+history:
+  attempts: []

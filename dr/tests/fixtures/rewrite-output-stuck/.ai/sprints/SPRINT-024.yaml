@@ -1,0 +1,57 @@
+id: "024"
+title: "Core Conversational Engine & API"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["005"]
+dependents: ["025"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement recommendation ranking, personalisation, or UI cards"
+    - "do not implement nonlinear/adaptive slot-filling logic"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+  sprints_must_be_complete: ["005"]
+
+artifacts:
+  creates:
+    - path: "src/services/conversation_engine.js"
+      type: module
+    - path: "src/api/conversation.js"
+      type: api
+    - path: "tests/services/conversation_engine.test.js"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Conversation engine implements a linear state machine that captures four preference slots: activity type, preferred time, location, and group size"
+  - "State machine transitions through slots in order, asking one question per step and recording the volunteer's answer"
+  - "Engine exposes a `startSession()` function that returns a session object with a greeting and the first question"
+  - "Engine exposes a `respond(sessionId, answer)` function that records the answer, advances state, and returns the next question or a completion signal"
+  - "REST API endpoint `POST /conversation/start` creates a new session and returns the first question"
+  - "REST API endpoint `POST /conversation/respond` accepts a session ID and answer, returns the next question or a structured preference object on completion"
+  - "Unit tests cover at least 3 linear flow variants (e.g., complete flow, partial flow, restart)"
+  - "`make test` passes"
+
+history:
+  attempts: []

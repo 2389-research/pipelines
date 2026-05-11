@@ -1,0 +1,73 @@
+id: "027"
+title: "Phone OTP Authentication, Session Infrastructure & SMS Consent Gating"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["003"]
+dependents: ["028"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement Google/Apple OAuth or email/password auth"
+    - "do not implement returning-user detection across providers"
+    - "do not implement staff RBAC"
+    - "do not implement sprint 028 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "db/migrations/003_core_schema.sql"
+  sprints_must_be_complete: ["003"]
+
+artifacts:
+  creates:
+    - path: "db/migrations/027_auth_sessions.sql"
+      type: migration
+    - path: "src/auth/phone_verification.js"
+      type: module
+    - path: "src/auth/session.js"
+      type: module
+    - path: "src/auth/sms_consent.js"
+      type: module
+    - path: "src/middleware/auth.js"
+      type: module
+    - path: "tests/auth/phone_verification.test.js"
+      type: test
+    - path: "tests/auth/session.test.js"
+      type: test
+    - path: "tests/auth/sms_consent.test.js"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Database migration adds auth-related tables (auth_identities, sessions, sms_consent) with appropriate constraints"
+  - "Phone OTP request endpoint accepts a phone number, generates a verification code, and stores it with TTL"
+  - "Phone OTP verify endpoint validates the code and creates a session (JWT) for a new user"
+  - "Phone OTP verify endpoint recognizes an existing phone number and signs in without creating a duplicate volunteer record"
+  - "Auth middleware extracts and validates JWT from request, attaching volunteer identity to the request context"
+  - "Unauthenticated requests to protected endpoints receive 401; valid sessions pass through"
+  - "SMS opt-in consent is captured and stored before any non-transactional outbound SMS (unit test on consent gating)"
+  - "`make test` passes with all phone OTP, session, and SMS consent tests"
+
+history:
+  attempts: []

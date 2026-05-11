@@ -1,0 +1,59 @@
+id: "020"
+title: "Skills-Based Volunteer Intake"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["005", "017"]
+dependents: ["023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 023 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+    - "src/ui/staff/RunOfShow.*"
+  sprints_must_be_complete: ["005", "017"]
+
+artifacts:
+  creates:
+    - path: "src/api/skills_intake.*"
+      type: api
+    - path: "src/models/skills_application.*"
+      type: model
+    - path: "src/ui/volunteer/SkillsApplication.*"
+      type: ui
+    - path: "src/ui/staff/SkillsQueue.*"
+      type: ui
+    - path: "tests/api/skills_intake.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Skills-based application captures interest, resume upload, availability, and skills (integration test with file upload)"
+  - "Application confirmation shows acknowledgement with response-time expectation message"
+  - "Staff queue lists pending applications sorted by oldest first with time-since-submission"
+  - "Staff can view application details including resume download"
+  - "Staff routes are access-controlled (authorization test)"
+  - "`make test` passes"
+
+history:
+  attempts: []

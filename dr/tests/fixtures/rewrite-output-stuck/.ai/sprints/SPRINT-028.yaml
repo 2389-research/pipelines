@@ -1,0 +1,68 @@
+id: "028"
+title: "Social & Fallback Authentication (Google, Apple, Email/Password)"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["027"]
+dependents: ["029"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not modify phone OTP or session infrastructure from Sprint 027"
+    - "do not implement staff RBAC"
+    - "do not implement cross-provider returning-user detection"
+    - "do not implement sprint 029 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/auth/phone_verification.js"
+    - "src/auth/session.js"
+    - "src/middleware/auth.js"
+  sprints_must_be_complete: ["027"]
+
+artifacts:
+  creates:
+    - path: "db/migrations/028_social_email_auth.sql"
+      type: migration
+    - path: "src/auth/social_auth.js"
+      type: module
+    - path: "src/auth/email_password.js"
+      type: module
+    - path: "tests/auth/social_auth.test.js"
+      type: test
+    - path: "tests/auth/email_password.test.js"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Google sign-in flow verifies an ID token (mocked provider), creates a new volunteer record or links to an existing one by email, and issues a session JWT"
+  - "Apple sign-in flow verifies an ID token (mocked provider), creates a new volunteer record or links to an existing one by email, and issues a session JWT"
+  - "Email + password registration creates a volunteer record with a securely hashed password and issues a session JWT"
+  - "Email + password login authenticates against stored credentials and issues a session JWT"
+  - "Email + password login links to an existing volunteer record when the email matches (no duplicate creation)"
+  - "All three new auth flows reuse the session infrastructure from Sprint 027 (JWT creation/validation)"
+  - "`make test` passes with Google, Apple, and email/password auth tests alongside existing phone OTP tests"
+
+history:
+  attempts: []

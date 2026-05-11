@@ -50,12 +50,13 @@ workflow SpecToSprints
 
   agent no_spec_exit
     label: "No Spec Found"
+    max_turns: 1
     prompt:
-      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+      Acknowledge that no spec file was found.
 
-      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+      HARD CONSTRAINT: Do NOT read any files. Do NOT write any files. Do NOT call any tools. Your ONLY job is to emit a one-line acknowledgement.
 
-      To use this pipeline, place a spec file in the working directory and re-run.
+      Then the pipeline terminates. The operator should place a spec file (spec.md, SPEC.md, design.md, etc.) in the working directory and re-run.
 
   tool check_resume
     label: "Check Resume Point"
@@ -918,6 +919,8 @@ workflow SpecToSprints
       printf 'project:\n  name: "Unknown"\n  stack:\n    lang: %s\n    runner: %s\n    test: %s\n    lint: %s\n    build: %s\n  created_at: "%s"\n\nsprints:\n' "$stack_lang" "$stack_runner" "$stack_test" "$stack_lint" "$stack_build" "$now" > .ai/ledger.yaml
       for f in .ai/sprints/SPRINT-*.yaml; do
         [ -f "$f" ] || continue
+        # Skip non-canonical files (plan-brief, review-brief, recovery-analysis, etc.)
+        case "$(basename "$f" .yaml)" in SPRINT-[0-9A-Z]) ;; SPRINT-[0-9][0-9A-Z]) ;; SPRINT-[0-9][0-9][0-9A-Z]) ;; *) continue ;; esac
         id=$(yq '.id' "$f")
         title=$(yq '.title | @json' "$f")
         bootstrap=$(yq '.bootstrap // false' "$f")
@@ -949,6 +952,8 @@ workflow SpecToSprints
       fi
       for f in .ai/sprints/SPRINT-*.yaml; do
         [ -f "$f" ] || continue
+        # Skip non-canonical files (plan-brief, review-brief, recovery-analysis, etc.)
+        case "$(basename "$f" .yaml)" in SPRINT-[0-9A-Z]) ;; SPRINT-[0-9][0-9A-Z]) ;; SPRINT-[0-9][0-9][0-9A-Z]) ;; *) continue ;; esac
         base=$(basename "$f")
         if ! yq -e '.' "$f" >/dev/null 2>&1; then
           errors="${errors}invalid-yaml-${base} "
@@ -1001,6 +1006,8 @@ workflow SpecToSprints
       done
       for f in .ai/sprints/SPRINT-*.md; do
         [ -f "$f" ] || continue
+        # Skip non-canonical files (plan-brief, review-brief, recovery-analysis, etc.)
+        case "$(basename "$f" .md)" in SPRINT-[0-9A-Z]) ;; SPRINT-[0-9][0-9A-Z]) ;; SPRINT-[0-9][0-9][0-9A-Z]) ;; *) continue ;; esac
         base=$(basename "$f")
         for section in "## Scope" "## Requirements" "## Dependencies" "## Expected Artifacts" "## DoD" "## Validation"; do
           if ! grep -q "$section" "$f"; then
@@ -1018,6 +1025,8 @@ workflow SpecToSprints
       fi
       for f in .ai/sprints/SPRINT-*.yaml; do
         [ -f "$f" ] || continue
+        # Skip non-canonical files (plan-brief, review-brief, recovery-analysis, etc.)
+        case "$(basename "$f" .yaml)" in SPRINT-[0-9A-Z]) ;; SPRINT-[0-9][0-9A-Z]) ;; SPRINT-[0-9][0-9][0-9A-Z]) ;; *) continue ;; esac
         base=$(basename "$f")
         dod_count=$(yq '.dod | length' "$f" 2>/dev/null || echo 0)
         if [ "$dod_count" -gt 15 ]; then

@@ -1,0 +1,68 @@
+id: "010"
+title: "Check-In & QR Code System (Individual)"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["007", "008", "009"]
+dependents: ["012", "014", "017", "022", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 012 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "db/migrations/007_waivers.*"
+    - "db/migrations/008_orientation.*"
+    - "src/sms/provider.*"
+  sprints_must_be_complete: ["007", "008", "009"]
+
+artifacts:
+  creates:
+    - path: "src/services/qr_code.*"
+      type: module
+    - path: "src/sms/templates/qr_delivery.*"
+      type: ui
+    - path: "src/ui/checkin/QRScanner.*"
+      type: ui
+    - path: "src/ui/checkin/CheckinFlow.*"
+      type: ui
+    - path: "src/api/checkin.*"
+      type: api
+    - path: "src/services/checkin_validation.*"
+      type: module
+    - path: "tests/api/checkin.test.*"
+      type: test
+    - path: "tests/services/checkin_validation.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "QR code is generated for each registered volunteer and accessible from their web profile"
+  - "QR code is delivered via SMS as part of pre-shift communications"
+  - "Scanning QR code at kiosk/device checks in the volunteer without requiring volunteer login (integration test)"
+  - "Check-in detects incomplete waiver and prompts on-site completion"
+  - "Check-in detects incomplete orientation and flags for staff"
+  - "Check-in detects missing secondary info (address, emergency contact) and prompts for collection"
+  - "Volunteer proceeds through check-in even with missing items — permissive policy enforced (integration test)"
+  - "`make test` passes"
+
+history:
+  attempts: []

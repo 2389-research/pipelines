@@ -1,0 +1,93 @@
+id: "029"
+title: "Returning User Detection, Deferred Auth & Staff RBAC"
+status: planned
+bootstrap: false
+complexity: medium
+depends_on:
+  - "000"
+  - "001"
+  - "002"
+  - "003"
+  - "004"
+  - "005"
+  - "006"
+  - "007"
+  - "008"
+  - "009"
+  - "010"
+  - "011"
+  - "012"
+  - "013"
+  - "014"
+  - "015"
+  - "016"
+  - "017"
+  - "018"
+  - "019"
+  - "020"
+  - "021"
+  - "022"
+  - "023"
+  - "024"
+  - "025"
+  - "026"
+  - "027"
+  - "028"
+dependents: ["005", "009", "018", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not modify individual auth providers from Sprints 027/028"
+    - "do not implement sprint 030 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "src/auth/phone_verification.js"
+    - "src/auth/social_auth.js"
+    - "src/auth/email_password.js"
+    - "src/auth/session.js"
+    - "src/middleware/auth.js"
+  sprints_must_be_complete: ["028"]
+artifacts:
+  creates:
+    - path: "db/migrations/029_roles_deferred_auth.sql"
+      type: migration
+    - path: "src/auth/returning_user.js"
+      type: module
+    - path: "src/auth/roles.js"
+      type: module
+    - path: "src/middleware/rbac.js"
+      type: module
+    - path: "tests/auth/returning_user.test.js"
+      type: test
+    - path: "tests/auth/roles.test.js"
+      type: test
+    - path: "tests/auth/deferred_auth.test.js"
+      type: test
+  modifies: []
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "Returning user detection: entering an existing phone number or email triggers sign-in, not duplicate account creation, across all auth providers"
+  - "Cross-provider identity linking: a user who signed up by phone can later sign in via Google (matching email) and both identities resolve to the same volunteer record"
+  - "Auth is triggered only after shift selection — unauthenticated user can browse opportunities and is prompted to authenticate only upon selecting a specific shift (integration test)"
+  - "Staff RBAC: roles table and middleware protect staff routes — unauthenticated and non-staff users receive 403"
+  - "Staff role can be assigned to a volunteer record and verified by RBAC middleware"
+  - "All existing auth tests (phone OTP, Google, Apple, email/password) continue to pass"
+  - "`make test` passes with returning-user detection, deferred auth, and staff RBAC tests"
+history:
+  attempts: []

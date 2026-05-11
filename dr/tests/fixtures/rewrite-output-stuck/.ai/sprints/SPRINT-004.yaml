@@ -1,0 +1,63 @@
+id: "004"
+title: "Authentication & Returning User Detection"
+status: failed
+bootstrap: false
+complexity: medium
+depends_on: ["003"]
+dependents: ["005", "009", "018", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 005 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "db/migrations/003_core_schema.*"
+  sprints_must_be_complete: ["003"]
+artifacts:
+  creates:
+    - path: "src/auth/phone_verification.*"
+      type: module
+    - path: "src/auth/social_auth.*"
+      type: module
+    - path: "src/auth/email_password.*"
+      type: module
+    - path: "src/auth/returning_user.*"
+      type: module
+    - path: "src/auth/roles.*"
+      type: module
+    - path: "src/middleware/auth.*"
+      type: module
+    - path: "tests/auth/"
+      type: test
+  modifies: []
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "Phone + SMS OTP flow creates a session for a new user and recognizes/signs in an existing user by phone"
+  - "Google sign-in flow creates or links a volunteer record (integration test with mocked provider)"
+  - "Apple sign-in flow creates or links a volunteer record (integration test with mocked provider)"
+  - "Email + password fallback creates and authenticates a user, linking to existing records when email matches"
+  - "Returning user detection: entering an existing phone or email triggers sign-in, not duplicate account creation"
+  - "Auth is triggered only after shift selection — unauthenticated user can browse opportunities and is prompted to authenticate only upon selecting a specific shift (integration test)"
+  - "Staff RBAC middleware protects a test staff route — unauthenticated and non-staff users receive 403"
+  - "SMS opt-in is captured and stored before any non-transactional outbound SMS (unit test on consent gating)"
+  - "`make test` passes with all auth tests (OTP, OAuth, email/password, returning user, staff RBAC)"
+history:
+  attempts:
+    - date: "2026-05-11T19:54:26Z"
+      run_id: 20260511T195426Z
+      outcome: fail
+      reason: pipeline_failed
+      attempt: 2
+      started_at: "2026-05-11T19:37:26Z"

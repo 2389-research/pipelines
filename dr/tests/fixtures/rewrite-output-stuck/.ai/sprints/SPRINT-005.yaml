@@ -1,0 +1,75 @@
+id: "005"
+title: "Volunteer Registration, Profile & Website-Embedded UI Shell"
+status: completed
+bootstrap: false
+complexity: medium
+
+depends_on: ["003", "004"]
+dependents: ["007", "008", "009", "011", "018", "020", "021", "023", "024"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 007 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "db/migrations/003_core_schema.*"
+    - "src/auth/phone_verification.*"
+  sprints_must_be_complete: ["003", "004"]
+
+artifacts:
+  creates:
+    - path: "src/ui/conversational/ChatShell.*"
+      type: ui
+    - path: "src/ui/conversational/MessageBubble.*"
+      type: ui
+    - path: "src/ui/conversational/InputArea.*"
+      type: ui
+    - path: "src/ui/conversational/ModeToggle.*"
+      type: ui
+    - path: "src/ui/navigation/AppNav.*"
+      type: ui
+    - path: "src/api/registration.*"
+      type: api
+    - path: "src/api/profile.*"
+      type: api
+    - path: "src/services/profile_completion.*"
+      type: module
+    - path: "tests/api/registration.test.*"
+      type: test
+    - path: "tests/ui/conversational/"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Conversational UI shell renders embedded in a host page with message bubbles, input area, and mode toggle"
+  - "Mode toggle switches between conversational view and calendar browse view without losing state"
+  - "Registration endpoint accepts only name, phone, email and creates a volunteer record (rejects if any missing)"
+  - "Profile completion endpoint accepts and stores secondary fields (address, emergency contact, employer, demographics) — all optional"
+  - "Registration flow is rendered within the conversational UI as a chat-style interaction, not a standalone form page"
+  - "Integrated navigation includes links to discovery, upcoming shifts, and history (dashboard placeholder)"
+  - "Profile completion status is tracked per-volunteer (which deferred fields remain uncollected)"
+  - "`make test` passes with registration, profile, and UI component tests"
+
+history:
+  attempts: []

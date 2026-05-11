@@ -1,0 +1,65 @@
+id: "013"
+title: "Location & Station Configuration"
+status: planned
+bootstrap: false
+complexity: low
+
+depends_on: ["003"]
+dependents: ["015", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 015 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "db/migrations/003_core_schema.*"
+  sprints_must_be_complete: ["003"]
+
+artifacts:
+  creates:
+    - path: "db/migrations/013_stations.*"
+      type: migration
+    - path: "src/models/station.*"
+      type: model
+    - path: "src/api/locations.*"
+      type: api
+    - path: "src/api/stations.*"
+      type: api
+    - path: "src/ui/staff/LocationConfig.*"
+      type: ui
+    - path: "src/ui/staff/StationConfig.*"
+      type: ui
+    - path: "tests/api/locations.test.*"
+      type: test
+    - path: "tests/api/stations.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Staff can create and edit locations via the staff UI (staff-auth protected)"
+  - "Staff can add stations to a location with max capacity, min staffing, labor conditions, accessibility flags, and notes"
+  - "Station configurations persist across sessions (test: create → retrieve after restart)"
+  - "Station attributes are validated (min staffing ≤ max capacity; required fields enforced)"
+  - "Locations and stations are listable and filterable via API"
+  - "Non-staff users cannot access configuration endpoints (authorization test)"
+  - "`make test` passes"
+
+history:
+  attempts: []

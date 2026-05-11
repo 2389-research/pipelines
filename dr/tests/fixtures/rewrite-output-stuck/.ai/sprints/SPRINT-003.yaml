@@ -1,0 +1,76 @@
+id: "003"
+title: "Shared Backend, Data Model & Anonymous Opportunity Browsing"
+status: completed
+bootstrap: false
+complexity: medium
+depends_on: ["002"]
+dependents: ["004", "005", "013", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 004 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "src/api/hello.*"
+  sprints_must_be_complete: ["002"]
+artifacts:
+  creates:
+    - path: "db/migrations/003_core_schema.*"
+      type: migration
+    - path: "src/models/volunteer.*"
+      type: model
+    - path: "src/models/shift.*"
+      type: model
+    - path: "src/models/location.*"
+      type: model
+    - path: "src/api/opportunities.*"
+      type: api
+    - path: "src/services/urgency.*"
+      type: module
+    - path: "src/ui/discovery/ShiftCalendar.*"
+      type: ui
+    - path: "src/ui/discovery/ShiftCard.*"
+      type: ui
+    - path: "src/ui/styles/nifb-theme.*"
+      type: ui
+    - path: "tests/models/"
+      type: test
+    - path: "tests/api/opportunities.test.*"
+      type: test
+    - path: "tests/services/urgency.test.*"
+      type: test
+  modifies: []
+validation:
+  commands:
+    - cmd: "make build"
+      expect: exit_0
+    - cmd: "make lint"
+      expect: exit_0
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "Database migration creates core tables (volunteers, shifts, locations, groups) with appropriate constraints"
+  - "`GET /api/opportunities` returns available shifts with location, time, capacity, and open spots without requiring authentication"
+  - "Calendar view displays shifts across multiple locations with consistent layout"
+  - "List view displays shifts sortable/filterable by date, location, and availability"
+  - "Urgency badges appear on shifts meeting urgency criteria (e.g., <20% spots remaining)"
+  - "UI renders under NIFB domain path with no cross-domain redirects and no \"return to website\" links"
+  - "CSS theme tokens match NIFB brand values (primary/secondary colors, font-family, spacing documented in theme file)"
+  - "`make test` passes with all new unit and API tests"
+history:
+  attempts:
+    - date: "2026-05-11T19:33:22Z"
+      run_id: 20260511T193322Z
+      outcome: fail
+      reason: pipeline_failed
+      attempt: 1
+      started_at: "2026-05-11T19:12:51Z"

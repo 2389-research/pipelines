@@ -1,0 +1,59 @@
+id: "016"
+title: "Staff Assignment Review & Override"
+status: planned
+bootstrap: false
+complexity: high
+
+depends_on: ["015"]
+dependents: ["017", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 017 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/services/auto_assignment.*"
+  sprints_must_be_complete: ["015"]
+
+artifacts:
+  creates:
+    - path: "src/ui/staff/AssignmentBoard.*"
+      type: ui
+    - path: "src/api/assignment_overrides.*"
+      type: api
+    - path: "src/services/constraint_validator.*"
+      type: module
+    - path: "tests/ui/staff/assignment_board.test.*"
+      type: test
+    - path: "tests/services/constraint_validator.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Staff can view the draft assignment plan with volunteers mapped to stations"
+  - "Staff can drag-and-drop volunteers between stations and the change persists"
+  - "System warns when a manual change violates constraints (over-capacity, group split, accessibility mismatch)"
+  - "Staff can lock an assignment to prevent re-optimization by the auto-assignment engine"
+  - "Staff can add notes and flags to individual assignments"
+  - "Constraint validator re-runs after every manual change (not just on-demand)"
+  - "`make test` passes"
+
+history:
+  attempts: []

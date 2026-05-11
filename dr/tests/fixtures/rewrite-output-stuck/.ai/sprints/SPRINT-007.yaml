@@ -1,0 +1,65 @@
+id: "007"
+title: "Digital Waiver Management"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["005"]
+dependents: ["010", "011", "014", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 010 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+  sprints_must_be_complete: ["005"]
+
+artifacts:
+  creates:
+    - path: "db/migrations/007_waivers.*"
+      type: migration
+    - path: "src/models/waiver.*"
+      type: model
+    - path: "src/ui/waiver/WaiverPresentation.*"
+      type: ui
+    - path: "src/ui/waiver/ESignCapture.*"
+      type: ui
+    - path: "src/api/waivers.*"
+      type: api
+    - path: "src/services/waiver.*"
+      type: module
+    - path: "tests/api/waivers.test.*"
+      type: test
+    - path: "tests/services/waiver.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Waiver content renders within the conversational UI flow after shift selection"
+  - "Click-to-sign captures volunteer consent with timestamp and content hash, attached to volunteer record"
+  - "Waiver completion status is queryable per-volunteer via API"
+  - "Returning volunteer with completed waiver is not prompted to sign again (automated test)"
+  - "Unsigned waiver status returns \"incomplete\"; signed returns \"complete\" with timestamp"
+  - "Waiver is presented before shift registration confirmation (ordering enforced in flow)"
+  - "`make test` passes with waiver unit and integration tests"
+
+history:
+  attempts: []

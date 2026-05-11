@@ -1,0 +1,75 @@
+id: "026"
+title: "Nonlinear & Adaptive Conversational Logic"
+status: planned
+bootstrap: false
+complexity: medium
+depends_on:
+  - "000"
+  - "001"
+  - "002"
+  - "003"
+  - "004"
+  - "005"
+  - "006"
+  - "007"
+  - "008"
+  - "009"
+  - "010"
+  - "011"
+  - "012"
+  - "013"
+  - "014"
+  - "015"
+  - "016"
+  - "017"
+  - "018"
+  - "019"
+  - "020"
+  - "021"
+  - "022"
+  - "023"
+  - "024"
+  - "025"
+dependents: ["014", "018", "023"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not modify src/services/recommendation.js ranking logic"
+    - "do not modify src/ui/conversational/RecommendationCards.js"
+    - "do not add features beyond scope"
+  touch_only: []
+entry_preconditions:
+  files_must_exist:
+    - "src/services/conversation_engine.js"
+    - "src/services/recommendation.js"
+    - "src/api/conversation.js"
+  sprints_must_be_complete: ["025"]
+artifacts:
+  creates: []
+  modifies:
+    - path: "src/services/conversation_engine.js"
+      type: module
+    - path: "tests/services/conversation_engine.test.js"
+      type: test
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+dod:
+  - "Slot-filling parser in conversation_engine.js detects when a single user utterance contains information for multiple preference slots"
+  - "When multiple slots are filled by one utterance, the engine skips already-answered questions and advances to the next unfilled slot"
+  - "Engine handles any combination of slot mentions in a single utterance (e.g., time + group size, activity + location)"
+  - "Integration test: input \"I have a group of 20 on Saturday\" correctly fills group_size and preferred_day slots and triggers appropriate follow-up without re-asking those questions"
+  - "Adaptive follow-up: engine produces contextually appropriate next question based on which slots remain unfilled"
+  - "Existing linear flow behaviour is preserved — linear conversations continue to work identically after nonlinear logic is added"
+  - "Unit tests for nonlinear scenarios cover at least 3 multi-slot utterance patterns"
+  - "`make test` passes"
+history:
+  attempts: []

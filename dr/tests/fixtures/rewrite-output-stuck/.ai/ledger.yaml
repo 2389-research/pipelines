@@ -1,0 +1,339 @@
+project:
+  name: "Unknown"
+  stack:
+    lang: "javascript"
+    runner: "npm"
+    test: "jest"
+    lint: "eslint"
+    build: "make"
+  created_at: "2026-05-11T20:04:14Z"
+sprints:
+  - id: "000"
+    title: "Project Scaffold & Toolchain"
+    status: planned
+    bootstrap: true
+    depends_on: []
+    complexity: low
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "001"
+    title: "External Services & Dev Environment"
+    status: planned
+    bootstrap: true
+    depends_on: ["000"]
+    complexity: low
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "002"
+    title: "Hello World End-to-End Proof"
+    status: planned
+    bootstrap: true
+    depends_on: ["001"]
+    complexity: low
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "003"
+    title: "Shared Backend, Data Model & Anonymous Opportunity Browsing"
+    status: planned
+    bootstrap: false
+    depends_on: ["002"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "004"
+    title: "Authentication & Returning User Detection"
+    status: planned
+    bootstrap: false
+    depends_on: ["003"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "005"
+    title: "Volunteer Registration, Profile & Website-Embedded UI Shell"
+    status: planned
+    bootstrap: false
+    depends_on: ["003", "004"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "006"
+    title: "Conversational Matching & Recommendation Engine"
+    status: planned
+    bootstrap: false
+    depends_on: ["005"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "007"
+    title: "Digital Waiver Management"
+    status: planned
+    bootstrap: false
+    depends_on: ["005"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "008"
+    title: "Orientation Tracking"
+    status: planned
+    bootstrap: false
+    depends_on: ["005"]
+    complexity: low
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "009"
+    title: "SMS Orchestration Core (Transactional)"
+    status: planned
+    bootstrap: false
+    depends_on: ["004", "005"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "010"
+    title: "Check-In & QR Code System (Individual)"
+    status: planned
+    bootstrap: false
+    depends_on: ["007", "008", "009"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "011"
+    title: "Group Volunteer Registration & Waiver Management"
+    status: planned
+    bootstrap: false
+    depends_on: ["005", "007"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "012"
+    title: "Group Check-In, On-Site Member Capture & Donor Flags"
+    status: planned
+    bootstrap: false
+    depends_on: ["010", "011"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "013"
+    title: "Location & Station Configuration"
+    status: planned
+    bootstrap: false
+    depends_on: ["003"]
+    complexity: low
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "014"
+    title: "Individual Volunteer End-to-End Flow"
+    status: planned
+    bootstrap: false
+    depends_on: ["026", "007", "008", "009", "010", "026"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "015"
+    title: "Auto-Assignment Engine"
+    status: planned
+    bootstrap: false
+    depends_on: ["011", "013"]
+    complexity: high
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "016"
+    title: "Staff Assignment Review & Override"
+    status: planned
+    bootstrap: false
+    depends_on: ["015"]
+    complexity: high
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "017"
+    title: "Staff Operations Dashboard (Run of Show & Weekly Planning)"
+    status: planned
+    bootstrap: false
+    depends_on: ["010", "015", "016"]
+    complexity: high
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "018"
+    title: "RE NXT Integration & Donor Matching"
+    status: planned
+    bootstrap: false
+    depends_on: ["004", "005", "026", "026"]
+    complexity: high
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "019"
+    title: "RE NXT Activity Sync & Batch Export Fallback"
+    status: planned
+    bootstrap: false
+    depends_on: ["018"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "020"
+    title: "Skills-Based Volunteer Intake"
+    status: planned
+    bootstrap: false
+    depends_on: ["005", "017"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "021"
+    title: "Court-Required & SNAP Volunteer Programs"
+    status: planned
+    bootstrap: false
+    depends_on: ["005", "017"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "022"
+    title: "Volunteer Dashboard, Post-Shift SMS & Engagement"
+    status: planned
+    bootstrap: false
+    depends_on: ["009", "010", "014", "017", "018"]
+    complexity: high
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "023"
+    title: "Integration Verification & Launch Readiness"
+    status: planned
+    bootstrap: false
+    depends_on: ["000", "001", "002", "003", "004", "005", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021", "022", "024", "025", "026", "026"]
+    complexity: low
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "024"
+    title: "Core Conversational Engine & API"
+    status: planned
+    bootstrap: false
+    depends_on: ["005"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "025"
+    title: "Recommendation Engine, Personalisation & UI"
+    status: planned
+    bootstrap: false
+    depends_on: ["024"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "026"
+    title: "Nonlinear & Adaptive Conversational Logic"
+    status: planned
+    bootstrap: false
+    depends_on: ["000", "001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021", "022", "023", "024", "025"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "027"
+    title: "Phone OTP Authentication, Session Infrastructure & SMS Consent Gating"
+    status: planned
+    bootstrap: false
+    depends_on: ["003"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "028"
+    title: "Social & Fallback Authentication (Google, Apple, Email/Password)"
+    status: planned
+    bootstrap: false
+    depends_on: ["027"]
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "029"
+    title: "Returning User Detection, Deferred Auth & Staff RBAC"
+    status: planned
+    bootstrap: false
+    depends_on:
+      - "000"
+      - "001"
+      - "002"
+      - "003"
+      - "004"
+      - "005"
+      - "006"
+      - "007"
+      - "008"
+      - "009"
+      - "010"
+      - "011"
+      - "012"
+      - "013"
+      - "014"
+      - "015"
+      - "016"
+      - "017"
+      - "018"
+      - "019"
+      - "020"
+      - "021"
+      - "022"
+      - "023"
+      - "024"
+      - "025"
+      - "026"
+      - "027"
+      - "028"
+    complexity: medium
+    created_at: "2026-05-11T20:04:14Z"
+    updated_at: "2026-05-11T20:04:14Z"
+    attempts: 0
+    total_cost: "0.00"

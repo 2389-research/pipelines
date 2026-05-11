@@ -1,0 +1,66 @@
+id: "011"
+title: "Group Volunteer Registration & Waiver Management"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["005", "007"]
+dependents: ["012", "015", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 012 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+    - "db/migrations/007_waivers.*"
+  sprints_must_be_complete: ["005", "007"]
+
+artifacts:
+  creates:
+    - path: "db/migrations/011_groups.*"
+      type: migration
+    - path: "src/models/group.*"
+      type: model
+    - path: "src/models/group_member.*"
+      type: model
+    - path: "src/api/groups.*"
+      type: api
+    - path: "src/ui/groups/GroupRegistration.*"
+      type: ui
+    - path: "src/services/group_waiver.*"
+      type: module
+    - path: "tests/api/groups.test.*"
+      type: test
+    - path: "tests/services/group_waiver.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Group leader can register with group name, size, contact info, ages, type, and date preferences via conversational UI"
+  - "Individual member names/details are NOT required at registration time (test: group created with zero member records)"
+  - "Group identity is stored and trackable across the system (group ID persists on shift registration)"
+  - "Group waiver status tracks leader signature separately from member signatures"
+  - "Leader signs waiver for themselves; members can sign individually at arrival (test for both paths)"
+  - "Group registration renders within the conversational UI framework, not as a standalone form"
+  - "`make test` passes"
+
+history:
+  attempts: []

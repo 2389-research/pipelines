@@ -1,0 +1,67 @@
+id: "009"
+title: "SMS Orchestration Core (Transactional)"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["004", "005"]
+dependents: ["010", "014", "022", "023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: ["twilio"]
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 010 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/auth/phone_verification.*"
+    - "src/ui/conversational/ChatShell.*"
+  sprints_must_be_complete: ["004", "005"]
+
+artifacts:
+  creates:
+    - path: "src/sms/provider.*"
+      type: module
+    - path: "src/sms/opt_in.*"
+      type: module
+    - path: "src/sms/templates/confirmation.*"
+      type: ui
+    - path: "src/sms/templates/reminder.*"
+      type: ui
+    - path: "src/sms/templates/day_of.*"
+      type: ui
+    - path: "src/sms/scheduler.*"
+      type: module
+    - path: "src/api/sms_preferences.*"
+      type: api
+    - path: "tests/sms/"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "SMS provider integration sends a test message via adapter (integration test with fake provider)"
+  - "Opt-in status is tracked per-volunteer; outbound messages blocked for opted-out volunteers (unit test)"
+  - "Signup confirmation SMS fires immediately after successful registration"
+  - "Pre-shift reminder SMS is scheduled 24–48 hours before shift and includes orientation link when orientation is incomplete"
+  - "Day-of arrival SMS sends logistics info when configured for the shift (toggleable)"
+  - "All outbound SMS includes opt-out instructions per TCPA compliance"
+  - "Web-created volunteer record and SMS-referenced record are the same record (integration test verifying FR1 shared backend)"
+  - "`make test` passes"
+
+history:
+  attempts: []

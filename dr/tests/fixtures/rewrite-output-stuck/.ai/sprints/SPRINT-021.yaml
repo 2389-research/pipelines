@@ -1,0 +1,67 @@
+id: "021"
+title: "Court-Required & SNAP Volunteer Programs"
+status: planned
+bootstrap: false
+complexity: medium
+
+depends_on: ["005", "017"]
+dependents: ["023"]
+
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+  services: []
+
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+    - "do not implement sprint 023 or later"
+    - "do not add features beyond scope"
+  touch_only: []
+
+entry_preconditions:
+  files_must_exist:
+    - "src/ui/conversational/ChatShell.*"
+    - "src/ui/staff/RunOfShow.*"
+  sprints_must_be_complete: ["005", "017"]
+
+artifacts:
+  creates:
+    - path: "src/api/court_snap.*"
+      type: api
+    - path: "src/models/court_program.*"
+      type: model
+    - path: "src/models/snap_program.*"
+      type: model
+    - path: "src/ui/volunteer/CourtIntake.*"
+      type: ui
+    - path: "src/ui/volunteer/SnapIntake.*"
+      type: ui
+    - path: "src/services/hours_verification.*"
+      type: module
+    - path: "src/ui/staff/CourtSnapManagement.*"
+      type: ui
+    - path: "tests/api/court_snap.test.*"
+      type: test
+    - path: "tests/services/hours_verification.test.*"
+      type: test
+  modifies: []
+
+validation:
+  commands:
+    - cmd: "make test"
+      expect: exit_0
+
+dod:
+  - "Court-required volunteer flow captures required hours, documentation needs, and supervising entity"
+  - "Court-required volunteers are routed to designated staff member (notification or filtered staff view — test verifies routing)"
+  - "SNAP-benefit volunteers are flagged with hours tracked for compliance documentation"
+  - "Hours-verification printout generates with print-friendly CSS/formatting for both court and SNAP volunteers (golden-file test)"
+  - "Printout includes volunteer name, hours, date range, and NIFB branding"
+  - "`make test` passes"
+
+history:
+  attempts: []
