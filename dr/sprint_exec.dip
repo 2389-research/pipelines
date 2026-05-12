@@ -195,22 +195,21 @@ workflow SprintExec
 
       ## Scope-fence integrity check (CRITICAL — do not skip)
 
-      Out-of-scope artifacts left behind by a parent or sibling sprint are the single most common cause of sprint failure. The implementer will see them on disk and assume they belong.
+      Out-of-scope artifacts left behind by a parent or sibling sprint are the single most common cause of sprint failure. The implementer sees pre-existing code on disk, assumes it belongs to this sprint, modifies or extends it, and reviewers correctly flag "features beyond scope".
 
       For this sprint, you MUST:
 
       1. Read `scope_fence.off_limits` from the sprint YAML — every item is either a path/pattern or a behavior prohibition.
       2. Read `artifacts.creates[].path` and `artifacts.modifies[].path` — the ONLY files this sprint is allowed to touch.
-      3. For each off_limits entry that references a file path or directory, check whether matching files already exist on disk (e.g., `src/api/foo.js`, `src/server.js`, `src/ui/*`).
-      4. If matching off_limits files exist AND are NOT in `artifacts.creates`/`artifacts.modifies`, you have a **scope contamination** condition.
+      3. For each off_limits entry that names a specific path or directory pattern, check whether matching files exist on disk.
 
-      When scope contamination is detected, your plan brief MUST:
-      - Open with a `## Scope contamination` section listing every contaminating file by exact path.
-      - Tell the implementer: **"DELETE these files (or `git restore` them) BEFORE writing any new code. They are out of scope for this sprint and will fail review."**
-      - DO NOT describe the sprint as "near-zero-effort", "verify-only", or "the work is already done". Pre-existing artifacts that overlap off_limits are a hazard, not a head start.
-      - DO NOT suggest "verify rather than rewrite" for any file that overlaps off_limits. Verify ≠ adopt — the implementer cannot keep code outside its scope.
+      When matching off_limits files exist on disk, your plan brief MUST:
+      - Open with a `## Off-limits files present` section listing each by exact path. (These files may be legitimate deliverables of other sprints — do NOT recommend deleting them.)
+      - Tell the implementer: **"These files are off-limits for this sprint. Do NOT read them, do NOT modify them, do NOT include them in your commit. Treat them as belonging to another sprint."**
+      - DO NOT describe the sprint as "near-zero-effort", "verify-only", or "the work is already done" merely because related files exist. Pre-existing off_limits files are a hazard, not a head start.
+      - DO NOT suggest "verify rather than rewrite" for any file outside `artifacts.creates`/`artifacts.modifies`. Verify ≠ adopt — the implementer cannot claim code outside its scope.
 
-      If `artifacts.creates` files already exist (legitimate continuation from a prior attempt), separately note that as "in-scope partial progress" — these may be inspected and continued, unlike scope-contaminating files.
+      If files in `artifacts.creates` already exist (legitimate continuation from a prior attempt), note that separately as "in-scope partial progress" — those may be inspected and continued.
 
       ## Output
 

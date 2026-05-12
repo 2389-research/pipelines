@@ -50,10 +50,14 @@ workflow ImplementAndValidate
 
       ## Before writing any code
 
-      1. Read `.ai/sprints/SPRINT-<id>-plan-brief.md` if it exists. If the brief contains a "Scope contamination" section listing files, your **FIRST** action MUST be to `git restore` or `rm` each listed file before you write anything new. These files were left behind by a parent sprint and are off-limits for this one — keeping them WILL cause reviewers to fail this sprint with "features beyond scope". Do not negotiate with the contamination list.
+      1. Read `.ai/sprints/SPRINT-<id>-plan-brief.md` if it exists. If the brief contains an "Off-limits files present" section, treat every listed file as untouchable: do NOT read, modify, or commit any of them. They belong to another sprint.
       2. Check `entry_preconditions.files_must_exist` from the YAML — verify each file exists. If any are missing, something is wrong with prior sprints.
       3. Check `history.attempts` from the YAML — if prior attempts failed, read the failure reasons and avoid repeating the same mistakes.
-      4. Check what already exists on disk among `artifacts.creates`/`artifacts.modifies` (in-scope files only). If prior implementation work is present from a previous attempt, continue from where it left off — do NOT start over or rewrite existing files that already work. Files NOT in `artifacts.creates`/`artifacts.modifies` are NOT prior progress — they are scope contamination and MUST be removed (see step 1).
+      4. Check what already exists on disk among `artifacts.creates`/`artifacts.modifies` ONLY. If those in-scope files have partial prior work, continue from where it left off — do NOT start over or rewrite files that already work. Do NOT inspect or modify any file outside `artifacts.creates`/`artifacts.modifies` — they belong to other sprints.
+
+      ## Scope discipline (this is what got the prior attempt failed)
+
+      Your output to this sprint is EXACTLY the files in `artifacts.creates` and `artifacts.modifies`. Nothing else. If you find yourself opening a file that isn't in those two lists, stop — you are about to commit a scope-fence violation. Reviewers fail "features beyond scope" deterministically.
 
       ## During implementation
 
@@ -358,14 +362,18 @@ workflow ImplementAndValidate
 
       Read .ai/current_sprint_id.txt, then read the sprint YAML at .ai/sprints/SPRINT-<id>.yaml to find the expected files under `artifacts.creates` and `artifacts.modifies`.
 
-      1. First, stage the files listed in the sprint YAML artifacts, plus any test files or config files they depend on
-      2. Then, run `git status --short` and stage ALL remaining modified tracked files (lines starting with " M"). The review gate checks committed code — anything left uncommitted will cause a review failure.
-      3. Do NOT stage untracked files in .next/, node_modules/, dist/, build/, .tracker/, or other generated directories
-      4. If there are no staged/unstaged changes, report that no commit was needed
-      5. Write a concise conventional commit message
-      6. Report the commit hash in your summary
+      Stage ONLY files that fall within this sprint's declared scope:
 
-      IMPORTANT: The review gate will fail if ANY implementation code remains uncommitted. It is critical to commit all modified source files, not just those listed in the artifact spec. The artifact list is a minimum, not an exhaustive list.
+      1. Stage every file in `artifacts.creates` (these are this sprint's new files).
+      2. Stage every file in `artifacts.modifies` (these are existing files this sprint is allowed to change).
+      3. Run `git status --short` and inspect the remaining modified/untracked files. For any that is genuinely required by this sprint (e.g., a test fixture for a file in artifacts.creates, a config update the artifact depends on) and is not listed in any other sprint's artifacts, you may stage it — but call it out in your commit message.
+      4. DO NOT stage files that overlap any item in `scope_fence.off_limits` or any path listed under `## Off-limits files present` in `.ai/sprints/SPRINT-<id>-plan-brief.md`. Those belong to another sprint; leaving them out of this commit is correct, not incomplete.
+      5. DO NOT stage untracked files in .next/, node_modules/, dist/, build/, .tracker/, or other generated directories.
+      6. If there are no changes inside scope, report `no-scope-changes` and skip the commit.
+      7. Write a concise conventional commit message that names the sprint id.
+      8. Report the commit hash in your summary.
+
+      IMPORTANT: Reviewers will fail this sprint for committing files outside its scope. They will ALSO fail it for leaving in-scope work uncommitted. The rule is: stage exactly what `artifacts.creates`/`artifacts.modifies` declares, plus narrowly-justified support files — and nothing else.
 
       HARD CONSTRAINT: Do NOT read large generated files. Do NOT explore the full project tree. Stage specific files, commit, done.
 
