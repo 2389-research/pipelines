@@ -2,6 +2,9 @@
 .tracker/
 output.txt
 runs/
+# but dr/docs/runs/ are intentional run reports
+!dr/docs/runs/
+!dr/docs/runs/**
 .ai/
 # fixture .ai/ trees are part of the test surface — explicitly tracked
 !dr/tests/fixtures/*/.ai
