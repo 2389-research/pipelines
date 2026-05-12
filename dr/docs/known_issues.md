@@ -35,20 +35,33 @@ Multiple back-edges across 020/021/022/023 close the cycle.
 
 ### Root cause (suspected — needs verification)
 
-Two candidates, possibly both:
+Three candidates, all observed:
 
 1. **Decomposition agent prompt does not enforce topological ordering.** The agent
    writing `.ai/sprint_plan.md` and the sprint YAMLs is not explicitly told that
    `depends_on` must reference only sprints with strictly lower IDs. The LLM picks
    semantically-correct deps (e.g., "the UI sprint depends on the API sprint") without
    regard to numbering, then numbers them in whatever order it generates them.
+   **Confirmed:** the initial nifb-dr plan included 020 ← 030, with both created
+   simultaneously at decomposition time.
 
 2. **`validate_output` capstone auto-fix may over-extend deps.** The capstone check
    (in `dr/parts/decomposition/write_and_validate_sprint_artifacts.dip:validate_output`)
    forces the last sprint to `depends_on` every other sprint. If redecomposition
-   appends new sprints, the previous capstone's deps were already broad. Reorderings
-   during redecomposition may leave a sprint with deps pointing at later-numbered
-   sprints. Needs traceback through the redecompose path.
+   appends new sprints, the previous capstone's deps were already broad. Needs
+   traceback. (Not yet confirmed.)
+
+3. **Redecompose splice creates new back-edges on every run.** Each time a sprint
+   gets redecomposed into children, the splice path appears to update sibling sprints
+   to depend on the new children — even if those siblings predate the children. After
+   021 was redecomposed into 033/034/035 on nifb-dr, sprints 022 and 023 (which
+   already existed and were ahead of 021's children) suddenly had `035` in their
+   `depends_on` lists. This is the most damaging variant: it means every successful
+   redecompose can trigger a fresh `deps_blocked_exit` on the next iteration. **Confirmed
+   twice** on nifb-dr run `81e1bde425d1`. The splice logic in `sprint_runner.dip` and
+   `redecompose_sprint` paths needs to be audited — likely in `splice_ledger` or in
+   the redecompose agent's prompt itself (it may be told to "add the new sprint as a
+   dependency of everything that semantically needs it" without bounding by ID).
 
 ### Workaround (when encountered mid-run)
 
