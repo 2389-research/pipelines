@@ -110,26 +110,32 @@ workflow IterAudit
         printf 'tbd-check-ok-no-done-stories'
         exit 0
       fi
-      tbd_count=0
-      tbd_list=""
-      while IFS= read -r line; do
-        case "$line" in
-          *"| TBD |"*|*"| TBD"*)
-            for story_id in $done_stories; do
-              if printf '%s' "$line" | grep -qF "$story_id"; then
-                tbd_count=$((tbd_count + 1))
-                scenario_id=$(printf '%s' "$line" | grep -oE '(SCENARIO|JOURNEY)-[0-9]+' | head -1)
-                tbd_list="${tbd_list}${scenario_id:-unknown}:${story_id} "
-              fi
-            done
-            ;;
-        esac
-      done < "$corpus"
-      if [ "$tbd_count" -gt 0 ]; then
-        printf 'tbd-check-fail-%d %s' "$tbd_count" "$tbd_list"
-        exit 0
-      fi
-      printf 'tbd-check-ok'
+      # Single awk pass over the corpus, story IDs preloaded via stdin.
+      # Previously: nested while/for + printf|grep subprocess per (TBD line, done story).
+      # At 412 TBD lines x 56 done stories that produced ~23k forks on a 15s budget.
+      result=$(printf '%s\n' "$done_stories" | awk '
+        NR == FNR {
+          if (NF > 0) story_ids[$1] = 1
+          next
+        }
+        /\| TBD/ {
+          scen = "unknown"
+          if (match($0, /(SCENARIO|JOURNEY)-[0-9]+/)) {
+            scen = substr($0, RSTART, RLENGTH)
+          }
+          for (story in story_ids) {
+            if (index($0, story) > 0) {
+              count++
+              list = list scen ":" story " "
+            }
+          }
+        }
+        END {
+          if (count > 0) printf "tbd-check-fail-%d %s", count, list
+          else printf "tbd-check-ok"
+        }
+      ' - "$corpus")
+      printf '%s' "$result"
 
   agent tbd_gate_fail
     label: "TBD Gate Failed"
@@ -770,6 +776,7 @@ workflow IterAudit
     init_audit_state -> check_tbd_scenarios        when ctx.outcome = fail      label: tolerated
     check_tbd_scenarios -> par_tier1_dispatch      when ctx.tool_stdout startswith tbd-check-ok   label: no_tbds
     check_tbd_scenarios -> tbd_gate_fail           when ctx.tool_stdout startswith tbd-check-fail label: has_tbds
+    check_tbd_scenarios -> par_tier1_dispatch      when ctx.outcome = fail                        label: tool_failed_tolerated
     check_tbd_scenarios -> par_tier1_dispatch
     tbd_gate_fail -> Exit
     no_state_exit -> Exit
