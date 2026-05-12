@@ -584,6 +584,8 @@ workflow SpecToSprints
 
       ## Rules
       - Every FR from .ai/spec_analysis.md must appear in at least one sprint
+      - **Strict topological ID ordering (no back-edges):** every entry in a sprint's `depends_on` MUST have a *strictly lower* ID than the sprint itself. If Sprint 020 says it needs work from "Sprint 030", that is a back-edge — renumber so that the dependency comes earlier in the ID sequence. Lower-numbered sprints depending on higher-numbered sprints is the single most common cause of `deps_blocked_exit` cycles (see dr/docs/known_issues.md ISSUE-001).
+      - **Test sprints come last:** any sprint whose purpose is end-to-end verification, integration test, smoke test, or pilot/launch readiness must have the highest IDs in the plan. They depend on the feature sprints; the feature sprints do NOT depend on them. If you find yourself adding a test sprint as a dep of a feature sprint, the test sprint is misnumbered — it should come later.
       - No dependency cycles
       - Sprint IDs are sequential zero-padded 3-digit (000, 001, ...)
       - Bootstrap sprints come first, feature sprints follow, capstone sprint is always last
@@ -607,7 +609,7 @@ workflow SpecToSprints
       Perform ALL of the following checks:
 
       1. **Sizing audit:** Any sprint with >10 DoD items or referencing >3 subsystems? List each violation and how to split.
-      2. **Dependency cycle detection:** Trace the depends_on graph. If any cycle exists, list the cycle.
+      2. **Dependency cycle detection + back-edge detection:** Trace the depends_on graph. (a) List any cycle. (b) For each sprint, check whether every entry in `depends_on` has a *strictly lower* ID than the sprint itself — any higher-or-equal-ID dep is a back-edge and is a hard-fail violation. List every back-edge as `<self> ← <bad-dep>` with a recommended fix (drop the dep, renumber, or fold scope).
       3. **FR coverage matrix:** For every FR in spec_analysis.md, find which sprint covers it. List any orphaned FRs.
       4. **Scope fence quality:** Each sprint should have meaningful off_limits constraints, not just boilerplate. Flag sprints with vague or missing scope fences.
       5. **Validation command quality:** Are all validation commands concrete and runnable? Flag any pseudocode or "verify manually" items.
@@ -692,7 +694,21 @@ workflow SpecToSprints
             old_dep: "<failed_id>"
             new_deps: ["<last_new_id>"]
 
-      For dependents_to_rewrite: the original_dependents should now depend on the LAST new sub-sprint (the one that completes the original scope).
+      For `dependents_to_rewrite`: original_dependents should now depend on the LAST new sub-sprint (the one that completes the original scope).
+
+      ## CRITICAL — Back-edge guard
+
+      A back-edge is when a sprint depends on another sprint with a higher ID. Back-edges create cycles when combined with the splice that adds new children. The runner's `find_next_sprint` will then refuse to make progress and exit with `deps_blocked_exit`. This is a confirmed recurring bug (see dr/docs/known_issues.md ISSUE-001).
+
+      To prevent back-edges, before writing `redecompose-result.yaml`:
+
+      1. **For each new child sprint:** its `depends_on` MUST contain ONLY IDs strictly less than the child's own ID. The new children inherit from `depends_on_from_original`, but if any of those inherited IDs is greater than the child's ID, DROP it. If the failed sprint had back-edges of its own, do not propagate them to children.
+
+      2. **For each entry in `dependents_to_rewrite`:** the dependent's ID MUST be strictly greater than every ID in its `new_deps`. If the dependent has a LOWER ID than the new last-child (e.g., dependent is sprint 022 and the new last-child is 035), then DO NOT rewrite that dependent. Instead, omit it from `dependents_to_rewrite` and add a `dependents_omitted` list with a one-line reason:
+           dependents_omitted:
+             "022": "back-edge would form: 022 < 035; the dependent runs first by ID and should not depend on a later-numbered child"
+
+      The runner's `splice_ledger` faithfully applies whatever you write — so the agent has to be the one who refuses to introduce back-edges. If you cannot rewrite a dependent without a back-edge, OMIT it and let the human/PlanManager decide whether the dependent still needs to wait.
 
       HARD CONSTRAINT: Do NOT modify existing sprint files. Do NOT modify ledger.yaml. Only create new SPRINT files and the result manifest.
 

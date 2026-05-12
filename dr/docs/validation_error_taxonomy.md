@@ -93,6 +93,38 @@ These don't have a file basename; they reference global state.
 | `oversized-sprint-SPRINT-NNN.yaml-K-dod-items` | The sprint has K > 15 DoD items, which signals scope breadth | Trim the `dod` list down. Don't redecompose from inside RewriteOutput — that's the runner's job. Pick the most essential DoD items and drop the marginal ones. |
 | `missing-sprint-yaml-NNN` | A redecompose-result references sprint NNN but the file `.ai/sprints/SPRINT-NNN.yaml` is missing | Write the missing sprint YAML using the standard template (see `write_sprint_docs` for the format). |
 
+### 7. Back-edge (dep-graph) errors — `back-edge-<sprint-id>-<bad-dep>`
+
+A sprint's `depends_on` references another sprint with a *higher or equal* ID.
+This is a topological violation — lower-ID sprints run first, so depending on
+a higher-ID sprint creates a back-edge that can close into a cycle and trigger
+`deps_blocked_exit` at runtime (see `dr/docs/known_issues.md` ISSUE-001).
+
+Token form: `back-edge-<self>-<bad-dep>` where `<self>` is the sprint with the
+bad reference and `<bad-dep>` is the offending ID.
+
+**Fix recipe — for each token:**
+
+1. Open `.ai/sprints/SPRINT-<self>.yaml`. Remove `<bad-dep>` from `depends_on`.
+2. Open `.ai/ledger.yaml`. Remove `<bad-dep>` from `(.sprints[] | select(.id == "<self>")).depends_on`.
+3. Decide whether the missing semantic dependency matters:
+   - If `<bad-dep>` is genuinely a prerequisite, the planning is wrong — rename so the prerequisite has a lower ID, OR fold the work into an existing lower-ID sprint.
+   - If it's a spurious back-edge (e.g., introduced by the capstone auto-fix or redecompose splice), simply dropping it is enough.
+4. Re-run validation. If multiple back-edges share a `<self>`, fix them in one pass.
+
+**Surgical example (one back-edge):**
+
+    self="020"
+    bad="030"
+    yq -i "(.sprints[] | select(.id == \"$self\")).depends_on -= [\"$bad\"]" .ai/ledger.yaml
+    yq -i ".depends_on -= [\"$bad\"]" ".ai/sprints/SPRINT-$self.yaml"
+
+**Do NOT** try to "fix" the back-edge by renumbering sprints unless the human
+agrees — the IDs are referenced by other files (ledger, deps, history,
+recovery analyses). Dropping the bad dep is almost always the right answer
+because the topological order was the intended order and the back-edge was
+introduced spuriously.
+
 ---
 
 ## Heuristics

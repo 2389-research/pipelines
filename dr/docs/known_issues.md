@@ -86,16 +86,23 @@ yq -i '.depends_on = ["017", "018"]' .ai/sprints/SPRINT-020.yaml
 1. **Add a DAG-validation check to `validate_output`** in the decomposition cluster:
    for each sprint, assert `all(d < id for d in depends_on)`. If false, emit token
    `back-edge-<sprint-id>-<bad-dep>` and let `RewriteOutput` fix it (taxonomy entry
-   needed: "drop deps with id >= self.id").
+   needed: "drop deps with id >= self.id"). **✓ Shipped** in `dr/parts/decomposition/write_and_validate_sprint_artifacts.dip:validate_output` (back-edge loop emits `back-edge-<self>-<bad-dep>` tokens). Recipe in `dr/docs/validation_error_taxonomy.md:7.`
 2. **Add an explicit constraint to the decomposition agent prompt:** "depends_on
    MUST only reference sprints with strictly lower IDs. If sprint A needs work from
    sprint B, then A's ID must be greater than B's ID — renumber if necessary."
+   **✓ Shipped** in `dr/spec_to_sprints.dip:write_sprint_docs` (Rules block now mandates strict topological ID ordering AND "test sprints come last"). DecompositionManager also now checks for back-edges as a hard-fail.
 3. **Audit the capstone auto-fix** for ordering invariants — it currently only
    rewrites the LAST sprint's deps but may need to also strip back-edges from earlier
-   sprints when redecomposition reorders things.
+   sprints when redecomposition reorders things. **✓ Shipped** in `dr/parts/decomposition/write_and_validate_sprint_artifacts.dip:validate_output` — capstone auto-fix now only adds deps with strictly lower IDs than the capstone, so a redecomp-appended sprint can't be made to depend on lower-ID test sprints.
+4. **Bound the redecompose splice's `dependents_to_rewrite` so it never creates back-edges.** **✓ Shipped** in `dr/spec_to_sprints.dip:redecompose_single` prompt — agent now must omit dependents whose IDs are LOWER than the new last-child, and emit a `dependents_omitted` block instead.
 
-### Test fixture (when adding a fix)
+### Remaining work
 
-`nifb-dr` workspace at commit immediately before the manual dep-cycle fix has a
-captured cycle — point a regression test at it. Suggested fixture location:
-`dr/tests/fixtures/dep-cycle-from-decomposition/`.
+- **Stale `.ai/redecompose-request.yaml` replay after tracker restart.** Not yet
+  hardened. Workaround: clear it manually before relaunching tracker. Fix
+  candidates: timestamp/run-id-stamp the request file and reject stale ones; or
+  clear it in `report_progress` if its `failed_sprint_id` already has a non-failed status.
+- **Regression test fixture.** `nifb-dr` workspace at commit immediately before
+  the manual dep-cycle fix has a captured cycle — should be lifted into a fixture
+  at `dr/tests/fixtures/dep-cycle-from-decomposition/` so `validate_output` is
+  regression-tested against it.

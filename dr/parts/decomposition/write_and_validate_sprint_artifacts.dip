@@ -229,11 +229,31 @@ workflow WriteAndValidateSprintArtifacts
           errors="${errors}oversized-sprint-${base}-${dod_count}-dod-items "
         fi
       done
-      # Capstone check: last sprint must depend on all other sprints — auto-fix if wrong
+      # Back-edge detection: depends_on must reference only sprints with strictly lower IDs.
+      # Back-edges are the root cause of deps_blocked_exit cycles (see dr/docs/known_issues.md ISSUE-001).
+      # We detect them in BOTH the per-sprint YAML and the ledger so a fix has to land in both places.
+      for f in .ai/sprints/SPRINT-*.yaml; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f" .yaml)" in SPRINT-[0-9A-Z]) ;; SPRINT-[0-9][0-9A-Z]) ;; SPRINT-[0-9][0-9][0-9A-Z]) ;; *) continue ;; esac
+        base=$(basename "$f")
+        self_id=$(yq '.id' "$f" 2>/dev/null || echo "")
+        [ -z "$self_id" ] || [ "$self_id" = "null" ] && continue
+        for dep in $(yq '.depends_on[]?' "$f" 2>/dev/null); do
+          # String compare works because all IDs are zero-padded same-width (000-999).
+          if [ "$dep" \> "$self_id" ] || [ "$dep" = "$self_id" ]; then
+            errors="${errors}back-edge-${self_id}-${dep} "
+          fi
+        done
+      done
+      # Capstone check: last-by-ID sprint should depend on the most prior sprints.
+      # Auto-fix is now constrained to only add deps with strictly lower IDs than the capstone —
+      # never introducing back-edges. If we ever append a new "last" sprint via redecompose,
+      # the auto-fix will safely include all earlier IDs without making the new sprint depend
+      # on lower-ID test sprints that were always meant to run later.
       if yq -e '.sprints[-1].id' .ai/ledger.yaml >/dev/null 2>&1; then
-        all_ids=$(yq '.sprints[].id' .ai/ledger.yaml | sort)
         last_id=$(yq '.sprints[-1].id' .ai/ledger.yaml)
-        other_ids=$(printf '%s' "$all_ids" | grep -v "^${last_id}$" | sort)
+        # Only add IDs strictly less than last_id (preserves topological order).
+        other_ids=$(yq '.sprints[].id' .ai/ledger.yaml | awk -v cap="$last_id" '$0 < cap' | sort)
         capstone_deps=$(yq ".sprints[-1].depends_on[]" .ai/ledger.yaml 2>/dev/null | sort)
         if [ "$other_ids" != "$capstone_deps" ]; then
           yq -i "(.sprints[-1]).depends_on = []" .ai/ledger.yaml
