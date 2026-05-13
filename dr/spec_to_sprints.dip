@@ -864,7 +864,9 @@ workflow SpecToSprints
     check_resume -> redecompose_single      when ctx.tool_stdout = redecompose-mode  label: redecompose
     redecompose_single -> Exit             when ctx.outcome = fail  label: redecompose_failed
     redecompose_single -> write_ledger_redecompose
-    write_ledger_redecompose -> write_and_validate
+    write_ledger_redecompose -> write_and_validate      when ctx.outcome = success  label: ledger_appended
+    write_ledger_redecompose -> Exit                    when ctx.outcome = fail     label: ledger_append_failed
+    write_ledger_redecompose -> Exit
     merge_decomposition -> Exit            when ctx.outcome = fail  label: merge_failed
     merge_decomposition -> DecompositionManager
     DecompositionManager -> Exit           when ctx.outcome = fail  label: dm_failed
