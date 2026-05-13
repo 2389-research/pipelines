@@ -98,11 +98,5 @@ yq -i '.depends_on = ["017", "018"]' .ai/sprints/SPRINT-020.yaml
 
 ### Remaining work
 
-- **Stale `.ai/redecompose-request.yaml` replay after tracker restart.** Not yet
-  hardened. Workaround: clear it manually before relaunching tracker. Fix
-  candidates: timestamp/run-id-stamp the request file and reject stale ones; or
-  clear it in `report_progress` if its `failed_sprint_id` already has a non-failed status.
-- **Regression test fixture.** `nifb-dr` workspace at commit immediately before
-  the manual dep-cycle fix has a captured cycle — should be lifted into a fixture
-  at `dr/tests/fixtures/dep-cycle-from-decomposition/` so `validate_output` is
-  regression-tested against it.
+- **Stale `.ai/redecompose-request.yaml` replay after tracker restart.** **✓ Shipped** in `dr/sprint_runner.dip:report_progress` — the request is now validated against the current status of its `failed_sprint_id`; if the target has moved on (anything other than `failed`/`in_progress`), the file is discarded with a stderr note instead of replaying.
+- **Regression test fixture.** **✓ Shipped** at `dr/tests/fixtures/dep-cycle-from-decomposition/` (4-sprint ledger with a 002 ← 003 back-edge), driven by `dr/scripts/test_back_edge_detection.sh`. Runs in under a second, no LLM calls.
