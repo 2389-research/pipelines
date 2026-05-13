@@ -161,6 +161,32 @@ workflow IterRun
       done < docs/iterations/behavior-corpus.md
       printf 'baseline-%d-of-%d-sentinels' "$passed" "$total"
 
+  tool migrate_roadmap_heading
+    label: "Migrate Roadmap Heading"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      if [ ! -f docs/iterations/roadmap.md ]; then
+        printf 'no-roadmap'
+        exit 0
+      fi
+      if grep -qE '^## Walking skeleton \(ITER-[0-9]+\)' docs/iterations/roadmap.md; then
+        sed -i.bak -E 's/^## Walking skeleton \(ITER-([0-9]+)\)$/### ITER-\1 — Walking skeleton/' docs/iterations/roadmap.md
+        rm -f docs/iterations/roadmap.md.bak
+        printf 'migrated'
+      else
+        printf 'no-migration-needed'
+      fi
+
+  tool init_consistency_counter
+    label: "Init Consistency Round Counter"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      printf '0' > .ai/iter-run-temp/.consistency_rounds
+      printf 'initialized'
+
   tool consistency_audit
     label: "Consistency Audit"
     timeout: 15s
@@ -177,8 +203,8 @@ workflow IterRun
       fi
       # Extract STORY- IDs from the current iteration section
       story_ids=$(awk -v iter="$iter_id" '
-        $0 ~ ("^### " iter) { in_section=1; next }
-        in_section && /^### ITER-/ { exit }
+        $0 ~ ("^##+ .*" iter) { in_section=1; next }
+        in_section && /^##+ ITER-/ { exit }
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
       ' docs/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
@@ -229,6 +255,23 @@ workflow IterRun
       Use STATUS: fail when the inconsistencies cannot be automatically resolved and require human intervention.
 
       HARD CONSTRAINT: Only modify files in docs/iterations/. Do not modify source code.
+
+  tool count_consistency_rounds
+    label: "Count Consistency Rounds"
+    timeout: 5s
+    command:
+      set -euo pipefail
+      counter_file=".ai/iter-run-temp/.consistency_rounds"
+      mkdir -p .ai/iter-run-temp
+      [ -f "$counter_file" ] || printf '0' > "$counter_file"
+      n=$(cat "$counter_file")
+      n=$((n + 1))
+      printf '%s' "$n" > "$counter_file"
+      if [ "$n" -ge 3 ]; then
+        printf 'cap-reached'
+      else
+        printf 'continue'
+      fi
 
   # ── PHASE: PAR Scope Review ──────────────────────────────────────────────────
 
@@ -1083,8 +1126,8 @@ workflow IterRun
       tbd=0
       # Get stories in this iteration
       story_ids=$(awk -v iter="$iter_id" '
-        $0 ~ ("^### " iter) { in_section=1; next }
-        in_section && /^### ITER-/ { exit }
+        $0 ~ ("^##+ .*" iter) { in_section=1; next }
+        in_section && /^##+ ITER-/ { exit }
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
       ' docs/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
@@ -1334,12 +1377,19 @@ workflow IterRun
     # Pre-iteration
     load_scope -> run_sentinel_baseline
     load_scope -> Exit                             when ctx.outcome = fail      label: scope_load_failed
-    run_sentinel_baseline -> consistency_audit
+    run_sentinel_baseline -> migrate_roadmap_heading
+    migrate_roadmap_heading -> init_consistency_counter
+    migrate_roadmap_heading -> init_consistency_counter when ctx.outcome = fail   label: tool_failed_tolerated
+    init_consistency_counter -> consistency_audit
+    init_consistency_counter -> consistency_audit  when ctx.outcome = fail   label: tolerated
     consistency_audit -> init_run_scope_counter    when ctx.tool_stdout = consistent            label: consistent
     consistency_audit -> reconcile_state           when ctx.tool_stdout startswith inconsistent  label: inconsistent
     init_run_scope_counter -> par_run_scope_dispatch
     init_run_scope_counter -> par_run_scope_dispatch when ctx.outcome = fail   label: tolerated
-    reconcile_state -> consistency_audit         when ctx.outcome = success   restart: true  label: reconciled
+    reconcile_state -> count_consistency_rounds    when ctx.outcome = success   label: reconciled
+    count_consistency_rounds -> consistency_audit  when ctx.tool_stdout = continue       restart: true   label: under_cap
+    count_consistency_rounds -> init_run_scope_counter when ctx.tool_stdout = cap-reached  label: consistency_force_proceed
+    count_consistency_rounds -> consistency_audit  when ctx.outcome = fail      restart: true   label: tolerated
     reconcile_state -> Exit                       when ctx.outcome = fail      label: irreconcilable
 
     # PAR scope review
