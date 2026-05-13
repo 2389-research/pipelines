@@ -760,7 +760,7 @@ workflow SpecToSprints
   human approval_gate
     label: "Approve Sprint Plan"
     mode: freeform
-    default: approve
+    default: skip
     prompt:
       The sprint plan has been generated and is **available on disk for review**:
 
@@ -772,11 +772,12 @@ workflow SpecToSprints
       `present_plan` summary that was just emitted; the on-disk files are the source of truth.
 
       Options:
-      - **approve**  — ship this plan, proceed to write sprint files
+      - **skip**     — ship this plan (same effect as approve, but is the safe default for --auto-approve)
       - **adjust**   — describe what you'd like changed; `apply_feedback` will rewrite `.ai/sprint_plan.md` and re-prompt
-      - **skip**     — continue without explicit approval (same effect as approve, but logs it differently)
 
-      Default: approve
+      Default: skip
+
+      (Note: with `--auto-approve`, the runner routes by first-letter match against the bracketed edge keys; `skip` deterministically picks `[S] Approve / Skip`. Do NOT change the default to `approve` — that first-letter-matches `[A] Revise plan` and loops forever. The bug bit us once already.)
 
   agent apply_feedback
     label: "Apply Feedback"
