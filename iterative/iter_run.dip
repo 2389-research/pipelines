@@ -166,7 +166,7 @@ workflow IterRun
     timeout: 15s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
         printf 'inconsistent-no-iteration-id'
         exit 0
@@ -455,7 +455,7 @@ workflow IterRun
     timeout: 10s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
         printf 'error-no-iteration-id'
         exit 1
@@ -481,7 +481,7 @@ workflow IterRun
     timeout: 5s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       task_total=0
       task_done=0
       if [ -f .ai/iter-run-temp/task_status.txt ]; then
@@ -1058,7 +1058,7 @@ workflow IterRun
     timeout: 5s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
       done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
       printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** per-task-loop\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
@@ -1073,7 +1073,7 @@ workflow IterRun
     timeout: 300s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ ! -f docs/iterations/behavior-corpus.md ]; then
         printf 'impacted-all-tbd'
         exit 0
@@ -1192,7 +1192,7 @@ workflow IterRun
     timeout: 15s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
         printf 'todos-clean'
         exit 0
@@ -1286,7 +1286,7 @@ workflow IterRun
     timeout: 10s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
         printf 'wrapup-invalid-no-iteration-id'
         exit 0
@@ -1313,7 +1313,7 @@ workflow IterRun
     timeout: 30s
     command:
       set -euo pipefail
-      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]')
+      iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       git add docs/iterations/
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
