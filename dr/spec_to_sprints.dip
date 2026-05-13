@@ -872,7 +872,6 @@ workflow SpecToSprints
     present_plan -> Exit                   when ctx.outcome = fail  label: present_failed
     present_plan -> approval_gate
     approval_gate -> skip_approval   label: "skip"
-    approval_gate -> skip_approval   label: "approve"
     approval_gate -> apply_feedback  label: "adjust"
     apply_feedback -> Exit                 when ctx.outcome = fail  label: apply_failed
     apply_feedback -> approval_gate  restart: true
