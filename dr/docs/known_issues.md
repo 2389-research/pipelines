@@ -100,3 +100,25 @@ yq -i '.depends_on = ["017", "018"]' .ai/sprints/SPRINT-020.yaml
 
 - **Stale `.ai/redecompose-request.yaml` replay after tracker restart.** **✓ Shipped** in `dr/sprint_runner.dip:report_progress` — the request is now validated against the current status of its `failed_sprint_id`; if the target has moved on (anything other than `failed`/`in_progress`), the file is discarded with a stderr note instead of replaying.
 - **Regression test fixture.** **✓ Shipped** at `dr/tests/fixtures/dep-cycle-from-decomposition/` (4-sprint ledger with a 002 ← 003 back-edge), driven by `dr/scripts/test_back_edge_detection.sh`. Runs in under a second, no LLM calls.
+
+---
+
+## ISSUE-002 — Parallel client runs share host Docker port-space
+
+**Severity:** High (silent data corruption risk; reliable cascade into pipeline crash)
+**Discovered:** 2026-05-13 on `nifb-dr-2` round 3 vs. `url-shortener` eval, both running in parallel
+**Pipeline:** sprint_exec.dip → implement_and_validate → ValidateBuild (any sprint whose `validation.commands` invoke `docker compose up`)
+
+### Symptom
+
+When two pipeline runs against different client workspaces both shell out to `docker compose up -d` and both compose files declare a service on the same host port (e.g., Postgres 5432), only one wins. The other gets `Bind for 0.0.0.0:5432 failed: port is already allocated`, ValidateBuild fails repeatedly, recovery fires, redecompose runs, then a downstream tool also can't get docker → cascading failure. This is what crashed nifb-dr-2 round 3.
+
+### Fix candidates
+
+1. **Per-workspace port randomization:** at workspace init (or in `EnsureLedger`), allocate a random unused port per service and inject it into the `make`/`compose`/env config the implementer reads. Implementer's docker-compose templates then use `${POSTGRES_PORT}` instead of hardcoded `5432`. Cleanest, most invasive.
+2. **Run-level port reservation:** a tracker-level shared lockfile that gates docker compose so only one workspace can bind a given port at a time. Smaller change, but serializes the docker phase across runs (negating much of the parallelism benefit).
+3. **Document parallelism is single-Docker only:** add a check in `EnsureLedger` that detects an already-running compose stack and aborts with a clear message. Cheapest but only protects against shooting your own foot.
+
+### Workaround until fixed
+
+Serialize: only one client run at a time that uses docker compose. The eval harness (`pipelines-eval/scripts/run_eval.sh`) is already sequential per-spec; that's fine. The problem is running an eval alongside an unrelated client build.
