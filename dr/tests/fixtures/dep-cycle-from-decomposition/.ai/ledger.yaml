@@ -1,0 +1,51 @@
+project:
+  name: "back-edge-fixture"
+  stack:
+    lang: javascript
+    runner: npm
+    test: jest
+    lint: eslint
+    build: make
+  created_at: "2026-05-13T00:00:00Z"
+
+sprints:
+  - id: "000"
+    title: "Project Scaffold"
+    status: planned
+    bootstrap: true
+    depends_on: []
+    complexity: low
+    created_at: "2026-05-13T00:00:00Z"
+    updated_at: "2026-05-13T00:00:00Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "001"
+    title: "Hello World"
+    status: planned
+    bootstrap: true
+    depends_on: ["000"]
+    complexity: low
+    created_at: "2026-05-13T00:00:00Z"
+    updated_at: "2026-05-13T00:00:00Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "002"
+    title: "Feature A (with bogus back-edge to 003)"
+    status: planned
+    bootstrap: false
+    depends_on: ["001", "003"]
+    complexity: low
+    created_at: "2026-05-13T00:00:00Z"
+    updated_at: "2026-05-13T00:00:00Z"
+    attempts: 0
+    total_cost: "0.00"
+  - id: "003"
+    title: "Integration Test"
+    status: planned
+    bootstrap: false
+    depends_on: ["000", "001", "002"]
+    complexity: low
+    created_at: "2026-05-13T00:00:00Z"
+    updated_at: "2026-05-13T00:00:00Z"
+    attempts: 0
+    total_cost: "0.00"

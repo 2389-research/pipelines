@@ -1,0 +1,33 @@
+id: "000"
+title: "Project Scaffold"
+status: planned
+bootstrap: true
+complexity: low
+depends_on: []
+dependents: ["001"]
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+  touch_only: []
+entry_preconditions:
+  files_must_exist: []
+  sprints_must_be_complete: []
+artifacts:
+  creates:
+    - path: "package.json"
+      type: config
+  modifies: []
+validation:
+  commands:
+    - cmd: "test -f package.json"
+      expect: exit_0
+dod:
+  - "package.json exists"
+history:
+  attempts: []

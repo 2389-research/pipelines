@@ -1,0 +1,33 @@
+id: "001"
+title: "Hello World"
+status: planned
+bootstrap: true
+complexity: low
+depends_on: ["000"]
+dependents: []
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+  touch_only: []
+entry_preconditions:
+  files_must_exist: []
+  sprints_must_be_complete: []
+artifacts:
+  creates:
+    - path: "src/feature-001.js"
+      type: module
+  modifies: []
+validation:
+  commands:
+    - cmd: "test -f src/feature-001.js"
+      expect: exit_0
+dod:
+  - "feature 001 delivered"
+history:
+  attempts: []

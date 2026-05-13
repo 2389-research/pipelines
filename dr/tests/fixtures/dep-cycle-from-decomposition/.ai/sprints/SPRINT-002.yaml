@@ -1,0 +1,33 @@
+id: "002"
+title: "Feature A (with bogus back-edge to 003)"
+status: planned
+bootstrap: false
+complexity: low
+depends_on: ["001", "003"]
+dependents: []
+stack:
+  lang: javascript
+  runner: npm
+  test: jest
+  lint: eslint
+  build: make
+scope_fence:
+  off_limits:
+    - "do not modify .ai/ledger.yaml"
+  touch_only: []
+entry_preconditions:
+  files_must_exist: []
+  sprints_must_be_complete: []
+artifacts:
+  creates:
+    - path: "src/feature-002.js"
+      type: module
+  modifies: []
+validation:
+  commands:
+    - cmd: "test -f src/feature-002.js"
+      expect: exit_0
+dod:
+  - "feature 002 delivered"
+history:
+  attempts: []

@@ -139,9 +139,24 @@ workflow SprintRunner
       set -eu
       # If the inner subgraph ad-libbed a redecompose-request, route to the
       # redecompose flow even when execute_sprint returned success.
+      # But first: validate the request is still relevant. If the failed_sprint_id
+      # already has a non-failed status (completed/redecomposed/planned), this is
+      # a stale replay from a prior tracker run that was killed mid-redecompose.
+      # See dr/docs/known_issues.md ISSUE-001 "Stale redecompose-request replay".
       if [ -f .ai/redecompose-request.yaml ]; then
-        printf 'redecompose-pending'
-        exit 0
+        req_target=$(yq '.failed_sprint_id' .ai/redecompose-request.yaml 2>/dev/null || echo "")
+        if [ -z "$req_target" ] || [ "$req_target" = "null" ]; then
+          printf 'stale-redecompose-request-no-target-discarded\n' >&2
+          rm -f .ai/redecompose-request.yaml
+        else
+          cur_status=$(yq ".sprints[] | select(.id == \"$req_target\") | .status" .ai/ledger.yaml 2>/dev/null || echo "")
+          if [ "$cur_status" = "failed" ] || [ "$cur_status" = "in_progress" ]; then
+            printf 'redecompose-pending'
+            exit 0
+          fi
+          printf 'stale-redecompose-request-target-%s-now-%s-discarded\n' "$req_target" "$cur_status" >&2
+          rm -f .ai/redecompose-request.yaml
+        fi
       fi
       total=$(yq '.sprints | length' .ai/ledger.yaml)
       done=$(yq '[.sprints[] | select(.status == "completed")] | length' .ai/ledger.yaml)
