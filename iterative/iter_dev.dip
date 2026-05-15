@@ -65,9 +65,9 @@ workflow IterDev
         printf 'needs-scope'
         exit 0
       fi
-      pending=$(grep -c '^\*\*Status:\*\* pending' "$iter_dir/roadmap.md" 2>/dev/null || echo 0)
-      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$iter_dir/roadmap.md" 2>/dev/null || echo 0)
-      done_count=$(grep -c '^\*\*Status:\*\* done' "$iter_dir/roadmap.md" 2>/dev/null || echo 0)
+      pending=$(grep -c '^\*\*Status:\*\* pending' "$iter_dir/roadmap.md" 2>/dev/null) || pending=0
+      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$iter_dir/roadmap.md" 2>/dev/null) || in_progress=0
+      done_count=$(grep -c '^\*\*Status:\*\* done' "$iter_dir/roadmap.md" 2>/dev/null) || done_count=0
       if [ "$pending" -gt 0 ] || [ "$in_progress" -gt 0 ]; then
         printf 'resume-run-pending-%s-inprogress-%s-done-%s' "$pending" "$in_progress" "$done_count"
         exit 0
@@ -101,8 +101,8 @@ workflow IterDev
         printf 'more-iterations'
         exit 0
       fi
-      pending=$(grep -c '^\*\*Status:\*\* pending' "$roadmap" 2>/dev/null || echo 0)
-      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$roadmap" 2>/dev/null || echo 0)
+      pending=$(grep -c '^\*\*Status:\*\* pending' "$roadmap" 2>/dev/null) || pending=0
+      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$roadmap" 2>/dev/null) || in_progress=0
       if [ "$pending" -gt 0 ] || [ "$in_progress" -gt 0 ]; then
         printf 'more-iterations'
         exit 0
@@ -132,9 +132,9 @@ workflow IterDev
         printf 'progress-no-roadmap'
         exit 0
       fi
-      pending=$(grep -c '^\*\*Status:\*\* pending' "$roadmap" 2>/dev/null || echo 0)
-      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$roadmap" 2>/dev/null || echo 0)
-      done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null || echo 0)
+      pending=$(grep -c '^\*\*Status:\*\* pending' "$roadmap" 2>/dev/null) || pending=0
+      in_progress=$(grep -c '^\*\*Status:\*\* in_progress' "$roadmap" 2>/dev/null) || in_progress=0
+      done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null) || done_count=0
       total=$((pending + in_progress + done_count))
       if [ "$total" -gt 0 ]; then
         pct=$((done_count * 100 / total))
@@ -226,8 +226,8 @@ workflow IterDev
     command:
       set -euo pipefail
       roadmap="docs/iterations/roadmap.md"
-      done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null || echo 0)
-      total=$(grep -c '^\*\*Status:\*\*' "$roadmap" 2>/dev/null || echo 0)
+      done_count=$(grep -c '^\*\*Status:\*\* done' "$roadmap" 2>/dev/null) || done_count=0
+      total=$(grep -c '^\*\*Status:\*\*' "$roadmap" 2>/dev/null) || total=0
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       mkdir -p docs/iterations
       audit_result=$(cat .ai/iter-audit-result.txt 2>/dev/null || printf 'No audit result file found.')
@@ -338,6 +338,7 @@ workflow IterDev
     audit_iteration -> report_loop_progress    when ctx.outcome = success   label: audit_clean
     audit_iteration -> report_loop_progress    when ctx.outcome = fail      label: audit_gaps_continue
     report_loop_progress -> check_termination
+    report_loop_progress -> check_termination  when ctx.outcome = fail      label: tolerated
     check_termination -> run_iteration         when ctx.tool_stdout = more-iterations          label: continue    restart: true
     check_termination -> final_audit           when ctx.tool_stdout startswith ready-for-final  label: final
     check_termination -> update_final_progress when ctx.tool_stdout = final-clean               label: all_clean
