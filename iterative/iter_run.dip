@@ -529,7 +529,7 @@ workflow IterRun
       task_done=0
       if [ -f .ai/iter-run-temp/task_status.txt ]; then
         task_total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
-        task_done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
+        task_done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null) || task_done=0
       fi
       mkdir -p docs/iterations
       printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** task-decomposition\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
@@ -1103,7 +1103,7 @@ workflow IterRun
       set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       total=$(wc -l < .ai/iter-run-temp/task_status.txt | tr -d ' ')
-      done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null || printf '0')
+      done=$(grep -c '|done' .ai/iter-run-temp/task_status.txt 2>/dev/null) || done=0
       printf '# Iteration Progress\n\n**Iteration:** %s\n**Phase:** per-task-loop\n**Tasks:** %s/%s done\n**Updated:** %s\n' \
         "$iter_id" "$done" "$total" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         > docs/iterations/progress.md
