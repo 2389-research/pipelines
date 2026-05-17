@@ -778,6 +778,7 @@ workflow IterAudit
     check_tbd_scenarios -> tbd_gate_fail           when ctx.tool_stdout startswith tbd-check-fail label: has_tbds
     check_tbd_scenarios -> par_tier1_dispatch      when ctx.outcome = fail                        label: tool_failed_tolerated
     check_tbd_scenarios -> par_tier1_dispatch
+    tbd_gate_fail -> Exit                          when ctx.outcome = fail      label: hard_stop
     tbd_gate_fail -> Exit
     no_state_exit -> Exit
     par_tier1_dispatch -> par_tier1_auditor_a
