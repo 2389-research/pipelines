@@ -11,40 +11,17 @@ workflow IterDev
     max_retries: 3
     max_restarts: 100
 
-  agent Start
+  tool Start
     label: Start
-    max_turns: 1
-    auto_status: true
-    prompt:
-      Acknowledge that the iterative development pipeline is starting.
+    timeout: 5s
+    command:
+      printf 'pipeline-start'
 
-      This pipeline drives the full autonomous development lifecycle:
-      1. Bootstrap: extract requirements from spec, scope a walking skeleton and roadmap
-      2. Main loop: run iterations and audit each one until the roadmap is done
-      3. Final audit: verify behavior evidence covers every externally observable requirement
-
-      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start.
-
-      End with exactly one of:
-      STATUS: success
-      STATUS: fail
-
-      Always emit STATUS: success.
-
-  agent Exit
+  tool Exit
     label: Exit
-    max_turns: 1
-    auto_status: true
-    prompt:
-      Iterative development pipeline complete. Report final status.
-
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
-
-      End with exactly one of:
-      STATUS: success
-      STATUS: fail
-
-      Always emit STATUS: success.
+    timeout: 5s
+    command:
+      printf 'pipeline-complete'
 
   tool check_resume
     label: "Check Resume State"
@@ -148,6 +125,7 @@ workflow IterDev
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    max_turns: 15
     prompt:
       An iteration has failed. Your job is to assess the failure type and decide whether to retry or stop.
 
@@ -180,6 +158,7 @@ workflow IterDev
     reasoning_effort: high
     fidelity: full
     auto_status: true
+    max_turns: 20
     prompt:
       You are performing the FINAL behavior-evidence audit before declaring the project complete.
 
@@ -260,6 +239,12 @@ workflow IterDev
 
       Always emit STATUS: success — this node only runs when the project is already complete.
 
+  # DIP102 ack: count_final_audit_rounds emits exactly one of two stdout
+  # markers (continue, cap-reached) on success and the third edge handles
+  # engine-failure outcome. The three conditional edges are exhaustive at
+  # runtime; adding an unconditional fallback would either route to the
+  # same target as a conditional (per brief, an infinite-loop trap) or
+  # skip the workflow-status write before Exit.
   tool count_final_audit_rounds
     label: "Count Final Audit Rounds"
     timeout: 5s
@@ -277,6 +262,11 @@ workflow IterDev
         printf 'continue'
       fi
 
+  # DIP101 ack: write_loop_context is reached only from check_termination's
+  # final-gaps branch and count_final_audit_rounds's continue / fail
+  # branches by design. All inbound conditional sources are themselves
+  # exhaustively routed at their origin, so this node firing only on the
+  # intended failure-remediation path is correct.
   tool write_loop_context
     label: "Write Loop Context for Restart"
     timeout: 10s
