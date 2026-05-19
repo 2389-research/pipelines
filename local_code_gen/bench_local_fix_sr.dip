@@ -49,6 +49,16 @@ workflow BenchLocalFixSR
 
       printf 'setup-done'
 
+  # DIP102 ack: RunTests' three conditional edges (tests-fail, tests-pass,
+  # tests-fail-cloud) are exhaustive over what the script emits — see the
+  # command body's final printf branches. Per tracker/CLAUDE.md (Edge
+  # routing — no unconditional fallbacks to loop targets), adding an
+  # unconditional fallback would route to the same target as one of the
+  # conditionals, which is the infinite-loop trap to avoid.
+  #
+  # DIP101 ack: LocalFix is conditionally reachable from RunTests by design
+  # (only runs when tests fail); Done is conditionally reachable because
+  # the conditional routing IS the pipeline logic, not a defect.
   tool RunTests
     label: "Run tests"
     timeout: 600s
@@ -91,6 +101,10 @@ workflow BenchLocalFixSR
         printf 'tests-fail'
       fi
 
+  # DIP102 ack: LocalFix's two conditional edges (local-fixed → RunTests
+  # restart, local-exhausted → Done) are exhaustive over what the SR
+  # rollback loop emits. Same same-target trap reasoning as RunTests
+  # above — no unconditional fallback safe to add.
   tool LocalFix
     label: "Local fix (qwen3.6:35b-a3b-q8_0, SR + rollback)"
     timeout: 600s
