@@ -50,14 +50,12 @@ workflow SpecToSprintsForLocalCodegen
       fi
       printf 'no_spec_found'
 
-  agent no_spec_exit
+  tool no_spec_exit
     label: "No Spec Found"
-    prompt:
-      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
-
-      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
-
-      To use this pipeline, place a spec file in the working directory and re-run.
+    timeout: 5s
+    command:
+      printf 'No spec file was found in the working directory. The pipeline cannot proceed without a spec.\n\nSearched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.\n\nTo use this pipeline, place a spec file in the working directory and re-run.\n' >&2
+      exit 1
 
   agent analyze_spec
     label: "Analyze Spec"
@@ -67,6 +65,8 @@ workflow SpecToSprintsForLocalCodegen
     writes: spec_analysis
     goal_gate: true
     retry_target: analyze_spec
+    fallback_target: Exit
+    max_turns: 25
     prompt:
       You are working in `run.working_dir`.
 
@@ -125,6 +125,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent decompose_claude
     label: "Claude Decomposition"
+    max_turns: 20
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -169,6 +170,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent decompose_gpt
     label: "GPT Decomposition"
+    max_turns: 20
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
@@ -213,6 +215,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent decompose_gemini
     label: "Gemini Decomposition"
+    max_turns: 20
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
@@ -261,6 +264,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent critique_claude_on_gpt
     label: "Claude Critique of GPT"
+    max_turns: 12
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -289,6 +293,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent critique_claude_on_gemini
     label: "Claude Critique of Gemini"
+    max_turns: 12
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -317,6 +322,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent critique_gpt_on_claude
     label: "GPT Critique of Claude"
+    max_turns: 12
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
@@ -345,6 +351,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent critique_gpt_on_gemini
     label: "GPT Critique of Gemini"
+    max_turns: 12
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
@@ -373,6 +380,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent critique_gemini_on_claude
     label: "Gemini Critique of Claude"
+    max_turns: 12
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
@@ -401,6 +409,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent critique_gemini_on_gpt
     label: "Gemini Critique of GPT"
+    max_turns: 12
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
@@ -438,6 +447,8 @@ workflow SpecToSprintsForLocalCodegen
     writes: sprint_plan
     goal_gate: true
     retry_target: merge_decomposition
+    fallback_target: Exit
+    max_turns: 20
     prompt:
       You are working in `run.working_dir`.
 
@@ -492,6 +503,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent present_plan
     label: "Present Sprint Plan"
+    max_turns: 10
     model: claude-sonnet-4-6
     provider: anthropic
     reads: sprint_plan
@@ -513,6 +525,7 @@ workflow SpecToSprintsForLocalCodegen
 
   agent apply_feedback
     label: "Apply Feedback"
+    max_turns: 15
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -929,6 +942,15 @@ workflow SpecToSprintsForLocalCodegen
       fi
       printf 'valid'
 
+  # DIP101 ack: commit_output is reached only when validate_output emits
+  # "valid". That's the intended design — only commit when validation
+  # passes. The conditional-only reachability IS the gate.
+  #
+  # DIP102 ack: validate_output has three exhaustive conditional edges
+  # (valid → commit_output, invalid-* → write_sprint_docs, outcome=fail
+  # → Exit). Per CodeRabbit's fix recommendation: validator-execution
+  # failures should NOT enter the rewrite loop (which previously happened
+  # via an unconditional fallback to write_sprint_docs).
   tool commit_output
     label: "Commit Output"
     timeout: 30s
@@ -951,8 +973,8 @@ workflow SpecToSprintsForLocalCodegen
 
   edges
     Start -> find_spec
-    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
     find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found  label: no_spec
+    find_spec -> analyze_spec                                          label: spec_found
     no_spec_exit -> Exit
     analyze_spec -> decompose_parallel
     decompose_parallel -> decompose_claude
@@ -984,6 +1006,7 @@ workflow SpecToSprintsForLocalCodegen
     setup_workspace -> write_sprint_docs
     write_sprint_docs -> write_ledger
     write_ledger -> validate_output
-    validate_output -> commit_output  when ctx.tool_stdout = valid  label: valid
-    validate_output -> write_sprint_docs  when ctx.tool_stdout != valid  label: fix_validation  restart: true
+    validate_output -> commit_output  when ctx.tool_stdout = valid                  label: valid
+    validate_output -> write_sprint_docs  when ctx.tool_stdout startswith invalid-  label: fix_validation  restart: true
+    validate_output -> Exit               when ctx.outcome = fail                    label: validate_crashed
     commit_output -> Exit

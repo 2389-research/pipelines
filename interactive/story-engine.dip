@@ -30,6 +30,7 @@ workflow story_engine
 
   agent Welcome
     label: Welcome
+    max_turns: 10
     goal_gate: true
     max_retries: 3
     retry_target: Welcome
@@ -54,6 +55,7 @@ workflow story_engine
 
   agent SetupWorld
     label: "Setup World"
+    max_turns: 15
     goal_gate: true
     max_retries: 3
     retry_target: SetupWorld
@@ -81,6 +83,7 @@ workflow story_engine
 
   agent WriteOpeningScene
     label: "Opening Scene"
+    max_turns: 15
     goal_gate: true
     max_retries: 3
     retry_target: WriteOpeningScene
@@ -121,6 +124,7 @@ workflow story_engine
 
   agent WriteNextScene
     label: "Write Next Scene"
+    max_turns: 15
     goal_gate: true
     max_retries: 3
     retry_target: WriteNextScene
@@ -185,6 +189,7 @@ workflow story_engine
 
   agent WriteFinalChapter
     label: "Write Finale"
+    max_turns: 15
     goal_gate: true
     max_retries: 3
     retry_target: WriteFinalChapter
@@ -223,6 +228,7 @@ workflow story_engine
 
   agent StorySummary
     label: "Story Summary"
+    max_turns: 10
     goal_gate: true
     max_retries: 3
     retry_target: StorySummary
