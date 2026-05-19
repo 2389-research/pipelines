@@ -122,6 +122,7 @@ workflow refactor_express
 
   tool SnapshotTests
     label: "Snapshot Test Baseline"
+    marker_grep: '^(baseline_green|baseline_red)$'
     timeout: 2m
     command:
       #!/bin/sh
@@ -205,6 +206,7 @@ workflow refactor_express
 
   tool VerifyCharacterization
     label: "Verify Characterization Tests"
+    marker_grep: '^(tests_green|tests_red)$'
     timeout: 2m
     command:
       #!/bin/sh
@@ -945,10 +947,10 @@ workflow refactor_express
     ReadRefactorSpec -> AnalyzeCodebase  label: "spec understood"  weight: 2
     ReadRefactorSpec -> FailureSummary  label: "no spec found"
     AnalyzeCodebase -> SnapshotTests
-    SnapshotTests -> PlanRefactor  when ctx.tool_stdout = baseline_green  label: "tests green  --  baseline captured"  weight: 2
+    SnapshotTests -> PlanRefactor  when ctx.tool_marker = baseline_green  label: "tests green  --  baseline captured"  weight: 2
     SnapshotTests -> WriteCharacterizationTests  label: "tests red or missing"
     WriteCharacterizationTests -> VerifyCharacterization
-    VerifyCharacterization -> PlanRefactor  when ctx.tool_stdout = tests_green  label: "characterization tests green"  weight: 2
+    VerifyCharacterization -> PlanRefactor  when ctx.tool_marker = tests_green  label: "characterization tests green"  weight: 2
     VerifyCharacterization -> WriteCharacterizationTests  label: "still red  --  fix tests"  restart: true
     PlanRefactor -> ValidatePlanFormat
     ValidatePlanFormat -> ValidatePlan  label: "format ok"  weight: 2
