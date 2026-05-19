@@ -11,41 +11,23 @@ workflow IterExtract
     max_retries: 3
     max_restarts: 30
 
-  agent Start
+  tool Start
     label: Start
-    auto_status: true
-    prompt:
-      Acknowledge that the requirements extraction pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+    timeout: 5s
+    command:
+      printf 'iter-extract-begin'
 
-      End with exactly one of:
-      STATUS: success
-      STATUS: fail
-
-      Always emit STATUS: success.
-
-  agent Exit
+  tool Exit
     label: Exit
-    auto_status: true
-    prompt:
-      Acknowledge that the requirements extraction pipeline is complete. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+    timeout: 5s
+    command:
+      printf 'iter-extract-complete'
 
-      End with exactly one of:
-      STATUS: success
-      STATUS: fail
-
-      Always emit STATUS: success.
-
-  agent no_spec_exit
+  tool no_spec_exit
     label: "No Spec Found"
-    auto_status: true
-    prompt:
-      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
-
-      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
-
-      To use this pipeline, place a spec file in the working directory and re-run.
-
-      STATUS: fail
+    timeout: 5s
+    command:
+      printf 'No spec file was found in the working directory. The pipeline cannot proceed without a spec.\n\nSearched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.\n\nTo use this pipeline, place a spec file in the working directory and re-run.\n'
 
   tool find_spec
     label: "Find Spec File"
@@ -99,6 +81,7 @@ workflow IterExtract
 
   agent validate_existing
     label: "Validate Existing Artifacts"
+    max_turns: 15
     auto_status: true
     prompt:
       Read and validate the existing extraction artifacts in docs/iterations/.
@@ -244,6 +227,7 @@ workflow IterExtract
 
   agent extract_agent_1
     label: "Extract Agent 1"
+    max_turns: 25
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
@@ -314,6 +298,7 @@ workflow IterExtract
 
   agent extract_agent_2
     label: "Extract Agent 2"
+    max_turns: 25
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
@@ -384,6 +369,7 @@ workflow IterExtract
 
   agent extract_agent_3
     label: "Extract Agent 3"
+    max_turns: 25
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
@@ -479,6 +465,7 @@ workflow IterExtract
 
   agent par_omission_reviewer_a
     label: "PAR Omission Reviewer A — Textual Coverage"
+    max_turns: 15
     model: claude-opus-4-7
     provider: anthropic
     auto_status: true
@@ -532,6 +519,7 @@ workflow IterExtract
 
   agent par_omission_reviewer_b
     label: "PAR Omission Reviewer B — Semantic Intent"
+    max_turns: 15
     model: claude-opus-4-7
     provider: anthropic
     auto_status: true
@@ -587,6 +575,7 @@ workflow IterExtract
 
   agent par_omission_aggregate
     label: "PAR Omission Aggregate"
+    max_turns: 15
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
@@ -624,6 +613,7 @@ workflow IterExtract
 
   agent build_coverage_ledger
     label: "Build Coverage Ledger"
+    max_turns: 12
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
@@ -661,6 +651,7 @@ workflow IterExtract
 
   agent patch_extractions
     label: "Patch Extraction Gaps"
+    max_turns: 20
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
@@ -685,12 +676,25 @@ workflow IterExtract
 
       Emit STATUS: success when all gaps are addressed (either patched or marked informational). Emit STATUS: fail when you cannot extract from a section that clearly contains requirements.
 
+  # DIP102 ack: pick_next_wave / count_remaining_chunks / validate_extraction
+  # each have conditional outgoing edges whose conditions are exhaustive over
+  # what the upstream tool emits (wave-NNN / no-more / outcome=fail for
+  # pick_next_wave; remaining-N / all-extracted for count_remaining_chunks;
+  # validation-pass / validation-fail-* for validate_extraction). Adding
+  # unconditional fallbacks would target the same node as a conditional
+  # (the same-target trap per tracker/CLAUDE.md).
+  #
+  # DIP101 ack: extract_wave, par_omission_dispatch, aggregate_results,
+  # commit_extraction are reached only along intended conditional branches —
+  # the conditional reachability IS the routing logic.
   agent aggregate_results
     label: "Aggregate Results"
     model: claude-sonnet-4-6
     provider: anthropic
     reasoning_effort: high
     goal_gate: true
+    fallback_target: Exit
+    max_turns: 20
     auto_status: true
     prompt:
       Read ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json (and any omission patch files such as .ai/iter-extract-temp/omission_patches_a.json, .ai/iter-extract-temp/omission_patches_b.json, .ai/iter-extract-temp/extraction_patches.json).
