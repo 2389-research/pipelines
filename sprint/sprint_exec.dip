@@ -470,7 +470,7 @@ workflow SprintExec
     CritiquesJoin -> ReviewAnalysis
     ReviewAnalysis -> CompleteSprint  when ctx.outcome = success  label: pass
     ReviewAnalysis -> MarkFailed      when ctx.outcome = fail     label: fail
-    ReviewAnalysis -> FailureSummary
+    ReviewAnalysis -> MarkFailed                                   label: status_parse_or_retry_exhaustion
     CompleteSprint -> Exit
     MarkFailed -> FailureSummary
     FailureSummary -> Exit

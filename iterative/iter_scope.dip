@@ -43,7 +43,8 @@ workflow IterScope
     label: "No Requirements Found"
     timeout: 5s
     command:
-      printf 'Requirements must be extracted before defining the walking skeleton and roadmap.\n\nThe requirements directory docs/iterations/requirements/ is empty or does not exist.\n\nPlease run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.\n'
+      printf 'Requirements must be extracted before defining the walking skeleton and roadmap.\n\nThe requirements directory docs/iterations/requirements/ is empty or does not exist.\n\nPlease run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.\n' >&2
+      exit 1
 
   agent validate_existing_roadmap
     label: "Validate Existing Roadmap"
@@ -440,7 +441,6 @@ workflow IterScope
   # fallbacks would create same-target traps.
   agent adjust_scope
     label: "Adjust Scope"
-    max_turns: 15
     max_turns: 200
     auto_status: true
     prompt:
