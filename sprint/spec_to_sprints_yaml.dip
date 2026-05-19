@@ -10,15 +10,17 @@ workflow SpecToSprintsYaml
     max_restarts: 10
     fidelity: summary:medium
 
-  agent Start
+  tool Start
     label: Start
-    prompt:
-      Begin spec-to-sprints decomposition pipeline.
+    timeout: 5s
+    command:
+      printf 'spec-to-sprints-begin'
 
-  agent Exit
+  tool Exit
     label: Exit
-    prompt:
-      Spec-to-sprints pipeline complete.
+    timeout: 5s
+    command:
+      printf 'spec-to-sprints-complete'
 
   tool find_spec
     label: "Find Spec File"
@@ -38,14 +40,11 @@ workflow SpecToSprintsYaml
       fi
       printf 'no_spec_found'
 
-  agent no_spec_exit
+  tool no_spec_exit
     label: "No Spec Found"
-    prompt:
-      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
-
-      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
-
-      To use this pipeline, place a spec file in the working directory and re-run.
+    timeout: 5s
+    command:
+      printf 'No spec file was found in the working directory. The pipeline cannot proceed without a spec.\n\nSearched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.\n\nTo use this pipeline, place a spec file in the working directory and re-run.\n'
 
   tool check_resume
     label: "Check Resume Point"
@@ -109,6 +108,8 @@ workflow SpecToSprintsYaml
     writes: spec_analysis
     goal_gate: true
     retry_target: analyze_spec
+    fallback_target: Exit
+    max_turns: 25
     prompt:
       You are working in `run.working_dir`.
 
@@ -173,6 +174,7 @@ workflow SpecToSprintsYaml
     reads: spec_analysis
     writes: decomposition_claude
     fallback_target: decompose_join
+    max_turns: 20
     prompt:
       You are working in `run.working_dir`.
 
@@ -213,6 +215,7 @@ workflow SpecToSprintsYaml
 
   agent decompose_gpt
     label: "GPT Decomposition"
+    max_turns: 20
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
@@ -259,6 +262,7 @@ workflow SpecToSprintsYaml
 
   agent decompose_gemini
     label: "Gemini Decomposition"
+    max_turns: 20
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
@@ -309,6 +313,7 @@ workflow SpecToSprintsYaml
 
   agent critique_claude_on_gpt
     label: "Claude Critique of GPT"
+    max_turns: 12
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -337,6 +342,7 @@ workflow SpecToSprintsYaml
 
   agent critique_claude_on_gemini
     label: "Claude Critique of Gemini"
+    max_turns: 12
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -365,6 +371,7 @@ workflow SpecToSprintsYaml
 
   agent critique_gpt_on_claude
     label: "GPT Critique of Claude"
+    max_turns: 12
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
@@ -393,6 +400,7 @@ workflow SpecToSprintsYaml
 
   agent critique_gpt_on_gemini
     label: "GPT Critique of Gemini"
+    max_turns: 12
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
@@ -421,6 +429,7 @@ workflow SpecToSprintsYaml
 
   agent critique_gemini_on_claude
     label: "Gemini Critique of Claude"
+    max_turns: 12
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
@@ -449,6 +458,7 @@ workflow SpecToSprintsYaml
 
   agent critique_gemini_on_gpt
     label: "Gemini Critique of GPT"
+    max_turns: 12
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
@@ -486,6 +496,8 @@ workflow SpecToSprintsYaml
     writes: sprint_plan
     goal_gate: true
     retry_target: merge_decomposition
+    fallback_target: Exit
+    max_turns: 20
     prompt:
       You are working in `run.working_dir`.
 
@@ -576,6 +588,7 @@ workflow SpecToSprintsYaml
 
   agent present_plan
     label: "Present Sprint Plan"
+    max_turns: 10
     model: claude-sonnet-4-6
     provider: anthropic
     reads: sprint_plan
@@ -597,6 +610,7 @@ workflow SpecToSprintsYaml
 
   agent apply_feedback
     label: "Apply Feedback"
+    max_turns: 15
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
@@ -639,6 +653,7 @@ workflow SpecToSprintsYaml
 
   agent write_sprint_docs
     label: "Write Sprint Docs"
+    max_turns: 20
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
