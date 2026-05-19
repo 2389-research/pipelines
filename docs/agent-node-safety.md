@@ -53,7 +53,7 @@ Your `prompt:` body is appended *after* this. Writing "do not run tools" in user
 
 The `${ctx.*}` safe-key allowlist (`outcome`, `preferred_label`, `human_response`, `interview_answers`) only applies to **tool-node command interpolation**, not agent prompts. `pipeline/handlers/prompt.go:23` calls `ExpandVariables` with `toolCommandMode=false`. Agent prompts get every `ctx` key interpolated unsanitized.
 
-Worse, `pipeline/transforms.go:55-82` auto-injects `last_response` (the previous agent's full LLM output) into every full-fidelity agent prompt regardless of whether you reference it. With the default workflow fidelity `summary:medium`, the injected value is **untruncated** (`pipeline/fidelity.go:51-60, 172-181`).
+Worse, `pipeline/transforms.go:55-82` auto-injects `last_response` (the previous agent's full LLM output) into every **full-fidelity** agent prompt regardless of whether you reference it (the injection is gated by `fidelity == FidelityFull` per `pipeline/handlers/prompt.go:41-43`). On non-full fidelities the value is not auto-prepended, but it still flows via the compaction path: with the default workflow fidelity `summary:medium`, `last_response` is retained in `mediumKeys` and any `${ctx.last_response}` interpolation reads it back **untruncated** (`pipeline/fidelity.go:51-60, 172-193`). Either way, downstream agent prompts can carry upstream LLM output verbatim.
 
 So if `AgentA` produces 5,000 tokens of output (legitimately or as a prompt-injection payload), all 5,000 tokens land verbatim in `AgentB`'s prompt. If `AgentB` has tool access, this is a cross-node prompt-injection vector.
 
@@ -155,4 +155,4 @@ When reviewing or authoring a `.dip` file, scan for:
 
 - [tracker CLAUDE.md](https://github.com/2389-research/tracker) — engine-level gotchas.
 - [dippin-lang validator/lint_codes.go](https://github.com/2389-research/dippin-lang) — the authoritative DIP code reference.
-- The v0.28.2 changelog entry that introduced `ensureStartExitNodes` — the bug-fix that motivated the Start/Exit passthrough rule.
+- The v0.28.2 fix that aligned built-in workflows with `ensureStartExitNodes`' passthrough-only-when-no-prompt contract. The helper itself predates v0.28.2 (introduced with the Dippin IR adapter, refined for non-codergen handlers via tracker issue #69); v0.28.2 fixed the *misuse* where built-in workflows tripped the prompt-skip path and unintentionally ran as full coding-agent sessions.

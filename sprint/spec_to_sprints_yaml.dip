@@ -14,13 +14,13 @@ workflow SpecToSprintsYaml
     label: Start
     timeout: 5s
     command:
-      printf 'spec-to-sprints-begin'
+      printf 'spec-to-sprints-yaml-begin'
 
   tool Exit
     label: Exit
     timeout: 5s
     command:
-      printf 'spec-to-sprints-complete'
+      printf 'spec-to-sprints-yaml-complete'
 
   tool find_spec
     label: "Find Spec File"
@@ -44,7 +44,8 @@ workflow SpecToSprintsYaml
     label: "No Spec Found"
     timeout: 5s
     command:
-      printf 'No spec file was found in the working directory. The pipeline cannot proceed without a spec.\n\nSearched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.\n\nTo use this pipeline, place a spec file in the working directory and re-run.\n'
+      printf 'No spec file was found in the working directory. The pipeline cannot proceed without a spec.\n\nSearched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.\n\nTo use this pipeline, place a spec file in the working directory and re-run.\n' >&2
+      exit 1
 
   tool check_resume
     label: "Check Resume Point"

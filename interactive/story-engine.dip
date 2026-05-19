@@ -47,11 +47,11 @@ workflow story_engine
 
   human PickGenre
     label: "Pick a Genre"
-    mode: choice
+    mode: yes_no
 
   human PickSubGenre
     label: "Refine the Tone"
-    mode: choice
+    mode: yes_no
 
   agent SetupWorld
     label: "Setup World"
@@ -120,7 +120,7 @@ workflow story_engine
 
   human PresentChoices
     label: "Make Your Choice"
-    mode: choice
+    mode: yes_no
 
   agent WriteNextScene
     label: "Write Next Scene"
@@ -185,7 +185,7 @@ workflow story_engine
 
   human FinalChoice
     label: "The Final Choice"
-    mode: choice
+    mode: yes_no
 
   agent WriteFinalChapter
     label: "Write Finale"
@@ -260,7 +260,7 @@ workflow story_engine
 
   human PlayAgain
     label: "Play Again?"
-    mode: choice
+    mode: yes_no
 
   edges
     Start -> ResetStory

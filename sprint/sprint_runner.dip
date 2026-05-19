@@ -41,7 +41,8 @@ workflow SprintRunner
     label: "No Ledger Found"
     timeout: 5s
     command:
-      printf 'No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.\n\nTo create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.\n'
+      printf 'No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.\n\nTo create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.\n' >&2
+      exit 1
 
   subgraph execute_sprint
     ref: sprint_exec.dip

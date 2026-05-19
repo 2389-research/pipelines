@@ -94,6 +94,7 @@ workflow IterScope
   agent define_skeleton
     label: "Define Walking Skeleton"
     max_turns: 20
+    retry_target: define_skeleton
     fallback_target: Exit
     model: claude-opus-4-7
     reasoning_effort: high
@@ -141,6 +142,7 @@ workflow IterScope
   agent order_iterations
     label: "Order Iterations"
     max_turns: 20
+    retry_target: order_iterations
     fallback_target: Exit
     model: claude-opus-4-7
     reasoning_effort: high
@@ -466,6 +468,7 @@ workflow IterScope
   agent write_roadmap
     label: "Write Roadmap"
     max_turns: 20
+    retry_target: write_roadmap
     fallback_target: Exit
     model: claude-sonnet-4-6
     goal_gate: true

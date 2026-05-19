@@ -694,6 +694,7 @@ workflow IterExtract
     provider: anthropic
     reasoning_effort: high
     goal_gate: true
+    retry_target: aggregate_results
     fallback_target: Exit
     max_turns: 20
     auto_status: true
