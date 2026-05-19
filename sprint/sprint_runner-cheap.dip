@@ -8,15 +8,17 @@ workflow SprintRunnerCheap
     max_restarts: 50
     fidelity: summary:low
 
-  agent Start
+  tool Start
     label: Start
-    prompt:
-      Begin cheap sprint runner pipeline. Will loop through all incomplete sprints in the ledger.
+    timeout: 5s
+    command:
+      printf 'sprint-runner-cheap-begin'
 
-  agent Exit
+  tool Exit
     label: Exit
-    prompt:
-      Cheap sprint runner pipeline complete.
+    timeout: 5s
+    command:
+      printf 'sprint-runner-cheap-complete'
 
   # === LEDGER CHECK + LOOP CONTROL ===
 
@@ -37,15 +39,15 @@ workflow SprintRunnerCheap
       printf '%s' "$target" > .ai/current_sprint_id.txt
       printf 'next-%s' "$target"
 
-  agent no_ledger_exit
+  tool no_ledger_exit
     label: "No Ledger Found"
-    prompt:
-      No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.
-
-      To create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.
+    timeout: 5s
+    command:
+      printf 'No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.\n\nTo create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.\n'
 
   agent read_sprint
     label: "Read Sprint"
+    max_turns: 10
     model: gemini-3.1-flash-lite-preview
     provider: gemini
     reasoning_effort: medium
@@ -83,6 +85,7 @@ workflow SprintRunnerCheap
 
   agent implement_cheap
     label: "Implement Sprint (Cheap)"
+    max_turns: 25
     model: claude-haiku-4-5
     provider: anthropic
     reasoning_effort: high
@@ -153,6 +156,7 @@ workflow SprintRunnerCheap
 
   agent commit_cheap
     label: "Commit Sprint Work (Cheap)"
+    max_turns: 15
     model: gpt-5.4-nano
     provider: openai
     reasoning_effort: medium
@@ -180,6 +184,7 @@ workflow SprintRunnerCheap
 
   agent practical_dev
     label: "Squad: Practical Dev"
+    max_turns: 15
     model: claude-haiku-4-5
     provider: anthropic
     reasoning_effort: medium
@@ -204,6 +209,7 @@ workflow SprintRunnerCheap
 
   agent nitpicker
     label: "Squad: Nitpicker"
+    max_turns: 15
     model: gpt-5.4-nano
     provider: openai
     reasoning_effort: medium
@@ -223,6 +229,7 @@ workflow SprintRunnerCheap
 
   agent fresh_eyes
     label: "Squad: Fresh Eyes"
+    max_turns: 15
     model: gemini-3.1-flash-lite-preview
     provider: gemini
     reasoning_effort: medium
@@ -251,6 +258,7 @@ workflow SprintRunnerCheap
 
   agent review_haiku
     label: "Haiku Review"
+    max_turns: 12
     model: claude-haiku-4-5
     provider: anthropic
     reasoning_effort: medium
@@ -280,6 +288,7 @@ workflow SprintRunnerCheap
 
   agent review_nano
     label: "Nano Review"
+    max_turns: 12
     model: gpt-5.4-nano
     provider: openai
     reasoning_effort: medium
@@ -313,6 +322,7 @@ workflow SprintRunnerCheap
 
   agent haiku_critique_nano
     label: "Haiku Critique of Nano Review"
+    max_turns: 12
     model: claude-haiku-4-5
     provider: anthropic
     reasoning_effort: medium
@@ -322,6 +332,7 @@ workflow SprintRunnerCheap
 
   agent nano_critique_haiku
     label: "Nano Critique of Haiku Review"
+    max_turns: 12
     model: gpt-5.4-nano
     provider: openai
     reasoning_effort: medium
@@ -335,6 +346,7 @@ workflow SprintRunnerCheap
 
   agent gate_cheap
     label: "Gate (Cheap)"
+    max_turns: 10
     model: claude-haiku-4-5
     provider: anthropic
     reasoning_effort: high
@@ -362,6 +374,7 @@ workflow SprintRunnerCheap
 
   agent implement_rescue
     label: "Implement Sprint (Rescue)"
+    max_turns: 25
     model: claude-sonnet-4-6
     provider: anthropic
     reasoning_effort: high
@@ -426,6 +439,7 @@ workflow SprintRunnerCheap
 
   agent commit_rescue
     label: "Commit Rescue Work"
+    max_turns: 15
     model: gpt-5.4-nano
     provider: openai
     reasoning_effort: medium
@@ -449,6 +463,7 @@ workflow SprintRunnerCheap
 
   agent rescue_review
     label: "Rescue Sanity Check"
+    max_turns: 15
     model: claude-haiku-4-5
     provider: anthropic
     reasoning_effort: medium
@@ -506,6 +521,7 @@ workflow SprintRunnerCheap
 
   agent failure_summary
     label: "Failure Summary"
+    max_turns: 10
     model: gpt-5.4-nano
     provider: openai
     reasoning_effort: medium
@@ -532,7 +548,7 @@ workflow SprintRunnerCheap
     Start -> check_ledger
     check_ledger -> Exit  when ctx.tool_stdout = all_done  label: all_done
     check_ledger -> no_ledger_exit  when ctx.tool_stdout = no_ledger  label: no_ledger
-    check_ledger -> read_sprint  when ctx.tool_stdout != all_done  label: next_sprint
+    check_ledger -> read_sprint                                    label: next_sprint
     no_ledger_exit -> Exit
 
     # Discovery
