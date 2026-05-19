@@ -945,6 +945,12 @@ workflow SpecToSprintsForLocalCodegen
   # DIP101 ack: commit_output is reached only when validate_output emits
   # "valid". That's the intended design — only commit when validation
   # passes. The conditional-only reachability IS the gate.
+  #
+  # DIP102 ack: validate_output has three exhaustive conditional edges
+  # (valid → commit_output, invalid-* → write_sprint_docs, outcome=fail
+  # → Exit). Per CodeRabbit's fix recommendation: validator-execution
+  # failures should NOT enter the rewrite loop (which previously happened
+  # via an unconditional fallback to write_sprint_docs).
   tool commit_output
     label: "Commit Output"
     timeout: 30s
@@ -1000,6 +1006,7 @@ workflow SpecToSprintsForLocalCodegen
     setup_workspace -> write_sprint_docs
     write_sprint_docs -> write_ledger
     write_ledger -> validate_output
-    validate_output -> commit_output  when ctx.tool_stdout = valid  label: valid
-    validate_output -> write_sprint_docs  label: fix_validation  restart: true
+    validate_output -> commit_output  when ctx.tool_stdout = valid                  label: valid
+    validate_output -> write_sprint_docs  when ctx.tool_stdout startswith invalid-  label: fix_validation  restart: true
+    validate_output -> Exit               when ctx.outcome = fail                    label: validate_crashed
     commit_output -> Exit

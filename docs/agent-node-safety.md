@@ -17,7 +17,7 @@
 
 The engine's agent loop is:
 
-```
+```go
 for turn := 1; turn <= MaxTurns; turn++ {
     response := LLMCall(prompt, tools, ...)
     if response.HasToolCalls() {
