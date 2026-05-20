@@ -1232,7 +1232,7 @@ workflow IterRun
 
   tool resolve_todos
     label: "Resolve TODOs"
-    timeout: 15s
+    timeout: 30s
     command:
       set -euo pipefail
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
@@ -1240,7 +1240,9 @@ workflow IterRun
         printf 'todos-clean'
         exit 0
       fi
-      count=$(grep -rn "TODO(${iter_id})" --include='*.py' --include='*.ts' --include='*.go' --include='*.rs' --include='*.swift' --include='*.js' . 2>/dev/null | grep -v node_modules | grep -v '\.ai/' | wc -l | tr -d ' ') || count=0
+      # Bound search to tracked files — recursive grep walks every directory
+      # regardless of --include, which times out under large tracker scratch trees.
+      count=$(git grep -h "TODO(${iter_id})" -- '*.py' '*.ts' '*.go' '*.rs' '*.swift' '*.js' 2>/dev/null | wc -l | tr -d ' ') || count=0
       if [ "$count" -eq 0 ]; then
         printf 'todos-clean'
       else
