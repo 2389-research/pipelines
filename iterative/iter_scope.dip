@@ -11,29 +11,17 @@ workflow IterScope
     max_retries: 3
     max_restarts: 20
 
-  agent Start
+  tool Start
     label: Start
-    auto_status: true
-    prompt:
-      Acknowledge that the walking skeleton and roadmap pipeline is starting. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
+    timeout: 5s
+    command:
+      printf 'iter-scope-begin'
 
-      End with exactly one of:
-      STATUS: success
-      STATUS: fail
-
-      Always emit STATUS: success.
-
-  agent Exit
+  tool Exit
     label: Exit
-    auto_status: true
-    prompt:
-      Acknowledge that the walking skeleton and roadmap pipeline is complete. Do not read or write any files. Do not run commands. Do not modify, create, or delete anything.
-
-      End with exactly one of:
-      STATUS: success
-      STATUS: fail
-
-      Always emit STATUS: success.
+    timeout: 5s
+    command:
+      printf 'iter-scope-complete'
 
   tool check_scope_resume
     label: "Check Scope Resume Point"
@@ -51,21 +39,17 @@ workflow IterScope
       fi
       printf 'no-roadmap'
 
-  agent no_requirements_exit
+  tool no_requirements_exit
     label: "No Requirements Found"
-    auto_status: true
-    prompt:
-      Requirements must be extracted before defining the walking skeleton and roadmap.
-
-      The requirements directory docs/iterations/requirements/ is empty or does not exist.
-
-      Please run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.
-
-      STATUS: fail
+    timeout: 5s
+    command:
+      printf 'Requirements must be extracted before defining the walking skeleton and roadmap.\n\nThe requirements directory docs/iterations/requirements/ is empty or does not exist.\n\nPlease run iter_extract.dip first to extract requirements and behavior scenarios from your spec, then re-run this pipeline.\n' >&2
+      exit 1
 
   agent validate_existing_roadmap
     label: "Validate Existing Roadmap"
     auto_status: true
+    max_turns: 15
     prompt:
       Read and validate the existing roadmap at docs/iterations/roadmap.md.
 
@@ -85,6 +69,7 @@ workflow IterScope
 
   agent read_backlog
     label: "Read Backlog"
+    max_turns: 15
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
@@ -108,6 +93,9 @@ workflow IterScope
 
   agent define_skeleton
     label: "Define Walking Skeleton"
+    max_turns: 20
+    retry_target: define_skeleton
+    fallback_target: Exit
     model: claude-opus-4-7
     reasoning_effort: high
     goal_gate: true
@@ -153,6 +141,9 @@ workflow IterScope
 
   agent order_iterations
     label: "Order Iterations"
+    max_turns: 20
+    retry_target: order_iterations
+    fallback_target: Exit
     model: claude-opus-4-7
     reasoning_effort: high
     goal_gate: true
@@ -270,6 +261,7 @@ workflow IterScope
 
   agent fix_citations
     label: "Fix Citations"
+    max_turns: 15
     auto_status: true
     prompt:
       Read the citation check results — some STORY-NNNN IDs in .ai/iter-scope-temp/skeleton.md or .ai/iter-scope-temp/iterations.md do not match any story in docs/iterations/requirements/.
@@ -295,6 +287,7 @@ workflow IterScope
 
   agent par_scope_reviewer_a
     label: "PAR Scope Reviewer A — Structural Linkage"
+    max_turns: 15
     model: claude-opus-4-7
     provider: anthropic
     auto_status: true
@@ -346,6 +339,7 @@ workflow IterScope
 
   agent par_scope_reviewer_b
     label: "PAR Scope Reviewer B — Strategic Risk"
+    max_turns: 15
     model: claude-opus-4-7
     provider: anthropic
     auto_status: true
@@ -399,6 +393,7 @@ workflow IterScope
 
   agent par_scope_aggregate
     label: "PAR Scope Aggregate"
+    max_turns: 15
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
@@ -435,6 +430,17 @@ workflow IterScope
         printf 'continue'
       fi
 
+  # DIP101/DIP102 ack: the iterative-scope loop relies on conditional
+  # routing throughout — counters loop back via conditionals, validation
+  # gates branch on success/fail markers, and convergence requires the
+  # conditional cascade. The remaining DIP101 nodes (commit_roadmap,
+  # count_skeleton_retry, fix_citations, order_iterations,
+  # par_scope_dispatch, write_roadmap) are reached only along their
+  # intended branches. The remaining DIP102 nodes (check_citations,
+  # count_skeleton_retry, validate_roadmap, validate_skeleton_heading)
+  # have conditional edges whose conditions are exhaustive over their
+  # tool stdout outputs; per tracker/CLAUDE.md, adding unconditional
+  # fallbacks would create same-target traps.
   agent adjust_scope
     label: "Adjust Scope"
     max_turns: 200
@@ -461,6 +467,9 @@ workflow IterScope
 
   agent write_roadmap
     label: "Write Roadmap"
+    max_turns: 20
+    retry_target: write_roadmap
+    fallback_target: Exit
     model: claude-sonnet-4-6
     goal_gate: true
     auto_status: true

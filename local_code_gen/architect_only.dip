@@ -58,7 +58,6 @@ workflow ArchitectOnlyTest
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
-    reads: sprint_plan, spec_analysis
     max_turns: 12
     prompt:
       You are the architect for sprint enrichment. Your job has FIVE deterministic outputs in order, then you stop:

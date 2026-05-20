@@ -1,5 +1,6 @@
 workflow refactor_express
   goal: "Given a refactoring spec (extract module, migrate API, replace dependency, restructure), analyze the existing codebase, create an incremental refactoring plan where tests pass at every step, execute each step with TDD discipline, verify green after each step, and create a PR."
+  requires: git
   start: Start
   exit: Exit
 
@@ -26,6 +27,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: ReadRefactorSpec
+    max_turns: 15
     prompt:
       You are working in `run.working_dir`.
 
@@ -72,6 +74,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: AnalyzeCodebase
+    max_turns: 25
     prompt:
       You are working in `run.working_dir`.
 
@@ -157,6 +160,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: WriteCharacterizationTests
+    max_turns: 25
     prompt:
       You are working in `run.working_dir`.
 
@@ -232,6 +236,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: PlanRefactor
+    max_turns: 15
     prompt:
       You are working in `run.working_dir`.
 
@@ -298,6 +303,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: PlanRefactor
+    max_turns: 10
     prompt:
       You are working in `run.working_dir`.
 
@@ -425,6 +431,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 2
     retry_target: ExecuteStep
+    max_turns: 25
     prompt:
       You are working in `run.working_dir`.
 
@@ -564,6 +571,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 2
     retry_target: ReplanStep
+    max_turns: 20
     prompt:
       You are working in `run.working_dir`.
 
@@ -612,6 +620,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 1
     retry_target: AutoRecover
+    max_turns: 15
     prompt:
       You are working in `run.working_dir`.
 
@@ -654,6 +663,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: AutoRecover
+    max_turns: 20
     prompt:
       You are working in `run.working_dir`.
 
@@ -732,6 +742,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: FinalReview
+    max_turns: 15
     prompt:
       You are working in `run.working_dir`.
 
@@ -796,6 +807,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: FixReviewFindings
+    max_turns: 20
     prompt:
       You are working in `run.working_dir`.
 
@@ -831,6 +843,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: FailureSummary
+    max_turns: 10
     prompt:
       You are working in `run.working_dir`.
 
@@ -878,6 +891,7 @@ workflow refactor_express
     goal_gate: true
     max_retries: 3
     retry_target: CreatePR
+    max_turns: 15
     prompt:
       You are working in `run.working_dir`.
 

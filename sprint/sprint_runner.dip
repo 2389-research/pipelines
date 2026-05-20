@@ -8,15 +8,17 @@ workflow SprintRunner
     max_restarts: 50
     fidelity: summary:medium
 
-  agent Start
+  tool Start
     label: Start
-    prompt:
-      Begin sprint runner pipeline. Will loop through all incomplete sprints in the ledger.
+    timeout: 5s
+    command:
+      printf 'sprint-runner-begin'
 
-  agent Exit
+  tool Exit
     label: Exit
-    prompt:
-      Sprint runner pipeline complete.
+    timeout: 5s
+    command:
+      printf 'sprint-runner-complete'
 
   tool check_ledger
     label: "Check Ledger"
@@ -35,12 +37,12 @@ workflow SprintRunner
       printf '%s' "$target" > .ai/current_sprint_id.txt
       printf 'next-%s' "$target"
 
-  agent no_ledger_exit
+  tool no_ledger_exit
     label: "No Ledger Found"
-    prompt:
-      No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.
-
-      To create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.
+    timeout: 5s
+    command:
+      printf 'No .ai/ledger.tsv found. The sprint runner requires an existing ledger with planned sprints.\n\nTo create one, run spec_to_sprints.dip with a spec file, or megaplan.dip to plan incrementally.\n' >&2
+      exit 1
 
   subgraph execute_sprint
     ref: sprint_exec.dip
@@ -77,6 +79,7 @@ workflow SprintRunner
     model: claude-sonnet-4-6
     provider: anthropic
     reasoning_effort: high
+    max_turns: 10
     prompt:
       Sprint execution failed. The subgraph sprint_exec.dip has already diagnosed the failure in detail.
 
@@ -86,7 +89,7 @@ workflow SprintRunner
     Start -> check_ledger
     check_ledger -> Exit             when ctx.tool_stdout = all_done    label: all_done
     check_ledger -> no_ledger_exit   when ctx.tool_stdout = no_ledger   label: no_ledger
-    check_ledger -> execute_sprint   when ctx.tool_stdout != all_done   label: next_sprint
+    check_ledger -> execute_sprint                                       label: next_sprint
     no_ledger_exit -> Exit
     execute_sprint -> report_progress  when ctx.outcome = success  label: sprint_done
     execute_sprint -> failure_summary  when ctx.outcome = fail     label: sprint_failed

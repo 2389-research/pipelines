@@ -793,6 +793,19 @@ workflow SprintRunnerLocalGenQwen
 
       if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
 
+  # DIP101 ack: CloudFix is the LLM-driven fallback fix path, only reachable
+  # when LocalFix exhausts or Audit fails. The conditional-only reachability
+  # is the intended local-first cascade design.
+  #
+  # DIP101 ack: CommitSprint is only reached when Audit emits audit-pass —
+  # only commit when the audit gate passes.
+  #
+  # DIP101 ack: mark_in_progress is only reached when check_ledger finds an
+  # unfinished sprint. The other check_ledger outcomes (all_done, no_ledger)
+  # terminate the pipeline without marking.
+  #
+  # DIP101 ack: no_ledger_exit is only reached when check_ledger emits
+  # `no_ledger`. By design — that's the error-path entry.
   agent CloudFix
     label: "Cloud fix (gpt-5.4 — single-session iterative)"
     model: gpt-5.4
@@ -959,7 +972,7 @@ workflow SprintRunnerLocalGenQwen
     Start -> check_ledger
     check_ledger -> Exit            when ctx.tool_stdout = all_done       label: all_done
     check_ledger -> no_ledger_exit  when ctx.tool_stdout = no_ledger      label: no_ledger
-    check_ledger -> mark_in_progress when ctx.tool_stdout != all_done     label: next_sprint
+    check_ledger -> mark_in_progress                                      label: next_sprint
     no_ledger_exit -> Exit
     mark_in_progress -> Setup
     Setup -> Generate
@@ -972,8 +985,10 @@ workflow SprintRunnerLocalGenQwen
     RunTests -> Escalate
     LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
     LocalFix -> CloudFix            when ctx.tool_stdout contains local-exhausted
+    LocalFix -> Escalate                                                              label: "local-fix unexpected output — escalate"
     Audit -> CommitSprint           when ctx.tool_stdout contains audit-pass
     Audit -> CloudFix               when ctx.tool_stdout contains audit-fail        restart: true
+    Audit -> Escalate                                                                 label: "audit unexpected output — escalate"
     # CloudFix is single-session iterative. Success → outer RunTests verification.
     # Failure → Escalate (no retry loop; the model converges in-session or not at all).
     CloudFix -> RunTests            when ctx.outcome = success                      restart: true

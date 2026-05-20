@@ -738,6 +738,12 @@ workflow SprintExecLocalGenQwen
 
       if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
 
+  # DIP101 ack: CloudFix is the LLM-driven fallback fix path. It's only
+  # reachable when RunTests hits cloud-handoff, when LocalFix exhausts
+  # local-model attempts, when Audit fails, or when LocalFix/Audit emit
+  # unexpected output. All inbound conditionals are exhaustive at their
+  # source; CloudFix being reachable only through them is the intended
+  # cascade design (local-first, cloud-as-last-resort).
   agent CloudFix
     label: "Cloud fix (gpt-5.4 — single-session iterative)"
     model: gpt-5.4
@@ -839,8 +845,10 @@ workflow SprintExecLocalGenQwen
     RunTests -> Escalate
     LocalFix -> RunTests            when ctx.tool_stdout contains local-fixed       restart: true
     LocalFix -> CloudFix            when ctx.tool_stdout contains local-exhausted
+    LocalFix -> Escalate                                                              label: "local-fix unexpected output — escalate"
     Audit -> Done                   when ctx.tool_stdout contains audit-pass
     Audit -> CloudFix               when ctx.tool_stdout contains audit-fail        restart: true
+    Audit -> Escalate                                                                 label: "audit unexpected output — escalate"
     # CloudFix is single-session iterative. Success → outer RunTests verification.
     # Failure → Escalate (no retry loop; the model converges in-session or not at all).
     CloudFix -> RunTests            when ctx.outcome = success                      restart: true
