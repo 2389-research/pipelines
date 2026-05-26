@@ -94,7 +94,15 @@ workflow BenchLocalFixSR
       WORKDIR_ABS=$(pwd)
       . .ai/lang_profile.sh
 
-      proj_root=$(detect_proj_root)
+      # Pin proj_root from Setup's persisted value. Unlike production
+      # sprint_runner_qwen.dip — which re-detects every run because Generate
+      # may create subdirs after Setup — the bench has no Generate node, so
+      # there's no reason for proj_root to change mid-workflow. Pinning
+      # protects against a failed LocalFix accidentally writing a stray
+      # manifest that would flip detection. Fall back to fresh detection
+      # only if Setup somehow didn't persist (defensive).
+      proj_root=$(cat .ai/proj_root.txt 2>/dev/null || echo "")
+      [ -z "$proj_root" ] && proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
 
       lang=$(cat .ai/lang.txt 2>/dev/null || echo "")
@@ -130,7 +138,10 @@ workflow BenchLocalFixSR
       OLLAMA=http://localhost:11434/api/chat
       WORKDIR_ABS=$(pwd)
       . .ai/lang_profile.sh
-      proj_root=$(detect_proj_root)
+      # Pin proj_root from Setup's persisted value — see RunTests for why
+      # bench pins rather than re-detecting like production sprint_runner.
+      proj_root=$(cat .ai/proj_root.txt 2>/dev/null || echo "")
+      [ -z "$proj_root" ] && proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
       PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
       lang=$(cat .ai/lang.txt 2>/dev/null || echo "")
