@@ -133,7 +133,9 @@ workflow BenchLocalFixSR
       proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
       PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
-      lang=$(cat .ai/lang.txt 2>/dev/null || detect_lang "$proj_root")
+      lang=$(cat .ai/lang.txt 2>/dev/null || echo "")
+      [ -z "$lang" ] && lang=$(detect_lang "$proj_root")
+      printf '%s' "$lang" > .ai/lang.txt
 
       MAX_ROUNDS=8
       MAX_ROLLBACKS=3
@@ -193,7 +195,7 @@ workflow BenchLocalFixSR
         # Refuse to "restore" from a snapshot with NEITHER source dirs NOR
         # root manifest files — that genuinely empty snapshot would just
         # delete current state.
-        any_present=0
+        local any_present=0
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && any_present=1 && break
         done
