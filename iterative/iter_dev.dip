@@ -247,6 +247,7 @@ workflow IterDev
   # skip the workflow-status write before Exit.
   tool count_final_audit_rounds
     label: "Count Final Audit Rounds"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
