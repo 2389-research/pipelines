@@ -105,8 +105,8 @@ workflow SprintRunnerLocalGenQwen
         for src in \
           "local_code_gen/lib/$name" \
           "local_code_gen/$name" \
-          "${PIPELINES_REPO:-}/local_code_gen/lib/$name" \
-          "${PIPELINES_REPO:-}/local_code_gen/$name" \
+          ${PIPELINES_REPO:+"$PIPELINES_REPO/local_code_gen/lib/$name"} \
+          ${PIPELINES_REPO:+"$PIPELINES_REPO/local_code_gen/$name"} \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/$name"; do
           if [ -n "$src" ] && [ -f "$src" ]; then
@@ -559,37 +559,37 @@ workflow SprintRunnerLocalGenQwen
       lf_extra_globs=$(lang_src_glob_extras "$lang")
       lf_prune=$(lang_find_prune "$lang")
 
-      : > /tmp/lf_app_files.txt
+      : > "$WORKDIR_ABS/.ai/lf_app_files.txt"
       for d in $lf_src_dirs; do
         [ -d "$d" ] || continue
         # Primary glob (always present).
         # shellcheck disable=SC2086 — $lf_prune is a flag list we want word-split.
-        find "$d" -name "$lf_glob" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
+        find "$d" -name "$lf_glob" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
         # Extra globs for multi-extension languages (node: *.js; java: *.kt).
         for g in $lf_extra_globs; do
           # shellcheck disable=SC2086
-          find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
+          find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
         done
       done
 
-      printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
-      : > /tmp/lf_context.txt
+      printf '%s\n' "$FAILING_TESTS" > "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
+      : > "$WORKDIR_ABS/.ai/lf_context.txt"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
-        cat "$f" >> /tmp/lf_context.txt
-        printf '\n\n' >> /tmp/lf_context.txt
-      done < /tmp/lf_app_files.txt
+        printf '===== %s =====\n' "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+        cat "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+        printf '\n\n' >> "$WORKDIR_ABS/.ai/lf_context.txt"
+      done < "$WORKDIR_ABS/.ai/lf_app_files.txt"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
         if [ -f "$f" ]; then
-          printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
-          cat "$f" >> /tmp/lf_context.txt
-          printf '\n\n' >> /tmp/lf_context.txt
+          printf '===== %s =====\n' "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+          cat "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+          printf '\n\n' >> "$WORKDIR_ABS/.ai/lf_context.txt"
         fi
-      done < /tmp/lf_failing_tests.txt
-      CONTEXT=$(cat /tmp/lf_context.txt)
-      rm -f /tmp/lf_app_files.txt /tmp/lf_failing_tests.txt /tmp/lf_context.txt
+      done < "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
+      CONTEXT=$(cat "$WORKDIR_ABS/.ai/lf_context.txt")
+      rm -f "$WORKDIR_ABS/.ai/lf_app_files.txt" "$WORKDIR_ABS/.ai/lf_failing_tests.txt" "$WORKDIR_ABS/.ai/lf_context.txt"
 
       FAIL_BLOCKS=$(lang_failure_block "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
       FAIL_SUMMARY=$(lang_failure_summary "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
