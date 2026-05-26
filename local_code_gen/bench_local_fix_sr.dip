@@ -162,8 +162,10 @@ workflow BenchLocalFixSR
 
       # Project-root files commonly named in scaffolding manifests across
       # languages. Snapshotting these alongside the source dirs lets rollback
-      # cover the full attack surface that qwen could write to via SR.
-      ROOT_FILES="pyproject.toml package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
+      # cover the full attack surface that qwen could write to via SR. Includes
+      # uv.lock because lang_install uses `uv sync` for Python projects with
+      # pyproject.toml, which can regenerate the lock.
+      ROOT_FILES="pyproject.toml uv.lock package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
 
       snapshot_state() {
         local snap_dir="$1"
@@ -207,6 +209,13 @@ workflow BenchLocalFixSR
         cd "$PROJ_ROOT_ABS"
         for d in $SOURCE_DIRS; do
           [ -d "$d" ] && rm -rf "$d"
+        done
+        # Also remove root manifests that exist on disk but not in the snapshot
+        # (e.g., a requirements.txt or uv.lock created mid-round by a failed
+        # LocalFix). Without this, files created by the round would persist
+        # past rollback even though the snapshot represents a pre-round state.
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && rm -f "$f"
         done
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && cp -R "$snap_dir/$d" .
@@ -281,6 +290,13 @@ workflow BenchLocalFixSR
       lf_extra_globs=$(lang_src_glob_extras "$lang")
       lf_prune=$(lang_find_prune "$lang")
 
+      # Disable pathname expansion around the find loop: $lf_prune contains
+      # literal glob patterns (e.g. */__pycache__/*) that find needs to receive
+      # unexpanded; without `set -f` the shell would expand them against CWD if
+      # matching paths exist, breaking the prune predicate. Same reasoning for
+      # $lf_glob / $lf_extra_globs (*.py, *.js, ...) which find -name expects
+      # as literals.
+      set -f
       : > /tmp/lf_app_files.txt
       for d in $lf_src_dirs; do
         [ -d "$d" ] || continue
@@ -291,6 +307,7 @@ workflow BenchLocalFixSR
           find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
         done
       done
+      set +f
 
       printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
       : > /tmp/lf_context.txt
@@ -404,8 +421,8 @@ workflow BenchLocalFixSR
 
   edges
     Setup -> RunTests
-    RunTests -> LocalFix       when ctx.tool_stdout contains tests-fail
-    RunTests -> Done           when ctx.tool_stdout contains tests-pass
-    RunTests -> Done           when ctx.tool_stdout contains tests-fail-cloud
-    LocalFix -> RunTests       when ctx.tool_stdout contains local-fixed       restart: true
-    LocalFix -> Done           when ctx.tool_stdout contains local-exhausted
+    RunTests -> Done           when ctx.tool_marker = tests-pass
+    RunTests -> Done           when ctx.tool_marker = tests-fail-cloud
+    RunTests -> LocalFix       when ctx.tool_marker = tests-fail
+    LocalFix -> RunTests       when ctx.tool_marker = local-fixed              restart: true
+    LocalFix -> Done           when ctx.tool_marker = local-exhausted
