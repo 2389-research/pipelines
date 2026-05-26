@@ -783,6 +783,7 @@ workflow SpecToSprintsYaml
 
   tool validate_output
     label: "Validate Output"
+    marker_grep: '^(valid|invalid-.*)$'
     timeout: 30s
     command:
       set -eu

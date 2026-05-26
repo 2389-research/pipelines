@@ -874,6 +874,7 @@ workflow SpecToSprintsForLocalCodegen
 
   tool validate_output
     label: "Validate Output"
+    marker_grep: '^(valid|invalid-.*)$'
     timeout: 15s
     command:
       set -eu
