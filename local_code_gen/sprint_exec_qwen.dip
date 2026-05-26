@@ -383,7 +383,7 @@ workflow SprintExecLocalGenQwen
       # Project-root files commonly named in scaffolding manifests across
       # languages. Snapshotting these alongside the source dirs lets rollback
       # cover the full attack surface that qwen could write to via SR.
-      ROOT_FILES="pyproject.toml package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
+      ROOT_FILES="pyproject.toml uv.lock package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
 
       SOURCE_DIRS=$(lang_src_dirs "$lang")
       for extra in tests scripts; do
