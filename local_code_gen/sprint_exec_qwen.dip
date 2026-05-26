@@ -65,8 +65,8 @@ workflow SprintExecLocalGenQwen
         for src in \
           "local_code_gen/lib/$name" \
           "local_code_gen/$name" \
-          ${PIPELINES_REPO:+"$PIPELINES_REPO/local_code_gen/lib/$name"} \
-          ${PIPELINES_REPO:+"$PIPELINES_REPO/local_code_gen/$name"} \
+          "${PIPELINES_REPO:+$PIPELINES_REPO/local_code_gen/lib/$name}" \
+          "${PIPELINES_REPO:+$PIPELINES_REPO/local_code_gen/$name}" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/$name"; do
           if [ -n "$src" ] && [ -f "$src" ]; then
