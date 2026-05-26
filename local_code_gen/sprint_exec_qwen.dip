@@ -547,7 +547,7 @@ workflow SprintExecLocalGenQwen
 
       FAIL_BLOCKS=$(lang_failure_block "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
       FAIL_SUMMARY=$(lang_failure_summary "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
-      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || echo 0)
+      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || true)
 
       cd "$WORKDIR_ABS"
 
