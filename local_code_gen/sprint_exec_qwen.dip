@@ -513,6 +513,13 @@ workflow SprintExecLocalGenQwen
       lf_extra_globs=$(lang_src_glob_extras "$lang")
       lf_prune=$(lang_find_prune "$lang")
 
+      # Disable pathname expansion around the find loop: $lf_prune contains
+      # literal glob patterns (e.g. */__pycache__/*, */node_modules/*) that
+      # find needs to receive unexpanded; without `set -f` the shell would
+      # expand them against CWD if matching paths exist, breaking the prune
+      # predicate. Same reasoning for $lf_glob / $lf_extra_globs (*.py, *.js,
+      # ...) which find -name expects as literals.
+      set -f
       : > "$WORKDIR_ABS/.ai/lf_app_files.txt"
       for d in $lf_src_dirs; do
         [ -d "$d" ] || continue
@@ -525,6 +532,7 @@ workflow SprintExecLocalGenQwen
           find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
         done
       done
+      set +f
 
       printf '%s\n' "$FAILING_TESTS" > "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
       : > "$WORKDIR_ABS/.ai/lf_context.txt"
