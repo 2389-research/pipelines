@@ -5,6 +5,8 @@
 #          the deterministic pre-broken fixtures in
 #          DS-scratch/local_llm_patch_bench/. The production runner that uses
 #          this same LocalFix shape is sprint_runner_qwen.dip (sibling).
+#          All per-language dispatch lives in lib/lang_profile.sh — same lib
+#          the production runner sources, so the bench tests the same code path.
 workflow BenchLocalFixSR
   goal: "Minimal dip that exercises the SR + rollback LocalFix logic against a pre-broken Python project. No generation, no ledger, no audit. Used to validate the LocalFix tool body in isolation against the local_llm_patch_bench fixtures."
   start: Setup
@@ -16,7 +18,7 @@ workflow BenchLocalFixSR
     max_restarts: 30
 
   tool Setup
-    label: "Detect proj_root + install deps + initial test"
+    label: "Stage lib + detect proj_root + install deps"
     timeout: 300s
     command:
       set +e
@@ -25,74 +27,94 @@ workflow BenchLocalFixSR
       rm -f .ai/local_fix_attempts .ai/local_exhausted .ai/consecutive_rollbacks .ai/passing_pre.txt .ai/escalation.txt
       rm -rf .ai/snapshot_pre_local .ai/snapshot_round_pre
 
-      proj_root="."
-      if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
-        proj_root="backend"
-      elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
-        proj_root="frontend"
-      elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
-        proj_root="server"
-      elif [ -f api/pyproject.toml ] || [ -f api/go.mod ]; then
-        proj_root="api"
-      fi
+      # Stage lib helpers from the repo into .ai/ so RunTests/LocalFix are
+      # self-contained — works whether the bench runs inside the repo or
+      # against a fixture workdir elsewhere on disk. lang_profile.sh is
+      # sourced by RunTests/LocalFix; merge_sr.py is invoked by LocalFix.
+      # Mirrors sprint_runner_qwen.dip's stage_lib so the bench tests the
+      # same code path as production.
+      stage_lib() {
+        local name="$1"
+        local target=".ai/$name"
+        for src in \
+          "local_code_gen/lib/$name" \
+          "local_code_gen/$name" \
+          "${PIPELINES_REPO:+$PIPELINES_REPO/local_code_gen/lib/$name}" \
+          "${PIPELINES_REPO:+$PIPELINES_REPO/local_code_gen/$name}" \
+          "$HOME/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
+          "$HOME/Documents/GitHub/pipelines/local_code_gen/$name"; do
+          if [ -n "$src" ] && [ -f "$src" ]; then
+            cp "$src" "$target"
+            echo "staged $name from $src"
+            return 0
+          fi
+        done
+        if [ -f "$target" ]; then
+          echo "staged $name not found in repo; using existing $target"
+          return 0
+        fi
+        echo "ERROR: $name not found in any expected location" >&2
+        return 1
+      }
+      stage_lib lang_profile.sh || exit 1
+      stage_lib merge_sr.py     || exit 1
+
+      # Detect language + install deps + record test command via lang_profile.
+      # Adding a language: edit lib/lang_profile.sh, not this dip.
+      . .ai/lang_profile.sh
+      proj_root=$(detect_proj_root)
       printf '%s' "$proj_root" > .ai/proj_root.txt
-      echo "Setup: proj_root=$proj_root cwd=$WORKDIR_ABS" >&2
 
       cd "$proj_root"
-      if [ -f pyproject.toml ]; then
-        uv sync --all-extras > "$WORKDIR_ABS/.ai/install.log" 2>&1 || uv sync >> "$WORKDIR_ABS/.ai/install.log" 2>&1 || true
-      elif [ -f go.mod ]; then
-        go mod tidy 2>/dev/null || true
-      elif [ -f package.json ]; then
-        npm install 2>/dev/null || true
-      fi
+      lang=$(detect_lang ".")
+      lang_install "$lang"
+      test_command=$(lang_test_cmd "$lang")
+      cd "$WORKDIR_ABS"
+
+      printf '%s' "$lang"         > .ai/lang.txt
+      printf '%s' "$test_command" > .ai/test_command.txt
+      echo "Setup: proj_root=$proj_root lang=$lang test_command='$test_command' cwd=$WORKDIR_ABS" >&2
 
       printf 'setup-done'
 
-  # DIP102 ack: RunTests' three conditional edges (tests-fail, tests-pass,
-  # tests-fail-cloud) are exhaustive over what the script emits — see the
-  # command body's final printf branches. Per tracker/CLAUDE.md (Edge
-  # routing — no unconditional fallbacks to loop targets), adding an
-  # unconditional fallback would route to the same target as one of the
-  # conditionals, which is the infinite-loop trap to avoid.
-  #
-  # DIP101 ack: LocalFix is conditionally reachable from RunTests by design
-  # (only runs when tests fail); Done is conditionally reachable because
-  # the conditional routing IS the pipeline logic, not a defect.
+  # RunTests' three conditional edges (tests-pass, tests-fail, tests-fail-cloud)
+  # are exhaustive over what the body emits; marker_grep declares that set so
+  # dippin's DIP101/DIP102 coverage analysis stops flagging the conditionals
+  # as needing an unconditional fallback. (An unconditional fallback would
+  # route to the same target as one of the conditionals, which is the
+  # infinite-loop trap we want to avoid.) LocalFix and Done are likewise only
+  # reachable through these conditionals by design — the routing IS the logic.
   tool RunTests
     label: "Run tests"
+    marker_grep: '^(tests-pass|tests-fail|tests-fail-cloud)$'
     timeout: 600s
     command:
       set +e
       mkdir -p .ai
       WORKDIR_ABS=$(pwd)
-      proj_root=$(cat .ai/proj_root.txt 2>/dev/null)
-      if [ -z "$proj_root" ]; then
-        proj_root="."
-        if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
-          proj_root="backend"
-        elif [ -f api/pyproject.toml ] || [ -f api/go.mod ] || [ -f api/package.json ]; then
-          proj_root="api"
-        elif [ -f frontend/pyproject.toml ] || [ -f frontend/package.json ]; then
-          proj_root="frontend"
-        elif [ -f server/pyproject.toml ] || [ -f server/go.mod ]; then
-          proj_root="server"
-        fi
-        printf '%s' "$proj_root" > .ai/proj_root.txt
-      fi
+      . .ai/lang_profile.sh
+
+      # Pin proj_root from Setup's persisted value. Unlike production
+      # sprint_runner_qwen.dip — which re-detects every run because Generate
+      # may create subdirs after Setup — the bench has no Generate node, so
+      # there's no reason for proj_root to change mid-workflow. Pinning
+      # protects against a failed LocalFix accidentally writing a stray
+      # manifest that would flip detection. Fall back to fresh detection
+      # only if Setup somehow didn't persist (defensive).
+      proj_root=$(cat .ai/proj_root.txt 2>/dev/null || echo "")
+      [ -z "$proj_root" ] && proj_root=$(detect_proj_root)
+      printf '%s' "$proj_root" > .ai/proj_root.txt
+
+      lang=$(cat .ai/lang.txt 2>/dev/null || echo "")
+      [ -z "$lang" ] && lang=$(detect_lang "$proj_root")
+      printf '%s' "$lang" > .ai/lang.txt
+
       cd "$proj_root"
-      code=0
-      if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-        uv run pytest -v > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
-      elif [ -f go.mod ]; then
-        go test ./... > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
-      elif [ -f package.json ]; then
-        npm test > "$WORKDIR_ABS/.ai/last_test_output.txt" 2>&1; code=$?
-      else
-        echo "no test runner detected" > "$WORKDIR_ABS/.ai/last_test_output.txt"; code=1
-      fi
+      lang_run_tests "$WORKDIR_ABS/.ai/last_test_output.txt" "$lang"
+      code=$?
       cd "$WORKDIR_ABS"
       tail -10 .ai/last_test_output.txt
+
       if [ $code -eq 0 ]; then
         printf 'tests-pass'
       elif [ -f .ai/local_exhausted ]; then
@@ -101,33 +123,35 @@ workflow BenchLocalFixSR
         printf 'tests-fail'
       fi
 
-  # DIP102 ack: LocalFix's two conditional edges (local-fixed → RunTests
-  # restart, local-exhausted → Done) are exhaustive over what the SR
-  # rollback loop emits. Same same-target trap reasoning as RunTests
-  # above — no unconditional fallback safe to add.
+  # LocalFix's two conditional edges (local-fixed → RunTests restart,
+  # local-exhausted → Done) are exhaustive over what the SR rollback loop
+  # emits; marker_grep declares the set for dippin's coverage analysis.
+  # Same same-target trap reasoning as RunTests — no unconditional fallback
+  # would be safe to add.
   tool LocalFix
     label: "Local fix (qwen3.6:35b-a3b-q8_0, SR + rollback)"
+    marker_grep: '^(local-fixed|local-exhausted)$'
     timeout: 600s
     command:
       set +e
       mkdir -p .ai
       OLLAMA=http://localhost:11434/api/chat
       WORKDIR_ABS=$(pwd)
-      proj_root=$(cat .ai/proj_root.txt 2>/dev/null)
-      if [ -z "$proj_root" ]; then
-        proj_root="."
-        if [ -f backend/pyproject.toml ] || [ -f backend/go.mod ] || [ -f backend/package.json ]; then
-          proj_root="backend"
-        elif [ -f api/pyproject.toml ] || [ -f api/go.mod ] || [ -f api/package.json ]; then
-          proj_root="api"
-        fi
-      fi
+      . .ai/lang_profile.sh
+      # Pin proj_root from Setup's persisted value — see RunTests for why
+      # bench pins rather than re-detecting like production sprint_runner.
+      proj_root=$(cat .ai/proj_root.txt 2>/dev/null || echo "")
+      [ -z "$proj_root" ] && proj_root=$(detect_proj_root)
+      printf '%s' "$proj_root" > .ai/proj_root.txt
       PROJ_ROOT_ABS="$WORKDIR_ABS/$proj_root"
+      lang=$(cat .ai/lang.txt 2>/dev/null || echo "")
+      [ -z "$lang" ] && lang=$(detect_lang "$proj_root")
+      printf '%s' "$lang" > .ai/lang.txt
 
       MAX_ROUNDS=8
       MAX_ROLLBACKS=3
 
-      # Locate merge_sr.py: prefer .ai/merge_sr.py (bench wrapper drops it here),
+      # Locate merge_sr.py: prefer .ai/merge_sr.py (Setup stages it there),
       # fallback to $PIPELINES_REPO/local_code_gen/merge_sr.py if env var set.
       MERGE_SR=""
       if [ -f .ai/merge_sr.py ]; then
@@ -140,27 +164,78 @@ workflow BenchLocalFixSR
         exit 0
       fi
 
+      # Source dirs to snapshot — pulled from lang_profile.sh, plus the
+      # universal "tests" / "scripts" superset so multi-style projects (e.g.
+      # Python tests/ alongside scripts/) are covered. Matches the production
+      # runner's snapshot/restore surface.
+      SOURCE_DIRS=$(lang_src_dirs "$lang")
+      for extra in tests scripts; do
+        case " $SOURCE_DIRS " in *" $extra "*) ;; *) SOURCE_DIRS="$SOURCE_DIRS $extra" ;; esac
+      done
+
+      # Project-root files commonly named in scaffolding manifests across
+      # languages. Snapshotting these alongside the source dirs lets rollback
+      # cover the full attack surface that qwen could write to via SR. Includes
+      # uv.lock because lang_install uses `uv sync` for Python projects with
+      # pyproject.toml, which can regenerate the lock.
+      ROOT_FILES="pyproject.toml uv.lock package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
+
       snapshot_state() {
         local snap_dir="$1"
+        # Make snap_dir absolute so cd doesn't break it.
+        case "$snap_dir" in
+          /*) ;;
+          *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
+        esac
         rm -rf "$snap_dir"; mkdir -p "$snap_dir"
         cd "$PROJ_ROOT_ABS"
-        [ -d app ] && cp -R app "$snap_dir/" || true
-        [ -d tests ] && cp -R tests "$snap_dir/" || true
-        [ -d scripts ] && cp -R scripts "$snap_dir/" || true
-        [ -d src ] && cp -R src "$snap_dir/" || true
+        for d in $SOURCE_DIRS; do
+          [ -d "$d" ] && cp -R "$d" "$snap_dir/" || true
+        done
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && cp "$f" "$snap_dir/"
+        done
         cd "$WORKDIR_ABS"
       }
       restore_state() {
         local snap_dir="$1"
+        case "$snap_dir" in
+          /*) ;;
+          *) snap_dir="$WORKDIR_ABS/$snap_dir" ;;
+        esac
+        # Refuse to "restore" from a snapshot with NEITHER source dirs NOR
+        # root manifest files — that genuinely empty snapshot would just
+        # delete current state.
+        local any_present=0
+        for d in $SOURCE_DIRS; do
+          [ -d "$snap_dir/$d" ] && any_present=1 && break
+        done
+        if [ "$any_present" -eq 0 ]; then
+          for f in $ROOT_FILES; do
+            [ -f "$snap_dir/$f" ] && any_present=1 && break
+          done
+        fi
+        if [ "$any_present" -eq 0 ]; then
+          echo "WARN: snapshot $snap_dir has no source dirs and no root manifests; refusing to restore (would nuke current state)"
+          return 1
+        fi
         cd "$PROJ_ROOT_ABS"
-        [ -d app ] && rm -rf app
-        [ -d tests ] && rm -rf tests
-        [ -d scripts ] && rm -rf scripts
-        [ -d src ] && rm -rf src
-        [ -d "$snap_dir/app" ] && cp -R "$snap_dir/app" .
-        [ -d "$snap_dir/tests" ] && cp -R "$snap_dir/tests" .
-        [ -d "$snap_dir/scripts" ] && cp -R "$snap_dir/scripts" .
-        [ -d "$snap_dir/src" ] && cp -R "$snap_dir/src" .
+        for d in $SOURCE_DIRS; do
+          [ -d "$d" ] && rm -rf "$d"
+        done
+        # Also remove root manifests that exist on disk but not in the snapshot
+        # (e.g., a requirements.txt or uv.lock created mid-round by a failed
+        # LocalFix). Without this, files created by the round would persist
+        # past rollback even though the snapshot represents a pre-round state.
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && rm -f "$f"
+        done
+        for d in $SOURCE_DIRS; do
+          [ -d "$snap_dir/$d" ] && cp -R "$snap_dir/$d" .
+        done
+        for f in $ROOT_FILES; do
+          [ -f "$snap_dir/$f" ] && cp "$snap_dir/$f" .
+        done
         cd "$WORKDIR_ABS"
       }
       extract_passing() {
@@ -217,36 +292,58 @@ workflow BenchLocalFixSR
       PRE_PASS_COUNT=$(wc -l < .ai/passing_pre.txt | tr -d ' ')
       echo "pre-round passing tests: $PRE_PASS_COUNT"
 
-      # Build context: full app/ source + failing test files
+      # Build context bundle: full source-dir contents + failing test files.
+      # All per-language dispatch lives in lang_profile.sh — same as
+      # sprint_runner_qwen.dip's LocalFix.
       cd "$PROJ_ROOT_ABS"
-      FAILING_TESTS=$( { grep -oE 'FAILED [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; \
-                        grep -oE 'ERROR [^ ]+\.py' "$WORKDIR_ABS/.ai/last_test_output.txt" | awk '{print $2}'; } | sort -u)
+      FAILING_TESTS=$(lang_failing_test_files "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
 
-      # Search both app/ and src/ — projects use one or the other (or both).
-      # Mirrors snapshot_state/restore_state, which also handle both layouts.
-      find app src -name "*.py" -not -path "*/__pycache__/*" 2>/dev/null | sort > /tmp/lf_app_files.txt
-      printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
-      : > /tmp/lf_context.txt
+      lf_src_dirs=$(lang_src_dirs "$lang")
+      lf_glob=$(lang_src_glob "$lang")
+      lf_extra_globs=$(lang_src_glob_extras "$lang")
+      lf_prune=$(lang_find_prune "$lang")
+
+      # Disable pathname expansion around the find loop: $lf_prune contains
+      # literal glob patterns (e.g. */__pycache__/*) that find needs to receive
+      # unexpanded; without `set -f` the shell would expand them against CWD if
+      # matching paths exist, breaking the prune predicate. Same reasoning for
+      # $lf_glob / $lf_extra_globs (*.py, *.js, ...) which find -name expects
+      # as literals.
+      set -f
+      : > "$WORKDIR_ABS/.ai/lf_app_files.txt"
+      for d in $lf_src_dirs; do
+        [ -d "$d" ] || continue
+        # shellcheck disable=SC2086 — $lf_prune is a flag list we want word-split.
+        find "$d" -name "$lf_glob" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
+        for g in $lf_extra_globs; do
+          # shellcheck disable=SC2086
+          find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
+        done
+      done
+      set +f
+
+      printf '%s\n' "$FAILING_TESTS" > "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
+      : > "$WORKDIR_ABS/.ai/lf_context.txt"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
-        cat "$f" >> /tmp/lf_context.txt
-        printf '\n\n' >> /tmp/lf_context.txt
-      done < /tmp/lf_app_files.txt
+        printf '===== %s =====\n' "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+        cat "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+        printf '\n\n' >> "$WORKDIR_ABS/.ai/lf_context.txt"
+      done < "$WORKDIR_ABS/.ai/lf_app_files.txt"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
         if [ -f "$f" ]; then
-          printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
-          cat "$f" >> /tmp/lf_context.txt
-          printf '\n\n' >> /tmp/lf_context.txt
+          printf '===== %s =====\n' "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+          cat "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+          printf '\n\n' >> "$WORKDIR_ABS/.ai/lf_context.txt"
         fi
-      done < /tmp/lf_failing_tests.txt
-      CONTEXT=$(cat /tmp/lf_context.txt)
-      rm -f /tmp/lf_app_files.txt /tmp/lf_failing_tests.txt /tmp/lf_context.txt
+      done < "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
+      CONTEXT=$(cat "$WORKDIR_ABS/.ai/lf_context.txt")
+      rm -f "$WORKDIR_ABS/.ai/lf_app_files.txt" "$WORKDIR_ABS/.ai/lf_failing_tests.txt" "$WORKDIR_ABS/.ai/lf_context.txt"
 
-      FAIL_BLOCKS=$(awk '/^=+ FAILURES =+$/{f=1;next} f && /^=+ short test summary/{exit} f' "$WORKDIR_ABS/.ai/last_test_output.txt")
-      FAIL_SUMMARY=$(grep -E "^(FAILED|ERROR) " "$WORKDIR_ABS/.ai/last_test_output.txt" || true)
-      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || echo 0)
+      FAIL_BLOCKS=$(lang_failure_block "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
+      FAIL_SUMMARY=$(lang_failure_summary "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
+      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || true)
 
       cd "$WORKDIR_ABS"
 
@@ -302,7 +399,7 @@ workflow BenchLocalFixSR
           printf 'local-exhausted'
           exit 0
         fi
-        printf 'local-fix-applied'
+        printf 'local-fixed'
         exit 0
       fi
 
@@ -337,8 +434,8 @@ workflow BenchLocalFixSR
 
   edges
     Setup -> RunTests
-    RunTests -> LocalFix       when ctx.tool_stdout contains tests-fail
-    RunTests -> Done           when ctx.tool_stdout contains tests-pass
-    RunTests -> Done           when ctx.tool_stdout contains tests-fail-cloud
-    LocalFix -> RunTests       when ctx.tool_stdout contains local-fixed       restart: true
-    LocalFix -> Done           when ctx.tool_stdout contains local-exhausted
+    RunTests -> Done           when ctx.tool_marker = tests-pass
+    RunTests -> Done           when ctx.tool_marker = tests-fail-cloud
+    RunTests -> LocalFix       when ctx.tool_marker = tests-fail
+    LocalFix -> RunTests       when ctx.tool_marker = local-fixed              restart: true
+    LocalFix -> Done           when ctx.tool_marker = local-exhausted

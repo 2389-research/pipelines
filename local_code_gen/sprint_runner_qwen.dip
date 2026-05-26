@@ -105,8 +105,8 @@ workflow SprintRunnerLocalGenQwen
         for src in \
           "local_code_gen/lib/$name" \
           "local_code_gen/$name" \
-          "${PIPELINES_REPO:-}/local_code_gen/lib/$name" \
-          "${PIPELINES_REPO:-}/local_code_gen/$name" \
+          "${PIPELINES_REPO:+$PIPELINES_REPO/local_code_gen/lib/$name}" \
+          "${PIPELINES_REPO:+$PIPELINES_REPO/local_code_gen/$name}" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/lib/$name" \
           "$HOME/Documents/GitHub/pipelines/local_code_gen/$name"; do
           if [ -n "$src" ] && [ -f "$src" ]; then
@@ -423,7 +423,7 @@ workflow SprintRunnerLocalGenQwen
       # Project-root files commonly named in scaffolding manifests across
       # languages. Snapshotting these alongside the source dirs lets rollback
       # cover the full attack surface that qwen could write to via SR.
-      ROOT_FILES="pyproject.toml package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
+      ROOT_FILES="pyproject.toml uv.lock package.json package-lock.json go.mod go.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock pom.xml build.gradle build.gradle.kts requirements.txt requirements-dev.txt"
 
       # Source dirs to snapshot — pulled from lang_profile.sh, plus the
       # universal "tests" / "scripts" superset so multi-style projects (e.g.
@@ -463,7 +463,7 @@ workflow SprintRunnerLocalGenQwen
         # delete current state. Pre-local snapshots of an architect-prepped
         # repo (only Cargo.toml/go.mod/pyproject.toml + scaffolding manifest,
         # no source dirs yet) are valid rollback points.
-        any_present=0
+        local any_present=0
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && any_present=1 && break
         done
@@ -479,6 +479,13 @@ workflow SprintRunnerLocalGenQwen
         cd "$PROJ_ROOT_ABS"
         for d in $SOURCE_DIRS; do
           [ -d "$d" ] && rm -rf "$d"
+        done
+        # Also remove root manifests that exist on disk but not in the snapshot
+        # (e.g., a uv.lock or requirements.txt created mid-round). Without this,
+        # files created by the round would persist past rollback even though the
+        # snapshot represents a pre-round state.
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && rm -f "$f"
         done
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && cp -R "$snap_dir/$d" .
@@ -552,41 +559,49 @@ workflow SprintRunnerLocalGenQwen
       lf_extra_globs=$(lang_src_glob_extras "$lang")
       lf_prune=$(lang_find_prune "$lang")
 
-      : > /tmp/lf_app_files.txt
+      # Disable pathname expansion around the find loop: $lf_prune contains
+      # literal glob patterns (e.g. */__pycache__/*, */node_modules/*) that
+      # find needs to receive unexpanded; without `set -f` the shell would
+      # expand them against CWD if matching paths exist, breaking the prune
+      # predicate. Same reasoning for $lf_glob / $lf_extra_globs (*.py, *.js,
+      # ...) which find -name expects as literals.
+      set -f
+      : > "$WORKDIR_ABS/.ai/lf_app_files.txt"
       for d in $lf_src_dirs; do
         [ -d "$d" ] || continue
         # Primary glob (always present).
         # shellcheck disable=SC2086 — $lf_prune is a flag list we want word-split.
-        find "$d" -name "$lf_glob" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
+        find "$d" -name "$lf_glob" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
         # Extra globs for multi-extension languages (node: *.js; java: *.kt).
         for g in $lf_extra_globs; do
           # shellcheck disable=SC2086
-          find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> /tmp/lf_app_files.txt
+          find "$d" -name "$g" $lf_prune 2>/dev/null | sort >> "$WORKDIR_ABS/.ai/lf_app_files.txt"
         done
       done
+      set +f
 
-      printf '%s\n' "$FAILING_TESTS" > /tmp/lf_failing_tests.txt
-      : > /tmp/lf_context.txt
+      printf '%s\n' "$FAILING_TESTS" > "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
+      : > "$WORKDIR_ABS/.ai/lf_context.txt"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
-        cat "$f" >> /tmp/lf_context.txt
-        printf '\n\n' >> /tmp/lf_context.txt
-      done < /tmp/lf_app_files.txt
+        printf '===== %s =====\n' "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+        cat "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+        printf '\n\n' >> "$WORKDIR_ABS/.ai/lf_context.txt"
+      done < "$WORKDIR_ABS/.ai/lf_app_files.txt"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
         if [ -f "$f" ]; then
-          printf '===== %s =====\n' "$f" >> /tmp/lf_context.txt
-          cat "$f" >> /tmp/lf_context.txt
-          printf '\n\n' >> /tmp/lf_context.txt
+          printf '===== %s =====\n' "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+          cat "$f" >> "$WORKDIR_ABS/.ai/lf_context.txt"
+          printf '\n\n' >> "$WORKDIR_ABS/.ai/lf_context.txt"
         fi
-      done < /tmp/lf_failing_tests.txt
-      CONTEXT=$(cat /tmp/lf_context.txt)
-      rm -f /tmp/lf_app_files.txt /tmp/lf_failing_tests.txt /tmp/lf_context.txt
+      done < "$WORKDIR_ABS/.ai/lf_failing_tests.txt"
+      CONTEXT=$(cat "$WORKDIR_ABS/.ai/lf_context.txt")
+      rm -f "$WORKDIR_ABS/.ai/lf_app_files.txt" "$WORKDIR_ABS/.ai/lf_failing_tests.txt" "$WORKDIR_ABS/.ai/lf_context.txt"
 
       FAIL_BLOCKS=$(lang_failure_block "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
       FAIL_SUMMARY=$(lang_failure_summary "$lang" "$WORKDIR_ABS/.ai/last_test_output.txt")
-      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || echo 0)
+      FAIL_COUNT=$(echo "$FAIL_SUMMARY" | grep -c . || true)
 
       cd "$WORKDIR_ABS"
 
