@@ -417,7 +417,7 @@ workflow SprintExecLocalGenQwen
         # delete current state. Pre-local snapshots of an architect-prepped
         # repo (only Cargo.toml/go.mod/pyproject.toml + scaffolding manifest,
         # no source dirs yet) are valid rollback points.
-        any_present=0
+        local any_present=0
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && any_present=1 && break
         done
@@ -433,6 +433,13 @@ workflow SprintExecLocalGenQwen
         cd "$PROJ_ROOT_ABS"
         for d in $SOURCE_DIRS; do
           [ -d "$d" ] && rm -rf "$d"
+        done
+        # Also remove root manifests that exist on disk but not in the snapshot
+        # (e.g., a uv.lock or requirements.txt created mid-round). Without this,
+        # files created by the round would persist past rollback even though the
+        # snapshot represents a pre-round state.
+        for f in $ROOT_FILES; do
+          [ -f "$f" ] && rm -f "$f"
         done
         for d in $SOURCE_DIRS; do
           [ -d "$snap_dir/$d" ] && cp -R "$snap_dir/$d" .
