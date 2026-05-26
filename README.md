@@ -4,7 +4,7 @@ A collection of [Dippin](https://github.com/2389-research/dippin-lang) pipelines
 
 ## Quick Start
 
-> **Requires** tracker ≥ `v0.30.0` (which vendors dippin-lang ≥ `v0.28.0`). Some pipelines — currently `build-and-ship/refactor-express.dip` — use the `marker_grep` typed-routing field on tool nodes, which older tracker releases will reject as an unknown field. Installing with `@latest` is sufficient.
+> **Requires** tracker ≥ `v0.30.0` (which vendors dippin-lang ≥ `v0.28.0`). Several pipelines use the `marker_grep` typed-routing field on tool nodes, which older tracker releases will reject as an unknown field. Installing with `@latest` is sufficient.
 
 ```bash
 # Install tracker
