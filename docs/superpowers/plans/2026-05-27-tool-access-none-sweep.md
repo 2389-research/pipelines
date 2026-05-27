@@ -78,12 +78,15 @@ C and D sites in scope grep but stay untouched. The "expected HARD CONSTRAINT re
 git checkout main && git pull
 git checkout -b track-b-cat-a
 
-# Authoritative list of every HARD CONSTRAINT site in the repo.
-grep -rn "HARD CONSTRAINT\|tools: none\|tools:none" --include="*.dip" . | sort > /tmp/track-b-sites.txt
+# Authoritative list of every HARD CONSTRAINT site in the repo. The `tools: none`
+# / `tools:none` idioms were speculative in earlier drafts; this codebase only
+# ever used "HARD CONSTRAINT" copy as the prompt-level pseudo-bound, so the grep
+# narrows to that one phrase.
+grep -rn "HARD CONSTRAINT" --include="*.dip" . | sort > /tmp/track-b-sites.txt
 wc -l /tmp/track-b-sites.txt
 ```
 
-Expected ~57 lines. Cross-reference with the Category A table above — anything the table claims that grep doesn't find (or vice versa) is a drift bug; fix the table before continuing.
+Expected ~41 lines pre-conversion (matches the sum of Category A+B+C+D rows in the inventory). Cross-reference with the Category A table above — anything the table claims that grep doesn't find (or vice versa) is a drift bug; fix the table before continuing.
 
 ### Step 2: Sanity-check no candidate has an explicit `tools:` block
 
