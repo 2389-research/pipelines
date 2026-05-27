@@ -16,16 +16,18 @@ workflow GreenfieldReview
   agent Start
     label: Start
     max_turns: 1
+    tool_access: none
     prompt:
       Acknowledge that the L6/L7 review pipeline is starting.
-      HARD CONSTRAINT: Your ONLY job is to acknowledge start.
+      Your ONLY job is to acknowledge start.
 
   agent Exit
     label: Exit
     max_turns: 1
+    tool_access: none
     prompt:
       L6/L7 review pipeline complete. Report final status.
-      HARD CONSTRAINT: Your ONLY job is to acknowledge completion.
+      Your ONLY job is to acknowledge completion.
 
   tool ReadSanitizedOutput
     label: "Read Sanitized Output"
