@@ -4,7 +4,7 @@ A collection of [Dippin](https://github.com/2389-research/dippin-lang) pipelines
 
 ## Quick Start
 
-> **Requires** tracker ≥ `v0.30.0` (which vendors dippin-lang ≥ `v0.28.0`). Several pipelines use the `marker_grep` typed-routing field on tool nodes, which older tracker releases will reject as an unknown field. Installing with `@latest` is sufficient.
+> **Requires** tracker ≥ `v0.31.0` (which vendors dippin-lang ≥ `v0.32.0`). Pipelines use the `marker_grep` typed-routing field on tool nodes and the `tool_access: none` structural bound on agent Start/Exit nodes; older tracker releases will either reject these as unknown fields or silently fall back to prompt-only safety. Installing with `@latest` is sufficient.
 
 ```bash
 # Install tracker

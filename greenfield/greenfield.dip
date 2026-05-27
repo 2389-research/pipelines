@@ -12,16 +12,18 @@ workflow Greenfield
   agent Start
     label: Start
     max_turns: 1
+    tool_access: none
     prompt:
       Acknowledge that the Greenfield reverse engineering pipeline is starting.
-      HARD CONSTRAINT: Your ONLY job is to acknowledge start.
+      Your ONLY job is to acknowledge start.
 
   agent Exit
     label: Exit
     max_turns: 1
+    tool_access: none
     prompt:
       Greenfield pipeline complete. Report final status.
-      HARD CONSTRAINT: Your ONLY job is to acknowledge completion.
+      Your ONLY job is to acknowledge completion.
 
   tool SetupWorkspace
     label: "Setup Workspace"

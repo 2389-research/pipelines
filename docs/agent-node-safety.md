@@ -2,14 +2,18 @@
 
 > Verified against `tracker v0.29.2` / `dippin v0.27.0` engine source by three independent reviewers, 2026-05-18. The findings below shape what's safe and what's a foot-gun when designing `agent` nodes for the workflows in this repo.
 
+> **Update — dippin v0.32.0:** This doc was written at v0.27.0, when there was no language-level primitive to bound agent tool access. [dippin-lang#41](https://github.com/2389-research/dippin-lang/issues/41) closed that gap in v0.32.0 with the `tool_access: none` agent-node field, which strips the model's tool catalog at the language level. The TL;DR below has been updated to reflect this; the deeper analysis sections still describe the pre-v0.32.0 runtime accurately and remain useful for understanding *why* the bounds matter. A broader rewrite is tracked in [#20](https://github.com/2389-research/pipelines/issues/20).
+
 ## TL;DR
 
-`agent` nodes on the **native backend** (the default) always have full read/write/bash/edit/glob/grep tool access. There is no language-level primitive in dippin to suppress that. So:
+On the **native backend** (the default), `agent` nodes have full read/write/bash/edit/glob/grep tool access **unless** the node declares `tool_access: none` (dippin ≥ v0.32.0). For workflows pinned to older trackers/dippin, the catalog cannot be suppressed structurally and you must rely on the prompt-level mitigations below.
 
-1. **`Start` and `Exit` should never be `agent` nodes with `prompt:` bodies.** Use `tool` nodes (or bare `agent` with no prompt) — the v0.28.2 runaway-agent bug came from exactly this anti-pattern.
+Conventions for safe agent design:
+
+1. **`Start` and `Exit` should always declare `tool_access: none` + `max_turns: 1`** (or, on toolchains pinned to dippin < v0.32.0, prefer `tool` nodes / bare `agent` with no prompt) — the v0.28.2 runaway-agent bug came from acknowledge-only agents shipping the full tool catalog.
 2. **For any "summarize / format the output / write a closing message" need: prefer a `tool` node** templating from safe `ctx.*` keys and disk files. Zero LLM, zero exposure.
-3. **If you genuinely need an LLM at a node that should not touch files,** use `backend: claude-code` with explicit `disallowed_tools` — the native backend silently drops those attributes.
-4. **Don't trust `${ctx.last_response}` content** when designing downstream agent prompts — it's a cross-node prompt-injection vector.
+3. **If you genuinely need an LLM at a node that should not touch files**, declare `tool_access: none`. On older toolchains, `backend: claude-code` with explicit `disallowed_tools` is the fallback — the native backend silently drops those attributes.
+4. **Don't trust `${ctx.last_response}` content** when designing downstream agent prompts — it's a cross-node prompt-injection vector. `tool_access: none` bounds the catalog but does not sanitize incoming context strings.
 
 ## Why the obvious mitigations don't work
 

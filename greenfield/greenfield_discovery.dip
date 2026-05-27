@@ -16,18 +16,20 @@ workflow GreenfieldDiscovery
   agent Start
     label: Start
     max_turns: 1
+    tool_access: none
     prompt:
       Acknowledge that the L1 intelligence gathering pipeline is starting. Report ready status.
 
-      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start.
+      Your ONLY job is to acknowledge the pipeline start.
 
   agent Exit
     label: Exit
     max_turns: 1
+    tool_access: none
     prompt:
       L1 intelligence gathering complete. Report final status.
 
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+      Your ONLY job is to acknowledge completion.
 
   tool ReadManifest
     label: "Read Discovery Manifest"

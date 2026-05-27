@@ -16,16 +16,18 @@ workflow GreenfieldValidation
   agent Start
     label: Start
     max_turns: 1
+    tool_access: none
     prompt:
       Acknowledge that the L4/L5 validation pipeline is starting. Report ready status.
-      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Your ONLY job is to acknowledge start.
+      Your ONLY job is to acknowledge start.
 
   agent Exit
     label: Exit
     max_turns: 1
+    tool_access: none
     prompt:
       L4/L5 validation pipeline complete. Report final status.
-      HARD CONSTRAINT: Your ONLY job is to acknowledge completion.
+      Your ONLY job is to acknowledge completion.
 
   tool ReadSpecs
     label: "Read Specs"

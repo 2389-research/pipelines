@@ -11,17 +11,19 @@ workflow SprintExecYaml
 
   agent Start
     label: Start
+    max_turns: 1
+    tool_access: none
     prompt:
       Acknowledge that the sprint execution pipeline is starting. Report ready status.
-
-      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge the pipeline start. If you do anything else, the pipeline fails.
+      Your ONLY job is to acknowledge the pipeline start. If you do anything else, the pipeline fails.
 
   agent Exit
     label: Exit
+    max_turns: 1
+    tool_access: none
     prompt:
       The sprint execution pipeline is complete. Report final status.
-
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Do NOT run tests. Do NOT debug anything. Your ONLY job is to acknowledge completion. If prior nodes left work undone, that is not your problem — the pipeline will handle retries.
+      Your ONLY job is to acknowledge completion. If prior nodes left work undone, that is not your problem — the pipeline will handle retries.
 
   tool EnsureLedger
     label: "Ensure Ledger"

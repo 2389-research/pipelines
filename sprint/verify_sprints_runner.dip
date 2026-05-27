@@ -20,10 +20,10 @@ workflow VerifySprintsRunner
   agent Exit
     label: Exit
     max_turns: 1
+    tool_access: none
     prompt:
       Verification runner pipeline complete. Report final status.
-
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete any files. Your ONLY job is to acknowledge completion.
+      Your ONLY job is to acknowledge completion.
 
   tool CheckYq
     label: "Check yq"
