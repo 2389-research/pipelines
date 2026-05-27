@@ -2,6 +2,8 @@
 
 > Verified against `tracker v0.29.2` / `dippin v0.27.0` engine source by three independent reviewers, 2026-05-18. The findings below shape what's safe and what's a foot-gun when designing `agent` nodes for the workflows in this repo.
 
+> **Update — dippin v0.32.0:** The original "no language-level primitive to suppress agent tool access" finding (line 7 below) is now historical. [dippin-lang#41](https://github.com/2389-research/dippin-lang/issues/41) closed in v0.32.0 with the `tool_access: none` agent-node field, which strips the model's tool catalog at the language level. Use it on acknowledge-only agents (Start, Exit, status reporters). The TL;DR mitigations below are still useful — `tool_access: none` and `max_turns: 1` are complementary (catalog bound + turn-count bound). A broader rewrite of this doc is tracked in [#20](https://github.com/2389-research/pipelines/issues/20).
+
 ## TL;DR
 
 `agent` nodes on the **native backend** (the default) always have full read/write/bash/edit/glob/grep tool access. There is no language-level primitive in dippin to suppress that. So:
