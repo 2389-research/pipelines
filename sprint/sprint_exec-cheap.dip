@@ -8,6 +8,7 @@ workflow SprintExecCheap
 
   agent Start
     label: Start
+    max_turns: 1
     tool_access: none
     prompt:
       Acknowledge that the cheap sprint execution pipeline is starting. Report ready status.
@@ -15,6 +16,7 @@ workflow SprintExecCheap
 
   agent Exit
     label: Exit
+    max_turns: 1
     tool_access: none
     prompt:
       The cheap sprint execution pipeline is complete. Report final status.

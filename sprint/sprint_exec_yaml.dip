@@ -11,6 +11,7 @@ workflow SprintExecYaml
 
   agent Start
     label: Start
+    max_turns: 1
     tool_access: none
     prompt:
       Acknowledge that the sprint execution pipeline is starting. Report ready status.
@@ -18,6 +19,7 @@ workflow SprintExecYaml
 
   agent Exit
     label: Exit
+    max_turns: 1
     tool_access: none
     prompt:
       The sprint execution pipeline is complete. Report final status.
