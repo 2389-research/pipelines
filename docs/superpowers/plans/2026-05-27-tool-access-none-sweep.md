@@ -2,7 +2,7 @@
 
 **Goal:** Convert pure-acknowledge agent Start/Exit nodes from prompt-level "HARD CONSTRAINT" tool-access copy to dippin-lang v0.32.0's `tool_access: none` structural primitive. Closes the prompt-vs-language gap for the v0.28.2 single-agent multi-tool-call vector.
 
-**Scope:** Category A sites only — ~26 sites across 13 files in `greenfield/` and `sprint/`. Mechanical conversion: drop tool-access clauses, add `tool_access: none`, preserve policy clauses.
+**Scope:** Category A sites only — 22 sites across 12 files in `greenfield/` and `sprint/`. Mechanical conversion: drop tool-access clauses, add `tool_access: none`, preserve policy clauses. (Original plan listed ~26 sites; 2 were reclassified to Category C during execution — see `sprint_runner_yaml*.dip:130` rows below.)
 
 **Tech:** dippin-lang v0.32.0 (new `tool_access` field; `DIP139` lint), tracker v0.31.0 (vendors v0.32.0). Local toolchain already bumped.
 
