@@ -258,30 +258,79 @@ workflow SprintRunnerYamlV2
       fi
       original_id=$(yq '.original_sprint_id' .ai/redecompose-result.yaml)
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      # Read count before cleanup
       new_count=$(yq '.new_sprint_ids | length' .ai/redecompose-result.yaml)
+      # Splice is the source of truth for sub-sprint insertion (#253 bugs 1+2):
+      # validate_ledger_after_redecompose's `cp` may have restored a snapshot
+      # that lacks the new sub-sprints — re-insert from disk so we converge
+      # to the correct ledger state regardless of upstream churn.
+      inserted=0
+      for new_id in $(yq '.new_sprint_ids[]' .ai/redecompose-result.yaml); do
+        existing=$(yq "[.sprints[] | select(.id == \"$new_id\")] | length" .ai/ledger.yaml)
+        if [ "$existing" != "0" ]; then
+          continue
+        fi
+        sf=".ai/sprints/SPRINT-${new_id}.yaml"
+        if [ ! -f "$sf" ]; then
+          printf 'missing-sprint-yaml-%s' "$new_id"
+          exit 1
+        fi
+        title=$(yq '.title | @json' "$sf")
+        complexity=$(yq '.complexity // "medium"' "$sf")
+        deps=$(yq '.depends_on // [] | @json' "$sf")
+        yq -i ".sprints += [{\"id\": \"$new_id\", \"title\": $title, \"status\": \"planned\", \"bootstrap\": false, \"depends_on\": $deps, \"complexity\": \"$complexity\", \"created_at\": \"$now\", \"updated_at\": \"$now\", \"attempts\": 0, \"total_cost\": \"0.00\"}]" .ai/ledger.yaml
+        inserted=$((inserted + 1))
+      done
       # Mark original sprint as redecomposed
       yq -i "(.sprints[] | select(.id == \"$original_id\")).status = \"redecomposed\" | (.sprints[] | select(.id == \"$original_id\")).updated_at = \"$now\"" .ai/ledger.yaml
-      # Rewrite dependents
+      # Rewrite dependents — `+= [new_dep]` would accumulate duplicates on
+      # a splice retry, so normalize with `|= unique` after each rewrite.
       for dep_id in $(yq '.dependents_to_rewrite | keys | .[]' .ai/redecompose-result.yaml 2>/dev/null); do
         old_dep=$(yq ".dependents_to_rewrite.\"$dep_id\".old_dep" .ai/redecompose-result.yaml)
-        # Remove old dep and add new deps
         yq -i "(.sprints[] | select(.id == \"$dep_id\")).depends_on -= [\"$old_dep\"]" .ai/ledger.yaml
         for new_dep in $(yq ".dependents_to_rewrite.\"$dep_id\".new_deps[]" .ai/redecompose-result.yaml); do
           yq -i "(.sprints[] | select(.id == \"$dep_id\")).depends_on += [\"$new_dep\"]" .ai/ledger.yaml
         done
-        # Also update the sprint YAML if it exists
+        yq -i "(.sprints[] | select(.id == \"$dep_id\")).depends_on |= unique" .ai/ledger.yaml
         dep_yaml=".ai/sprints/SPRINT-${dep_id}.yaml"
         if [ -f "$dep_yaml" ]; then
           yq -i ".depends_on -= [\"$old_dep\"]" "$dep_yaml"
           for new_dep in $(yq ".dependents_to_rewrite.\"$dep_id\".new_deps[]" .ai/redecompose-result.yaml); do
             yq -i ".depends_on += [\"$new_dep\"]" "$dep_yaml"
           done
+          yq -i ".depends_on |= unique" "$dep_yaml"
         fi
       done
       # Clean up transient files
       rm -f .ai/redecompose-request.yaml .ai/redecompose-result.yaml
-      printf 'spliced-%s-redecomposed-into-%s-sprints' "$original_id" "$new_count"
+      printf 'spliced-%s-redecomposed-into-%s-sprints-inserted-%s' "$original_id" "$new_count" "$inserted"
+
+  tool commit_after_splice
+    label: "Commit Spliced Ledger"
+    timeout: 30s
+    command:
+      set -eu
+      if [ ! -d .git ]; then
+        printf 'no-git-skipped'
+        exit 0
+      fi
+      # Commit the final ledger + sprint files AFTER splice_ledger has settled
+      # the state. The redecompose subgraph deliberately leaves .ai/ledger.yaml
+      # uncommitted so HEAD is never poisoned with the regenerator's
+      # all-planned ledger (#253 bug 3). This step restores the original
+      # ledger-commit-by-pipeline semantics with the corrected state.
+      for f in .ai/ledger.yaml .ai/sprints; do
+        [ -e "$f" ] && git add "$f"
+      done
+      if git diff --cached --quiet; then
+        printf 'no-changes-skipped'
+        exit 0
+      fi
+      original_id="unknown"
+      if [ -f .ai/runner-last-failed-sprint.txt ]; then
+        original_id=$(cat .ai/runner-last-failed-sprint.txt)
+      fi
+      git commit -m "chore(sprints): splice redecomposed sub-sprints into ledger"
+      printf 'committed-spliced-ledger-%s' "$original_id"
 
   tool report_redecompose
     label: "Report Redecomposition"
@@ -341,8 +390,9 @@ workflow SprintRunnerYamlV2
     validate_ledger_after_redecompose -> splice_ledger      when ctx.tool_stdout startswith ledger-ok     label: ledger_intact
     validate_ledger_after_redecompose -> splice_ledger      when ctx.tool_stdout startswith restored-    label: ledger_restored
     validate_ledger_after_redecompose -> check_ledger       restart: true
-    splice_ledger -> report_redecompose     when ctx.outcome = success  label: spliced
+    splice_ledger -> commit_after_splice    when ctx.outcome = success  label: spliced
     splice_ledger -> check_ledger           when ctx.outcome = fail     label: splice_failed  restart: true
-    splice_ledger -> report_redecompose
+    splice_ledger -> commit_after_splice
+    commit_after_splice -> report_redecompose
     report_redecompose -> check_ledger       restart: true
     failure_summary -> Exit

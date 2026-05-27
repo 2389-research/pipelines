@@ -638,7 +638,22 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    auto_status: true
     prompt:
+      STATUS contract — emit `STATUS:fail` as the FIRST line of your
+      response, before any other text. Do your planning and write your
+      output files. Only at the very end, after you have verified that
+      EVERY rule in the PROHIBITED ACTIONS checklist below has been
+      followed, emit a final `STATUS:success` line — alone on its line,
+      outside any code fence — to override the early fail. The
+      workflow's `auto_status` parser is last-line-wins, so the final
+      success replaces the early fail when everything passes; if your
+      response is truncated for any reason, or if you violated any
+      prohibited action, the early `STATUS:fail` remains and the
+      redecompose fails closed. Do NOT emit `STATUS:success` inside a
+      table cell or narrative paragraph; the parser scans for
+      line-leading STATUS markers only.
+
       You are re-decomposing a single failed sprint into smaller sub-sprints.
 
       Read .ai/redecompose-request.yaml for the context:
@@ -674,8 +689,10 @@ workflow SpecToSprintsYamlV2
          - depends_on: inherit from the original sprint's depends_on
          - dependents: leave empty (runner will rewrite)
          - scope_fence.off_limits: must include "do not modify .ai/ledger.yaml"
-         - status: planned
+         - status: planned   (NEVER `completed`, NEVER any other value)
          - bootstrap: false
+         - attempts: 0       (NEVER > 0)
+         - history.attempts: []   (NEVER fabricate prior attempts)
          - stack: copy from any existing sprint YAML
       2. SPRINT-<new_id>.md — full narrative (same format as other sprints)
 
@@ -692,7 +709,59 @@ workflow SpecToSprintsYamlV2
 
       For dependents_to_rewrite: the original_dependents should now depend on the LAST new sub-sprint (the one that completes the original scope).
 
-      HARD CONSTRAINT: Do NOT modify existing sprint files. Do NOT modify ledger.yaml. Only create new SPRINT files and the result manifest.
+      ## PROHIBITED ACTIONS (any violation → STATUS:fail stays)
+
+      Your ONLY job is planning + writing the files listed under "Output"
+      above. You are NOT implementing the sprint's work. The implementation
+      happens later, in sprint_exec_yaml_v2 against the SPRINT-<new_id>
+      contracts you write here. Concretely:
+
+      1. **No writes outside the allowlist.** The ONLY paths you may
+         create or modify are:
+           - .ai/sprints/SPRINT-<new_id>.yaml
+           - .ai/sprints/SPRINT-<new_id>.md
+           - .ai/redecompose-result.yaml
+         You may NOT touch .ai/ledger.yaml, existing SPRINT-*.{yaml,md}
+         files, sprint_plan.md, spec_analysis.md, plan-journal.md, the
+         recovery analysis, or anything under the project source tree
+         (e.g. crates/, src/, lib/, app/, pkg/, internal/, cmd/,
+         migrations/, schema/, tests/, spec/, Cargo.toml, package.json,
+         go.mod, pyproject.toml, Makefile, Dockerfile, or any
+         language-source file with extensions .rs / .go / .py / .ts /
+         .tsx / .js / .jsx / .java / .kt / .swift / .rb / .ex / .c /
+         .cc / .cpp / .h / .hpp).
+
+      2. **No build/test/run commands.** You may NOT invoke any of:
+         cargo, npm, yarn, pnpm, go, make, pytest, swift, gradle,
+         mvn, dotnet, ruby, mix, docker, kubectl, terraform, sqlx,
+         alembic, migrate, or any other build/test/run tool. The
+         sprint contracts you write here will be executed later by
+         the sprint runner — not by you.
+
+      3. **No fabricated success state in the YAML.** Every sub-sprint
+         YAML you write MUST have `status: planned`, `attempts: 0`,
+         and `history.attempts: []`. Do NOT set `status: completed`,
+         do NOT set `attempts > 0`, and do NOT invent `history.attempts`
+         entries (with dates, run_ids, outcome: success, reason fields,
+         etc.) — even if you believe the work is already done. The
+         ledger is the source of truth for sprint state and only the
+         runner is allowed to mark a sprint complete.
+
+      4. **No status-flipping summary.** Do NOT write a closing line
+         like "## Sprint <id>: Complete ✅" or "successfully
+         implemented" — your output is a *plan*, not an execution
+         report.
+
+      5. **You are NOT scope-creeping if you ASK.** If the failure
+         analysis genuinely needs implementation help to even plan the
+         split, write that observation into one of the new SPRINT-md
+         files as a risk note, and emit `STATUS:fail` at the end with
+         a one-line reason. The pipeline will route to a human gate.
+
+      Only emit `STATUS:success` as your terminal line if every numbered
+      rule above is satisfied. If you slipped and wrote anything outside
+      the allowlist or ran a build/test command anywhere in this turn,
+      leave the early `STATUS:fail` in place.
 
   tool write_ledger_redecompose
     label: "Append Redecomposed Sprints to Ledger"
@@ -1036,6 +1105,44 @@ workflow SpecToSprintsYamlV2
         printf 'no-git-skipped'
         exit 0
       fi
+      # Redecompose mode detection (#253 bug 3): if .ai/redecompose-request.yaml
+      # is present we are EITHER in a successful redecompose (request+result
+      # both present) OR a partially-failed redecompose (request alone).
+      # In neither case should we commit .ai/ledger.yaml — that's reserved
+      # for the runner's commit_after_splice, which sees the final spliced
+      # state. Pre-fix, this step committed the regenerator's all-planned
+      # ledger, poisoning git HEAD even after validate's `cp` restored the
+      # working tree.
+      if [ -f .ai/redecompose-request.yaml ]; then
+        if [ ! -f .ai/redecompose-result.yaml ]; then
+          # write_ledger_redecompose failed or redecompose_single violated
+          # its contract (emitted STATUS:success without writing the result
+          # file). Don't commit a partial state; the runner's
+          # validate_ledger_after_redecompose + splice_ledger + failure
+          # budget will reconcile or halt.
+          printf 'redecompose-incomplete-no-commit'
+          exit 0
+        fi
+        added=0
+        for new_id in $(yq '.new_sprint_ids[]' .ai/redecompose-result.yaml); do
+          for ext in yaml md; do
+            sf=".ai/sprints/SPRINT-${new_id}.${ext}"
+            if [ -f "$sf" ]; then
+              git add "$sf"
+              added=$((added + 1))
+            fi
+          done
+        done
+        if git diff --cached --quiet; then
+          printf 'no-changes-skipped'
+          exit 0
+        fi
+        original_id=$(yq '.original_sprint_id' .ai/redecompose-result.yaml)
+        git commit -m "feat(sprints): redecompose ${original_id} into sub-sprints"
+        printf 'committed-redecompose-%s-files' "$added"
+        exit 0
+      fi
+      # Full-decomposition path (no redecompose request)
       for f in .ai/ledger.yaml .ai/sprints .ai/spec_analysis.md .ai/sprint_plan.md; do
         [ -e "$f" ] && git add "$f"
       done
@@ -1089,7 +1196,13 @@ workflow SpecToSprintsYamlV2
     critique_join -> merge_decomposition
     check_resume -> redecompose_single      when ctx.tool_stdout = redecompose-mode  label: redecompose
     redecompose_single -> write_ledger_redecompose
-    write_ledger_redecompose -> validate_output
+    # #253 bug 3: bypass validate_output in redecompose mode. validate_output
+    # is designed for full decompositions — its capstone auto-fix and the
+    # write_sprint_docs/write_ledger fallback path are exactly what
+    # regenerate the entire ledger with all statuses reset to `planned`,
+    # which then trips validate_ledger_after_redecompose's `cp`-restore
+    # back in the runner and erases the new sub-sprint entries (bugs 1+2).
+    write_ledger_redecompose -> commit_output
     merge_decomposition -> DecompositionManager
     DecompositionManager -> present_plan
     present_plan -> approval_gate
