@@ -16,16 +16,18 @@ workflow GreenfieldSynthesis
   agent Start
     label: Start
     max_turns: 1
+    tool_access: none
     prompt:
       Acknowledge that the L2/L3 synthesis pipeline is starting. Report ready status.
-      HARD CONSTRAINT: Do NOT read project files. Do NOT write code. Your ONLY job is to acknowledge start.
+      Your ONLY job is to acknowledge start.
 
   agent Exit
     label: Exit
     max_turns: 1
+    tool_access: none
     prompt:
       L2/L3 synthesis pipeline complete. Report final status.
-      HARD CONSTRAINT: Do NOT write code. Do NOT modify files. Your ONLY job is to acknowledge completion.
+      Your ONLY job is to acknowledge completion.
 
   tool ReadL1Summary
     label: "Read L1 Summary"
