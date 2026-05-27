@@ -53,8 +53,8 @@ For each Category A site:
 | `sprint/sprint_exec-cheap.dip` | 14, 21 | Start, Exit |
 | `sprint/sprint_exec_yaml.dip` | 17, 24 | Start, Exit |
 | `sprint/sprint_exec_yaml_v2.dip` | 17, 24 | Start, Exit |
-| `sprint/sprint_runner_yaml.dip` | 19, 27, 130 | Start, Exit, blocked-state |
-| `sprint/sprint_runner_yaml_v2.dip` | 19, 27, 130 | Start, Exit, blocked-state |
+| `sprint/sprint_runner_yaml.dip` | 19, 27 | Start, Exit (line :130 reclassified to C during execution — its prompt says "Read .ai/ledger.yaml") |
+| `sprint/sprint_runner_yaml_v2.dip` | 19, 27 | Start, Exit (same reclassification as above) |
 | `sprint/verify_sprint.dip` | 35 | (single acknowledge-completion) |
 | `sprint/verify_sprints_runner.dip` | 26 | (single acknowledge-completion) |
 
