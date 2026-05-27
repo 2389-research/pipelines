@@ -344,6 +344,7 @@ workflow SprintExec
     provider: anthropic
     reasoning_effort: high
     max_turns: 10
+    tool_access: none
     auto_status: true
     max_retries: 3
     retry_target: ImplementSprint
@@ -370,7 +371,7 @@ workflow SprintExec
 
       Be strict. "Tests pass" is necessary but not sufficient. Stubbed implementations, unimplemented methods, missing wiring, and partial features all mean STATUS: fail. When in doubt, fail.
 
-      HARD CONSTRAINT: Do NOT write code. Do NOT create, modify, or delete project files. Do NOT implement fixes. Your ONLY job is to analyze and render a verdict.
+      Your ONLY job is to analyze and render a verdict.
 
   tool CompleteSprint
     label: "Complete Sprint"
