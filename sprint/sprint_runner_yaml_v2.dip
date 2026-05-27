@@ -300,8 +300,9 @@ workflow SprintRunnerYamlV2
           yq -i ".depends_on |= unique" "$dep_yaml"
         fi
       done
-      # Clean up transient files
-      rm -f .ai/redecompose-request.yaml .ai/redecompose-result.yaml
+      # Note: cleanup of .ai/redecompose-{request,result}.yaml is deferred to
+      # commit_after_splice — it needs to read the result file to enumerate
+      # exactly which SPRINT-<id>.{yaml,md} paths are authorized to stage.
       printf 'spliced-%s-redecomposed-into-%s-sprints-inserted-%s' "$original_id" "$new_count" "$inserted"
 
   tool commit_after_splice
@@ -313,16 +314,33 @@ workflow SprintRunnerYamlV2
         printf 'no-git-skipped'
         exit 0
       fi
-      # Commit the final ledger + sprint files AFTER splice_ledger has settled
-      # the state. The redecompose subgraph deliberately leaves .ai/ledger.yaml
-      # uncommitted so HEAD is never poisoned with the regenerator's
-      # all-planned ledger (#253 bug 3). This step restores the original
-      # ledger-commit-by-pipeline semantics with the corrected state.
-      for f in .ai/ledger.yaml .ai/sprints; do
-        [ -e "$f" ] && git add "$f"
-      done
+      # Stage ONLY the files this redecompose flow is authorized to commit:
+      #   - .ai/ledger.yaml (the spliced ledger)
+      #   - .ai/sprints/SPRINT-<new_id>.{yaml,md} for each new sub-sprint
+      #   - .ai/sprints/SPRINT-<dep_id>.yaml for each rewritten dependent
+      # Pre-fix this staged the entire .ai/sprints/ tree, which would have
+      # silently persisted any allowlist violations by redecompose_single
+      # (e.g., edits to existing SPRINT-* files), defeating the protection
+      # in spec_to_sprints_yaml_v2.dip's commit_output. Reported by Codex
+      # reviewer on PR #25 (P2 thread on sprint_runner_yaml_v2.dip:323).
+      if [ -f .ai/ledger.yaml ]; then
+        git add .ai/ledger.yaml
+      fi
+      if [ -f .ai/redecompose-result.yaml ]; then
+        for new_id in $(yq '.new_sprint_ids[]' .ai/redecompose-result.yaml); do
+          for ext in yaml md; do
+            sf=".ai/sprints/SPRINT-${new_id}.${ext}"
+            [ -f "$sf" ] && git add "$sf"
+          done
+        done
+        for dep_id in $(yq '.dependents_to_rewrite | keys | .[]' .ai/redecompose-result.yaml 2>/dev/null); do
+          dep_yaml=".ai/sprints/SPRINT-${dep_id}.yaml"
+          [ -f "$dep_yaml" ] && git add "$dep_yaml"
+        done
+      fi
       if git diff --cached --quiet; then
         printf 'no-changes-skipped'
+        rm -f .ai/redecompose-request.yaml .ai/redecompose-result.yaml
         exit 0
       fi
       original_id="unknown"
@@ -330,6 +348,7 @@ workflow SprintRunnerYamlV2
         original_id=$(cat .ai/runner-last-failed-sprint.txt)
       fi
       git commit -m "chore(sprints): splice redecomposed sub-sprints into ledger"
+      rm -f .ai/redecompose-request.yaml .ai/redecompose-result.yaml
       printf 'committed-spliced-ledger-%s' "$original_id"
 
   tool report_redecompose

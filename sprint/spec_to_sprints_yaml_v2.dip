@@ -640,17 +640,17 @@ workflow SpecToSprintsYamlV2
     reasoning_effort: high
     auto_status: true
     prompt:
-      STATUS contract — emit `STATUS:fail` as the FIRST line of your
+      STATUS contract — emit `STATUS: fail` as the FIRST line of your
       response, before any other text. Do your planning and write your
       output files. Only at the very end, after you have verified that
       EVERY rule in the PROHIBITED ACTIONS checklist below has been
-      followed, emit a final `STATUS:success` line — alone on its line,
+      followed, emit a final `STATUS: success` line — alone on its line,
       outside any code fence — to override the early fail. The
       workflow's `auto_status` parser is last-line-wins, so the final
       success replaces the early fail when everything passes; if your
       response is truncated for any reason, or if you violated any
-      prohibited action, the early `STATUS:fail` remains and the
-      redecompose fails closed. Do NOT emit `STATUS:success` inside a
+      prohibited action, the early `STATUS: fail` remains and the
+      redecompose fails closed. Do NOT emit `STATUS: success` inside a
       table cell or narrative paragraph; the parser scans for
       line-leading STATUS markers only.
 
@@ -709,7 +709,7 @@ workflow SpecToSprintsYamlV2
 
       For dependents_to_rewrite: the original_dependents should now depend on the LAST new sub-sprint (the one that completes the original scope).
 
-      ## PROHIBITED ACTIONS (any violation → STATUS:fail stays)
+      ## PROHIBITED ACTIONS (any violation → STATUS: fail stays)
 
       Your ONLY job is planning + writing the files listed under "Output"
       above. You are NOT implementing the sprint's work. The implementation
@@ -755,13 +755,13 @@ workflow SpecToSprintsYamlV2
       5. **You are NOT scope-creeping if you ASK.** If the failure
          analysis genuinely needs implementation help to even plan the
          split, write that observation into one of the new SPRINT-md
-         files as a risk note, and emit `STATUS:fail` at the end with
+         files as a risk note, and emit `STATUS: fail` at the end with
          a one-line reason. The pipeline will route to a human gate.
 
-      Only emit `STATUS:success` as your terminal line if every numbered
+      Only emit `STATUS: success` as your terminal line if every numbered
       rule above is satisfied. If you slipped and wrote anything outside
       the allowlist or ran a build/test command anywhere in this turn,
-      leave the early `STATUS:fail` in place.
+      leave the early `STATUS: fail` in place.
 
   tool write_ledger_redecompose
     label: "Append Redecomposed Sprints to Ledger"
@@ -1116,7 +1116,7 @@ workflow SpecToSprintsYamlV2
       if [ -f .ai/redecompose-request.yaml ]; then
         if [ ! -f .ai/redecompose-result.yaml ]; then
           # write_ledger_redecompose failed or redecompose_single violated
-          # its contract (emitted STATUS:success without writing the result
+          # its contract (emitted STATUS: success without writing the result
           # file). Don't commit a partial state; the runner's
           # validate_ledger_after_redecompose + splice_ledger + failure
           # budget will reconcile or halt.
