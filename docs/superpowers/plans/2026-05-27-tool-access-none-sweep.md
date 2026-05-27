@@ -88,7 +88,7 @@ Expected ~57 lines. Cross-reference with the Category A table above — anything
 ### Step 2: Sanity-check no candidate has an explicit `tools:` block
 
 ```bash
-grep -l "^\s*tools:" greenfield/*.dip sprint/*.dip 2>&1
+grep -l "^[[:space:]]*tools:" greenfield/*.dip sprint/*.dip 2>&1
 ```
 
 Expected: no matches. If any candidate file has both `tools: [...]` and would gain `tool_access: none`, DIP139 will error — reclassify that site before converting.
@@ -129,7 +129,7 @@ gh pr create --title "fix(pipelines): tool_access: none on acknowledge-only agen
 
 PR body must include:
 - Why now: dippin-lang#41 closed in v0.32.0; tracker v0.31.0 vendors it
-- Scope: Category A only (~26 sites, 13 files)
+- Scope: Category A only (22 sites, 12 files — see header for the reclassification note)
 - README pin bumped from tracker ≥ v0.30.0 → ≥ v0.31.0
 - Follow-ups: #18 (Phase 2), #19 (smoke tests), #20 (broader docs)
 - Note any HARD CONSTRAINT policy clauses preserved as plain instructions (i.e. sites where the line wasn't 100% tool-access — these are the easiest to mis-handle, so list them explicitly for reviewer attention)
