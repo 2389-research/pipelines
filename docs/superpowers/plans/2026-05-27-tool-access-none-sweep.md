@@ -110,8 +110,10 @@ Per-file commits make rollback surgical if something turns out wrong.
 ### Step 4: Verify
 
 ```bash
-# Lint sweep on every changed file.
-for f in $(git diff --name-only main); do dippin doctor "$f" 2>&1 | grep -E "Grade:|Warnings:"; done
+# Lint sweep on every changed .dip file. (The pathspec filter excludes README.md,
+# plan doc, and any other non-Dippin file the PR may touch — dippin doctor would
+# either error or produce noise on those.)
+for f in $(git diff --name-only main -- '*.dip'); do dippin doctor "$f" 2>&1 | grep -E "Grade:|Warnings:"; done
 
 # Parse one converted file through tracker to confirm the field is understood.
 tracker validate sprint/sprint_runner_yaml_v2.dip
