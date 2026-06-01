@@ -196,10 +196,11 @@ workflow GreenfieldValidation
     label: "Gate 2 Failed"
     max_turns: 1
     auto_status: true
+    writable_paths: workspace/.validation-failed
     prompt:
       Gate 2 has exhausted its retry budget. Report what passed and what failed.
       Write workspace/.validation-failed with the failure reason.
-      HARD CONSTRAINT: Do NOT fix anything. Report only.
+      Report only.
 
   parallel SanitizationParallel -> SanitizerSpecs, SanitizerTestVectors, SanitizerAcceptanceCriteria, SanitizerContracts
 
