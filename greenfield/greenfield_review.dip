@@ -189,10 +189,11 @@ workflow GreenfieldReview
     label: "L6 Failed"
     max_turns: 1
     auto_status: true
+    writable_paths: workspace/.review-failed
     prompt:
       L6 review has exhausted its retry budget. Report findings.
       Write workspace/.review-failed with the failure reason.
-      HARD CONSTRAINT: Report only.
+      Report only.
 
   parallel FidelityParallel -> FidelityValidatorSpecs, FidelityValidatorTestVectors, FidelityValidatorAcceptanceCriteria
 
@@ -322,10 +323,11 @@ workflow GreenfieldReview
     label: "L7 Failed"
     max_turns: 1
     auto_status: true
+    writable_paths: workspace/.review-failed
     prompt:
       L7 fidelity validation has exhausted its retry budget. Report findings.
       Write workspace/.review-failed with the failure reason.
-      HARD CONSTRAINT: Report only.
+      Report only.
 
   tool WriteReviewSummary
     label: "Write Review Summary"

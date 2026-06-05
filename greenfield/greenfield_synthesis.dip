@@ -449,10 +449,11 @@ workflow GreenfieldSynthesis
     label: "Gate 1 Failed"
     max_turns: 1
     auto_status: true
+    writable_paths: workspace/.synthesis-failed
     prompt:
       Gate 1 or Gate 1b has exhausted its retry budget. Read workspace/raw/specs/gate1-findings.md and/or gate1b-findings.md.
       Report what passed and what failed. Write workspace/.synthesis-failed with the failure reason.
-      HARD CONSTRAINT: Do NOT fix anything. Report only.
+      Report only.
 
   edges
     Start -> ReadL1Summary
