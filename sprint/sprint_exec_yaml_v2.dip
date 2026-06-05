@@ -687,7 +687,7 @@ workflow SprintExecYamlV2
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
-    writable_paths: .ai/sprints/**, .ai/managers/recovery-journal.md, .ai/redecompose-request.yaml
+    writable_paths: .ai/sprints/SPRINT-*-recovery-analysis.md, .ai/managers/recovery-journal.md, .ai/redecompose-request.yaml
     prompt:
       You are the Recovery Manager for sprint execution. Your job is to perform root-cause analysis on a failed sprint and recommend a recovery strategy.
 
