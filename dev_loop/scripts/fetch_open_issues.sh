@@ -40,7 +40,14 @@ gh issue list \
   > "${RUN_DIR}/issues.json.tmp" \
   || emit_failure "gh issue list failed"
 
-count=$(jq 'length' "${RUN_DIR}/issues.json.tmp" 2>/dev/null || printf '0')
+# Fail closed when gh returned 0 but the JSON is malformed/truncated; the
+# silent `|| printf '0'` fallback would otherwise route to fetched-ok with
+# an empty issues list, and the planner would proceed on bogus data.
+if ! count=$(jq 'length' "${RUN_DIR}/issues.json.tmp" 2>"${RUN_DIR}/fetch_error.txt"); then
+  printf 'jq could not parse issues.json.tmp\n' >> "${RUN_DIR}/fetch_error.txt"
+  emit_failure "jq parse failed: see fetch_error.txt"
+fi
+
 mv "${RUN_DIR}/issues.json.tmp" "${RUN_DIR}/issues.json"
 printf '%s' "${count}" > "${RUN_DIR}/issues_count.txt"
 

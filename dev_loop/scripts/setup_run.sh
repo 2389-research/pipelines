@@ -40,6 +40,33 @@ emit_failure() {
 # EXIT trap as a safety net for unexpected non-zero exits.
 trap 'if [ $? -ne 0 ]; then printf "setup-failed"; exit 0; fi' EXIT
 
+# Concurrency lock — atomic mkdir is the POSIX-portable pattern. Without
+# this, a second `tracker dev_loop/dev_loop.dip` started in the same workdir
+# during the early window (after setup_run but before CreateWorktree)
+# overwrites .current_rid and corrupts the first run's RUN_DIR resolution.
+# cleanup_worktree.sh releases the lock at pipeline exit. The lock dir's
+# mtime is used as a staleness signal: anything older than 4 hours is
+# considered abandoned and reclaimed (covers crashed runs that never reached
+# CleanupWorktree).
+LOCK_DIR="${DIP_ROOT}/.dev_loop.lock"
+LOCK_STALE_MIN=240
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  if [ -n "$(find "${LOCK_DIR}" -maxdepth 0 -mmin "+${LOCK_STALE_MIN}" 2>/dev/null)" ]; then
+    rm -rf "${LOCK_DIR}" 2>/dev/null || true
+    mkdir "${LOCK_DIR}"
+  else
+    holder=$(cat "${LOCK_DIR}/rid" 2>/dev/null || printf '<unknown>')
+    mkdir -p "${run_dir}"
+    {
+      printf 'another dev_loop run is active (rid=%s)\n' "${holder}"
+      printf 'release the lock if it is stale: rm -rf %s\n' "${LOCK_DIR}"
+    } > "${run_dir}/setup_error.txt"
+    printf 'setup-failed'
+    exit 0
+  fi
+fi
+printf '%s' "${rid}" > "${LOCK_DIR}/rid"
+
 mkdir -p "${run_dir}"
 printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
 printf '%s\n' "${rid}" > "${run_dir}/rid.txt"

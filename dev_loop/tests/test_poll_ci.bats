@@ -71,10 +71,14 @@ EOF
   [ "${output}" = "ci-timeout" ]
 }
 
-@test "gh hard error (non-0, non-8) routes to ci-no-checks" {
+@test "gh hard error (non-0, non-8) routes to ci-no-checks + captures stderr" {
   write_gh_shim 'echo "auth required" >&2; exit 4'
   run sh -c "$(cat "${SCRIPT}") 2>/dev/null"
   [ "${output}" = "ci-no-checks" ]
+  # Stderr capture lets the ratchet distinguish "no checks" from "auth error".
+  [ -f "${RUN_DIR}/poll_ci_error.txt" ]
+  grep -q "gh pr checks exited 4" "${RUN_DIR}/poll_ci_error.txt"
+  grep -q "auth required" "${RUN_DIR}/poll_ci_error.txt"
 }
 
 @test "no PR number emits ci-no-checks" {

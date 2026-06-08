@@ -60,6 +60,24 @@ teardown() {
   [ "${bot_count}" = "0" ]
 }
 
+@test "priority label variants (priority/P0, P0 - critical, prio:P1) sort correctly" {
+  cat > "${RUN_DIR}/issues.json" <<'JSON'
+[
+  {"number":201,"title":"prio:P1 stuff","url":"https://github.com/2389-research/pipelines/issues/201","labels":[{"name":"prio:P1"}],"author":{"login":"a"},"createdAt":"2026-06-01T00:00:00Z","body":""},
+  {"number":202,"title":"variant","url":"https://github.com/2389-research/pipelines/issues/202","labels":[{"name":"priority/P0"}],"author":{"login":"b"},"createdAt":"2026-06-02T00:00:00Z","body":""},
+  {"number":203,"title":"verbose","url":"https://github.com/2389-research/pipelines/issues/203","labels":[{"name":"P0 - critical"}],"author":{"login":"c"},"createdAt":"2026-06-03T00:00:00Z","body":""},
+  {"number":204,"title":"colon","url":"https://github.com/2389-research/pipelines/issues/204","labels":[{"name":"priority:P2"}],"author":{"login":"d"},"createdAt":"2026-06-04T00:00:00Z","body":""}
+]
+JSON
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${lines[0]}" = "filter-ok" ]
+  # Ordering MUST be: 202 (priority/P0) | 203 (P0 - critical), then 201 (prio:P1), then 204 (priority:P2).
+  ordering="$(jq -r '[.[] | .number] | join(",")' "${RUN_DIR}/filtered_issues.json")"
+  # P0 group goes first; the two P0s tie on rank so they are ordered by issue_number ASC.
+  [ "${ordering}" = "202,203,201,204" ]
+}
+
 @test "filter drops excluded title patterns" {
   cp "${FIXTURE}" "${RUN_DIR}/issues.json"
   run sh -c "$(cat "${SCRIPT}")"

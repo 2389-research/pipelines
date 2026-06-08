@@ -50,7 +50,9 @@ if [ -n "${RUN_DIR}" ] && [ -f "${RUN_DIR}/worktree.path" ]; then
   esac
 fi
 
-# Drop the .current_rid sentinel so the next setup_run starts fresh.
+# Drop the .current_rid sentinel and release the concurrency lock so the
+# next setup_run can run cleanly.
 rm -f "${DIP_ROOT}/.current_rid" 2>/dev/null || true
+rm -rf "${DIP_ROOT}/.dev_loop.lock" 2>/dev/null || true
 
 printf 'worktree-cleaned'

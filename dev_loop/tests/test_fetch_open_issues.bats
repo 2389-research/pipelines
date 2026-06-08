@@ -49,6 +49,14 @@ EOF
   grep -q "gh issue list failed" "${RUN_DIR}/fetch_error.txt"
 }
 
+@test "malformed JSON from gh fails closed to fetch-failed" {
+  write_gh_shim "printf 'this is not json\n'"
+  run sh -c "sh -c \"\$(cat '${SCRIPT}')\" 2>/dev/null"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "fetch-failed" ]
+  grep -q "jq parse failed" "${RUN_DIR}/fetch_error.txt"
+}
+
 @test "missing rid sentinel routes to fetch-failed" {
   rm "${DIP_ROOT}/.current_rid"
   write_gh_shim "exit 0"

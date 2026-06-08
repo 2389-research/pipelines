@@ -23,17 +23,38 @@ teardown() {
     "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/env"
 }
 
-@test "second run with no worktree allocates a fresh rid" {
+@test "second run after cleanup allocates a fresh rid" {
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   rid_a="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
-  # Sleep 1s so the timestamp-based rid differs.
+  # Mimic the pipeline reaching CleanupWorktree (releases the concurrency
+  # lock + .current_rid). Then a second invocation starts fresh.
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  sh -c "$(cat "${CLEANUP}")" > /dev/null
   sleep 1
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
   rid_b="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
   [ "${rid_a}" != "${rid_b}" ]
+}
+
+@test "concurrent setup_run (lock held) rejects the second invocation" {
+  # First setup_run claims the lock and exits successfully; the lock dir
+  # remains because cleanup_worktree has not run yet (this is the very
+  # early-phase window the lock exists to protect).
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  rid_a="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  [ -d "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.dev_loop.lock" ]
+  # A second setup_run starting in this window must fail closed and leave
+  # rid_a as the active rid so the first run can keep going.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid_after="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  [ "${rid_after}" = "${rid_a}" ]
 }
 
 @test "prior worktree triggers setup-resume-required" {

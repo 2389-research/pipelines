@@ -39,15 +39,26 @@ elapsed=0
 
 while [ "${elapsed}" -lt "${timeout}" ]; do
   set +e
-  checks=$(gh pr checks "${pr_num}" --json bucket,state,name,workflow 2>/dev/null)
+  checks=$(gh pr checks "${pr_num}" --json bucket,state,name,workflow \
+             2>"${RUN_DIR}/poll_ci_error.txt.tmp")
   rc=$?
   set -e
 
   # gh exit codes: 0 = settled, 8 = pending. Anything else = real error.
   if [ "${rc}" -ne 0 ] && [ "${rc}" -ne 8 ]; then
+    # Capture gh's stderr alongside the rc so the operator can distinguish
+    # "repo has no checks" from "auth/network/permission error". The ratchet
+    # would otherwise mark every gh hard error as ci-no-checks, hiding the
+    # underlying cause.
+    {
+      printf 'gh pr checks exited %s\n' "${rc}"
+      cat "${RUN_DIR}/poll_ci_error.txt.tmp" 2>/dev/null || true
+    } > "${RUN_DIR}/poll_ci_error.txt"
+    rm -f "${RUN_DIR}/poll_ci_error.txt.tmp"
     printf 'ci-no-checks'
     exit 0
   fi
+  rm -f "${RUN_DIR}/poll_ci_error.txt.tmp"
 
   # Empty / unparseable response.
   if [ -z "${checks}" ]; then

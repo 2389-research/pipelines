@@ -40,12 +40,21 @@ EXCLUDED_TITLE_RE='(dev_loop|dippin meta|tracker meta)'
 
 jq --argjson excluded "${EXCLUDED_LABELS}" \
    --arg title_re "${EXCLUDED_TITLE_RE}" '
+  # Match SelectNextIssue prompt: accept P0/P1/P2/P3 and variants
+  # priority/P0, priority:P0, "P0 - critical", "P0: ...". Compare on a
+  # normalized form (lowercased, leading "priority[/:] " stripped) and
+  # check whether it starts with "p0".."p3".
   def priority_rank:
     ((.labels // []) | map(.name)) as $names
-    | if   ($names | index("P0")) then 0
-      elif ($names | index("P1")) then 1
-      elif ($names | index("P2")) then 2
-      elif ($names | index("P3")) then 3
+    | ($names | map(
+        ascii_downcase
+        | sub("^priority[/:][[:space:]]*"; "")
+        | sub("^prio[/:][[:space:]]*"; "")
+      )) as $norm
+    | if   ($norm | map(startswith("p0")) | any) then 0
+      elif ($norm | map(startswith("p1")) | any) then 1
+      elif ($norm | map(startswith("p2")) | any) then 2
+      elif ($norm | map(startswith("p3")) | any) then 3
       else 4
       end;
   map(select(
