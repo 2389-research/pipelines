@@ -67,10 +67,14 @@ fresh.
 
 ## Config
 
-`config/dev_loop.config.yaml` is the source of truth for repo lock, branch
-ordering, model assignments, max_iters, and the issue-filter knobs. The
-shell scripts and the `.dip` keep `max_iters` and `defaults max_restarts` in
-sync — when you bump one, bump the other.
+`config/dev_loop.config.yaml` is the **reference document** for the knobs the
+workflow uses (repo lock, branch base, max_iters, allow_no_ci, model
+assignments, issue-filter rules). v1 does not load the YAML at runtime — the
+same values are duplicated into the shell scripts (filter knobs, GH_REPO),
+the `.dip` (model IDs, `defaults max_restarts`), and `init_iter_counter.sh`
+(`max_iters`). The contract is: when you change a value in the YAML, also
+update its mirror in the script/`.dip` it travels with. Wiring runtime YAML
+loading is a follow-up.
 
 Model IDs must appear in tracker's embedded catalog (`tracker validate <file>`
 prints the allowlist as "known models for <provider>"). The

@@ -29,7 +29,7 @@ Output a single JSON object matching the Synthesis schema:
 - `reasoning` — your decision trail (which rule fired, which verdicts were decisive, any policy violations flagged). Used for the ratchet log, not posted to the PR.
 - `block_count` — integer count of verdicts whose `verdict` field equals exactly `BLOCK`, across all 5 personas. ATTEST never counts. The blocker can contribute 0 or 1 to this count.
 - `attest_valid` — boolean: was the blocker's ATTEST verdict valid per rule 4?
-- `feedback` — array of concrete change requests for the next iter's implementer. Required when `outcome == changes_requested` (minimum 1 item). Pull these from the BLOCK verdicts' concerns.
+- `feedback` — array of concrete change requests for the next iter's implementer. ALWAYS emit this field (the schema requires it). Use `[]` when `outcome == approved` or `outcome == abandoned`; minimum 1 item when `outcome == changes_requested`. Pull items from the BLOCK verdicts' concerns.
 - `abandon_reason` — required only when `outcome == abandoned`.
 
 **Feedback deduplication policy.** When merging duplicate concerns into `feedback`: keep the smallest `line_range` of the duplicates, the strictest `severity`, and the most specific `recommendation`. If two concerns share `file:line` but recommend different fixes, emit them as separate feedback items rather than picking one.

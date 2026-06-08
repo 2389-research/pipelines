@@ -25,7 +25,7 @@ Squad applies the repo's coding guidelines (pragmatism, empathy, YAGNI, simplici
 | G1 | dippin version | `v0.35.0+1` is fine (one commit past v0.35.0); v0.36.0 adds nothing critical | CHANGELOG inspection: v0.36.0 = DIP143 hint (no subgraph/manager_loop used) + `@file` TOCTOU fix (no `@file` used) |
 | G2 | install `bats` + `ajv` | approved | needed for §9 smoke gates |
 | G3 | branch ordering | land #26 first off `main`, then branch `dev_loop` off `main` | squad consensus; avoid stacking two safety-relevant changes |
-| Q1 | Implementer model | `gpt-5-codex` | v6 spec `gpt-5.3-codex` doesn't exist in the catalog; `gpt-5-codex` is closest real code-specialist |
+| Q1 | Implementer model | `gpt-5.3-codex` (REVISED — was `gpt-5-codex`) | Initial answer cited `mcp__pal__listmodels` (PAL's alias table), but tracker + dippin are the runtime authority. Their embedded catalogs accept `gpt-5.3-codex` and reject `gpt-5-codex`. Decision documented in memory `model-ids-from-tracker-dippin.md`. |
 | Q2 | Implementer `max_turns` | `25` | `docs/agent-node-safety.md:155` flags >30 as anti-pattern; v6's 40 violates the repo's own safety doc |
 | Q3 | `max_iters` | `5` (`defaults max_restarts: 6`) | blocker squad attestation; YAGNI pushed for 3 but 5 keeps room and can be lowered after first run |
 | Q4 | `allow_no_ci` | `false` | property of dev_loop the artifact, not of this repo's current state; orthogonal to whether this repo has CI |
@@ -33,7 +33,7 @@ Squad applies the repo's coding guidelines (pragmatism, empathy, YAGNI, simplici
 | Q6 | tracker session-root env | defer; grep tracker source when writing `create_worktree.sh` | per brief §11 |
 | Q7 | branch protection | yes; route `merge-blocked-*` → CleanupWorktree (escalate-to-abandoned) | v6 default |
 | Q8 | CI workflow location | same PR | gates own diff from day 1 |
-| Δ | model IDs | `gemini-3.1-pro-preview` → `gemini-3-pro-preview`; `gpt-5.3-codex` → `gpt-5-codex` everywhere | v6 spec IDs don't exist in the model catalog (`mcp__pal__listmodels`) |
+| Δ | model IDs (REVISED) | Stay on v6 spec: `gemini-3.1-pro-preview` and `gpt-5.3-codex`. | The initial Δ entry above was wrong: it picked PAL's IDs because PAL's `listmodels` lists them, but tracker's `validate` rejects them as "unknown model for provider". tracker + dippin are the runtime — PAL is a separate router. The PR commits implement the v6 spec IDs; CI's `test_branch_model_ids.sh` enforces against tracker's allowlist. |
 | Δ | `defaults on_failure:` | NOT supported by installed dippin (`48ce8a5`); fall back to per-agent `fallback_target:` or inline failure edges | probe `/tmp/on_failure_probe.dip` → `dippin check` rejects as unknown defaults field; feature exists on dippin-lang main (PR #95) but unreleased in any tag accessible to us |
 
 ## 3. File layout
@@ -135,7 +135,7 @@ Start
 ### Phase 2 — Implement + squad-review iteration
 
 ```
-Implementer (agent: gpt-5-codex, max_turns:25,
+Implementer (agent: gpt-5.3-codex, max_turns:25,
              writable_paths:".dev_loop_worktree/**",
              working_dir:".dev_loop_worktree", auto_status:true)
   → on success → PushAndOpenPR    (marker_grep "^(pr-ready-[0-9]+|pr-push-failed)$")
@@ -145,9 +145,9 @@ Implementer (agent: gpt-5-codex, max_turns:25,
 
   parallel SquadFanout
     branch: SquadPragmatism   (model: claude-opus-4-6)
-    branch: SquadYagni        (model: gemini-3-pro-preview)
+    branch: SquadYagni        (model: gemini-3.1-pro-preview)
     branch: SquadTestability  (model: gpt-5.2)
-    branch: SquadHolistic     (model: gpt-5-codex)
+    branch: SquadHolistic     (model: gpt-5.3-codex)
     branch: SquadBlocker      (model: claude-opus-4-6)
 
   Each squad agent: tool_access:none, reasoning_effort:high,
@@ -207,11 +207,11 @@ CleanupWorktree (marker_grep "^worktree-cleaned$")
 |---|---|---|
 | SelectNextIssue | `claude-opus-4-6` | anthropic |
 | PlanMinimalPRs | `claude-opus-4-6` | anthropic |
-| **Implementer** | **`gpt-5-codex`** | openai |
+| **Implementer** | **`gpt-5.3-codex`** | openai |
 | SquadPragmatism | `claude-opus-4-6` | anthropic |
-| SquadYagni | `gemini-3-pro-preview` | gemini |
+| SquadYagni | `gemini-3.1-pro-preview` | gemini |
 | SquadTestability | `gpt-5.2` | openai |
-| SquadHolistic | `gpt-5-codex` | openai |
+| SquadHolistic | `gpt-5.3-codex` | openai |
 | SquadBlocker | `claude-opus-4-6` | anthropic |
 | SquadSynthesizer | `claude-opus-4-6` | anthropic |
 
@@ -282,12 +282,12 @@ issue_filter:
 models:
   selector: claude-opus-4-6
   planner: claude-opus-4-6
-  implementer: gpt-5-codex
+  implementer: gpt-5.3-codex
   squad:
     pragmatism:  claude-opus-4-6
-    yagni:       gemini-3-pro-preview
+    yagni:       gemini-3.1-pro-preview
     testability: gpt-5.2
-    holistic:    gpt-5-codex
+    holistic:    gpt-5.3-codex
     blocker:     claude-opus-4-6
   synthesizer: claude-opus-4-6
 
