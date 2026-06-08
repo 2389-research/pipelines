@@ -45,3 +45,10 @@ fi
 mv "${target}.tmp" "${target}"
 
 printf 'persisted-blocker'
+verdict_text=$(cat "${target}")
+cat <<DATA
+
+<verdict_blocker>
+${verdict_text}
+</verdict_blocker>
+DATA

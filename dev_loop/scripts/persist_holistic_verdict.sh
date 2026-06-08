@@ -45,3 +45,10 @@ fi
 mv "${target}.tmp" "${target}"
 
 printf 'persisted-holistic'
+verdict_text=$(cat "${target}")
+cat <<DATA
+
+<verdict_holistic>
+${verdict_text}
+</verdict_holistic>
+DATA

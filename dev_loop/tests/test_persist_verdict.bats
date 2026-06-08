@@ -38,7 +38,7 @@ stage_response() {
   stage_response SquadPragmatism verdict_pass.json
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "persisted-pragmatism" ]
+  [ "${lines[0]}" = "persisted-pragmatism" ]
   [ -f "${RUN_DIR}/verdict_pragmatism.json" ]
   persona="$(jq -r '.persona' "${RUN_DIR}/verdict_pragmatism.json")"
   [ "${persona}" = "pragmatism" ]
@@ -48,7 +48,7 @@ stage_response() {
   stage_response SquadYagni verdict_block.json
   run sh -c "$(cat "${SCRIPTS}/persist_yagni_verdict.sh")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "persisted-yagni" ]
+  [ "${lines[0]}" = "persisted-yagni" ]
   [ "$(jq -r '.verdict' "${RUN_DIR}/verdict_yagni.json")" = "BLOCK" ]
 }
 
@@ -56,7 +56,7 @@ stage_response() {
   stage_response SquadBlocker verdict_attest_valid.json
   run sh -c "$(cat "${SCRIPTS}/persist_blocker_verdict.sh")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "persisted-blocker" ]
+  [ "${lines[0]}" = "persisted-blocker" ]
   attestation_len="$(jq '.attestation | length' "${RUN_DIR}/verdict_blocker.json")"
   [ "${attestation_len}" -ge 3 ]
 }
@@ -66,10 +66,10 @@ stage_response() {
   stage_response SquadHolistic    verdict_pass.json
   run sh -c "$(cat "${SCRIPTS}/persist_testability_verdict.sh")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "persisted-testability" ]
+  [ "${lines[0]}" = "persisted-testability" ]
   run sh -c "$(cat "${SCRIPTS}/persist_holistic_verdict.sh")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "persisted-holistic" ]
+  [ "${lines[0]}" = "persisted-holistic" ]
 }
 
 @test "TRACKER_RUN_DIR env var takes precedence over mtime fallback" {
@@ -86,10 +86,25 @@ stage_response() {
   printf 'TRACKER_RUN_DIR=%s\n' "${older}" > "${RUN_DIR}/env"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "persisted-pragmatism" ]
+  [ "${lines[0]}" = "persisted-pragmatism" ]
   # Verify it read from the explicitly-pinned older dir, not the mtime-newer one.
   persona="$(jq -r '.persona' "${RUN_DIR}/verdict_pragmatism.json")"
   [ "${persona}" = "pragmatism" ]
+}
+
+@test "persist embeds <verdict_*> XML block for the Synthesizer" {
+  stage_response SquadPragmatism verdict_block.json
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  [ "${lines[0]}" = "persisted-pragmatism" ]
+  # The verdict JSON must appear inside a <verdict_pragmatism> block so the
+  # SquadSynthesizer (immediately downstream of the fan_in) sees it via the
+  # merged ctx.last_response. Without this, the synthesizer would only see
+  # "persisted-pragmatism" and have no verdict data to fuse.
+  printf '%s\n' "${output}" | grep -q -- "<verdict_pragmatism>"
+  printf '%s\n' "${output}" | grep -q -- "</verdict_pragmatism>"
+  # Sanity: a field from verdict_block.json must be present inside the block.
+  printf '%s\n' "${output}" | grep -q -- "BLOCK"
 }
 
 @test "missing response.md exits non-zero with error file" {

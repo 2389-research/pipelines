@@ -45,3 +45,10 @@ fi
 mv "${target}.tmp" "${target}"
 
 printf 'persisted-yagni'
+verdict_text=$(cat "${target}")
+cat <<DATA
+
+<verdict_yagni>
+${verdict_text}
+</verdict_yagni>
+DATA

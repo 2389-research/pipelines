@@ -45,3 +45,10 @@ fi
 mv "${target}.tmp" "${target}"
 
 printf 'persisted-testability'
+verdict_text=$(cat "${target}")
+cat <<DATA
+
+<verdict_testability>
+${verdict_text}
+</verdict_testability>
+DATA
