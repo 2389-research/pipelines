@@ -50,7 +50,9 @@ jobs:
           dippin version
           bats --version
           shellcheck --version | head -2
-          ajv --version
+          # ajv-cli has no --version flag; print install path + first usage line
+          # to confirm it is on PATH (avoids set -e tripping on usage exit code).
+          command -v ajv && (ajv help validate 2>&1 || true) | head -2
           jq --version
 
       - name: dippin check
