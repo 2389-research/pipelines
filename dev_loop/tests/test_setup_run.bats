@@ -4,6 +4,11 @@
 setup() {
   TMPDIR="$(mktemp -d)"
   export XDG_CACHE_HOME="${TMPDIR}/cache"
+  # Move into a fresh workdir + stage a .tracker/runs/<runID>/ dir to mimic
+  # tracker's normal startup. setup_run.sh now requires this to be present.
+  WORKDIR="${TMPDIR}/workdir"
+  mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
+  cd "${WORKDIR}"
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/setup_run.sh"
 }
 
@@ -65,6 +70,21 @@ teardown() {
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-resume-required" ]
+}
+
+@test "missing .tracker/runs (no tracker artifact dir) routes to setup-failed" {
+  # Without staged .tracker/runs/<id>/, tracker_run_dir resolves empty.
+  # setup_run.sh must catch this and emit setup-failed with a clear message —
+  # NOT write an env file with TRACKER_RUN_DIR unset and emit setup-ok (which
+  # would later trip every persist_*.sh's env-present-but-TRACKER_RUN_DIR-
+  # missing fail-closed gate).
+  rm -rf "${WORKDIR}/.tracker"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  grep -q "no tracker run dir" \
+    "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/setup_error.txt"
 }
 
 @test "missing tools route to setup-failed" {

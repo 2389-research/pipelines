@@ -112,15 +112,22 @@ tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
 # Strip the trailing slash for cleaner env-file output.
 tracker_run_dir=${tracker_run_dir%/}
 
+# Fail fast if we couldn't pin TRACKER_RUN_DIR. The persist_*.sh scripts
+# now treat an env file present + TRACKER_RUN_DIR missing as a hard error
+# (they refuse the mtime fallback when an env exists), so emitting setup-ok
+# without TRACKER_RUN_DIR would just defer the failure to the first persist
+# node with a less actionable message. Catch it here instead.
+if [ -z "${tracker_run_dir}" ] || [ ! -d "${tracker_run_dir}" ]; then
+  emit_failure "no tracker run dir found under ${TRACKER_ROOT}; is this being invoked through tracker?"
+fi
+
 # GH_REPO lock + per-run identity — downstream `gh` invocations and persist
 # scripts source this env file.
 {
   printf 'GH_REPO=2389-research/pipelines\n'
   printf 'DEV_LOOP_RUN_ID=%s\n' "${rid}"
   printf 'DEV_LOOP_RUN_DIR=%s\n' "${run_dir}"
-  if [ -n "${tracker_run_dir}" ]; then
-    printf 'TRACKER_RUN_DIR=%s\n' "${tracker_run_dir}"
-  fi
+  printf 'TRACKER_RUN_DIR=%s\n' "${tracker_run_dir}"
 } > "${run_dir}/env"
 
 printf 'setup-ok'

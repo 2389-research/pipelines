@@ -37,6 +37,28 @@ teardown() {
   [ "${branch}" = "fix/42-writable-paths-anchor" ]
 }
 
+@test "plan with null/missing branch_name fails closed (no 'null' sidecar)" {
+  # Stage a plan response that has every required Plan field EXCEPT a real
+  # branch_name (null). Without validation, jq -r would write the literal
+  # string "null" into branch_name.txt and create_worktree would try to
+  # `git worktree add -b null`. Validation must catch it.
+  cat > "${TRACKER_RUN}/PlanMinimalPRs/response.md" <<'JSON'
+{
+  "issue_number": 42,
+  "branch_name": null,
+  "pr_title": "fix: thing",
+  "pr_body": "Body of the PR with enough content to pass the length check.",
+  "changes": [{"path": "x", "action": "modify", "summary": "did a thing"}],
+  "risk_class": "low",
+  "test_strategy": "ran the gates and the bats suite locally"
+}
+JSON
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -ne 0 ]
+  grep -q "branch_name is missing" "${RUN_DIR}/persist_plan_error.txt"
+  [ ! -f "${RUN_DIR}/branch_name.txt" ]
+}
+
 @test "missing response.md exits non-zero" {
   rm -f "${TRACKER_RUN}/PlanMinimalPRs/response.md"
   run sh -c "$(cat "${SCRIPT}")"

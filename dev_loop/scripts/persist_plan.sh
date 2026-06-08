@@ -53,7 +53,19 @@ if ! jq '.' < "${response}" > "${target}.tmp" 2> "${RUN_DIR}/persist_plan_error.
 fi
 mv "${target}.tmp" "${target}"
 
-# Sidecar files used by create_worktree, push_and_open_pr, etc.
+# Sidecar files used by create_worktree, push_and_open_pr, etc. Validate
+# each field is a non-empty string before writing — `jq -r` emits the literal
+# "null" for a missing/null field, which would silently propagate into branch
+# names (create_worktree) and commit messages (push_and_open_pr).
+# persist_selected_issue.sh applies the same gate for issue_number.
+for field in branch_name pr_title pr_body; do
+  if ! jq -e ".${field} | type == \"string\" and length > 0" "${target}" \
+       >/dev/null 2>"${RUN_DIR}/persist_plan_error.txt"; then
+    printf 'plan.%s is missing, null, or empty\n' "${field}" \
+      >> "${RUN_DIR}/persist_plan_error.txt"
+    exit 1
+  fi
+done
 jq -r '.branch_name' "${target}" > "${RUN_DIR}/branch_name.txt"
 jq -r '.pr_title'    "${target}" > "${RUN_DIR}/pr_title.txt"
 jq -r '.pr_body'     "${target}" > "${RUN_DIR}/pr_body.txt"
