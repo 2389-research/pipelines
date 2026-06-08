@@ -111,8 +111,26 @@ teardown() {
 }
 
 @test "missing tools route to setup-failed" {
-  # Strip $PATH down so gh/jq/git/tracker aren't found.
-  run env -i HOME="${HOME}" XDG_CACHE_HOME="${XDG_CACHE_HOME}" PATH=/usr/bin:/bin sh -c "$(cat "${SCRIPT}")"
+  # Stage a PATH that contains the POSIX utilities setup_run.sh needs for its
+  # own work (mkdir, cat, date, printf, ls, find, awk, kill, etc.) but
+  # deliberately omits the dev_loop-required commands (gh, jq, git, tracker).
+  # This is deterministic regardless of where the host installs each tool —
+  # the prior `PATH=/usr/bin:/bin` was brittle: those four are commonly in
+  # /usr/bin on Linux, so the test only "worked" when at least one happened
+  # to be absent.
+  sysbin="${TMPDIR}/sysbin-only"
+  mkdir -p "${sysbin}"
+  for cmd in mkdir cat date printf ls find awk kill chmod rm cp mv tr \
+             head sort uniq tail sed grep dash sh true false; do
+    src=""
+    if [ -x "/bin/${cmd}" ]; then src="/bin/${cmd}"
+    elif [ -x "/usr/bin/${cmd}" ]; then src="/usr/bin/${cmd}"
+    fi
+    [ -n "${src}" ] && ln -sf "${src}" "${sysbin}/${cmd}"
+  done
+
+  run env -i HOME="${HOME}" XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      PATH="${sysbin}" /bin/sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
   rid="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
