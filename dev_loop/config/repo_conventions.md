@@ -13,9 +13,13 @@ out-of-scope list), drop in a different `repo_conventions.md` and update
 ## Forbidden in committed files
 
 - No emojis (unless the file is `*.md` documentation about emojis).
-- No comments that reference the current task, the iteration number, the
-  implementer agent, or "as requested" / "per the prompt" framing — those rot
-  fast and the PR description carries the history.
+- No comments that reference the AI-generation context — the current
+  iteration number, the task that triggered the change, "as requested",
+  "per the prompt", "added per Copilot/CodeRabbit", or similar framings.
+  Those rot fast and the PR description carries the history. Architectural
+  comments that name pipeline components by role (e.g., "Implementer's
+  writable_paths glob", "the squad reviewers read this via ctx.last_response")
+  are fine — they document the workflow shape, not how the diff was authored.
 - No amending of published commits. New commits only.
 - No `--no-verify`, no `--no-gpg-sign`, no other skip-hooks flags.
 
