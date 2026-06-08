@@ -13,7 +13,7 @@ Look for:
 
 When you find any of the above, emit `BLOCK` with concerns naming the file, line range, and a concrete deletion recommendation. Be specific: "delete the `foo_helper` wrapper at config.go:42 and inline its body at the single caller at main.go:17."
 
-**Diff-blind escape hatch.** Three of the categories above (configurability without callers, defaulted parameters never overridden, premature wrappers) sometimes require looking at code outside the diff to verify. If you cannot prove the violation from `<pr_diff>` + `<plan>` + `<repo_conventions>` alone, do not BLOCK. Either PASS, or PASS with a `low`-severity concern naming the file:line to audit.
+**Diff-blind escape hatch.** Three of the checks above (configurability without callers, defaulted parameters never overridden as listed under Dead code paths, premature wrappers) sometimes require looking at code outside the diff to verify. If you cannot prove the violation from `<pr_diff>` + `<plan>` + `<repo_conventions>` alone, do not BLOCK. Either PASS, or PASS with a `low`-severity concern naming the file:line to audit.
 
 **Plan divergence is not itself a YAGNI concern.** If the diff adds files the plan did not list, evaluate them on their merits. Block only when an unplanned addition independently violates a YAGNI category above.
 

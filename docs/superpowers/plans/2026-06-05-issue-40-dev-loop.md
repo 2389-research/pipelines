@@ -1,6 +1,6 @@
 # Plan — `dev_loop/` autonomous issue-driven PR-review squad loop (issue #40, v6 design)
 
-> Source of truth: `gh issue view 40 --repo 2389-research/pipelines` (v6 body) + the implementer brief at `/tmp/dev_loop_implementer_brief.md`. Implement v6 as specified. Stop, document, and ask if dippin/tracker constraints diverge from v6.
+> Source of truth: `gh issue view 40 --repo 2389-research/pipelines` (v6 body). An implementer brief was used in the original planning session as `/tmp/dev_loop_implementer_brief.md`; that file was ephemeral and is not committed. Implement v6 as specified. Stop, document, and ask if dippin/tracker constraints diverge from v6.
 
 ## 1. Mission
 
@@ -300,7 +300,7 @@ local_test_command: ""
 2. **Schemas first.** Author the 4 JSON schemas. Validate each with `ajv` against a hand-crafted fixture. (~30 min)
 3. **Markers registry.** Write `scripts/markers.txt` listing every marker the workflow expects to emit. Contract surface; referenced by `.dip` `marker_grep:` regexes and each script. (~15 min)
 4. **`dev_loop.dip` skeleton.** Copy v6 §3 verbatim into the file; fix any tracker-version-specific syntax issues; get `dippin check` to pass. Schemas inline; prompts/scripts can be empty placeholders. **Use per-agent `fallback_target:` instead of `defaults on_failure:`.** (~1 hour)
-5. **Scripts.** Write each shell script with `set -euo pipefail`, a per-script `bats` test, and `shellcheck`-clean output. Order: `setup_run.sh` → `fetch_open_issues.sh` → `pre_filter_issues.sh` → `persist_*.sh` → counter scripts → worktree scripts → PR scripts → review scripts → cleanup/ratchet. (~4-6 hours)
+5. **Scripts.** Write each shell script as POSIX `sh` (`set -eu`; no `pipefail` — tracker invokes tool `command_file` content via `sh -c <content>` and Ubuntu's `/bin/sh` is dash, which does not support `set -o pipefail`). Each script has a per-script `bats` test and is `shellcheck --shell=sh`-clean. Order: `setup_run.sh` → `fetch_open_issues.sh` → `pre_filter_issues.sh` → `persist_*.sh` → counter scripts → worktree scripts → PR scripts → review scripts → cleanup/ratchet. (~4-6 hours)
 6. **Prompts.** Author each persona's `system_prompt_file` (~150-300 words per persona; include STATUS line reminder; reference repo's coding guidelines verbatim). Shared `task.md` reads JSON fixtures and asks for `response_format: json_schema`-compliant verdict. (~3-4 hours)
 7. **CI workflow.** `dev_loop_smoke.yml` runs everything. Includes branch-model-ID assertion. (~1 hour)
 8. **End-to-end dry run.** Run `tracker dev_loop/dev_loop.dip` against a deliberately-crafted test issue. Walk every routing path: success, BLOCK, ATTEST-invalid, sha-drift, CI-no-checks, max-iters-exhausted. Fix what doesn't work. (~3-5 hours)
@@ -319,7 +319,7 @@ Estimated total: ~16-22 hours. If over 30 hours, stop and re-scope.
 ## 13. Refs
 
 - Issue #40 (v6 design body + comments).
-- `/tmp/dev_loop_implementer_brief.md` (implementer brief).
+- The implementer brief (ephemeral, not committed; the salient bits are folded into §2 settled answers above).
 - `docs/agent-node-safety.md`.
 - `iterative/iter_run.dip` (implementer + par-reviewer + counter pattern).
 - `sprint/sprint_exec_yaml_v2.dip` (manager journals, retry edges, mechanical gates).

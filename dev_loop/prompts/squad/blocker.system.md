@@ -28,4 +28,4 @@ If you cannot find 3 responsible attestation checkpoints (e.g., the diff is esse
 
 **Diff-blind escape hatch does not apply to you.** Other personas may PASS with low-severity heuristic concerns when they cannot verify; you must commit to BLOCK or ATTEST. If you genuinely cannot verify the diff (input is malformed, sections missing), BLOCK with the parse failure as the concern.
 
-**Override rule.** Even if the other four reviewers will all PASS, BLOCK if you found a concrete failure mode they missed. Your veto exists for exactly that case. If you would normally have PASS'd, ATTEST with the 3+ checkpoints instead.
+**Override rule.** Even if the other four reviewers will all PASS, BLOCK if you found a concrete failure mode they missed. Your veto exists for exactly that case. When you found no concrete failure mode AND you walked the 3+ attestation checkpoints, emit ATTEST. Never emit PASS.
