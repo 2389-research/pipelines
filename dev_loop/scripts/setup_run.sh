@@ -99,13 +99,13 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
   fi
 fi
 printf '%s' "${rid}" > "${LOCK_DIR}/rid"
-# Persist the tracker pid (our grandparent: sh -> tracker) so the next
-# invocation's lock_holder_alive check can do `kill -0 <pid>` instead of
-# relying purely on mtime. Linux-only; matches the existing pin.
-tracker_pid=$(awk '/^PPid:/ {print $2}' "/proc/${PPID}/status" 2>/dev/null || true)
-if [ -n "${tracker_pid}" ]; then
-  printf '%s' "${tracker_pid}" > "${LOCK_DIR}/holder_pid"
-fi
+# Persist the tracker pid for the next invocation's `kill -0` liveness
+# check. tracker invokes scripts via `sh -c <content>`, so from inside
+# this script $PPID IS the tracker process (sh's parent). The earlier
+# version read /proc/${PPID}/status to walk up one more level — that was
+# wrong, it gave tracker's parent (typically the operator's shell), which
+# stays alive after tracker exits and made the lock look held forever.
+printf '%s' "${PPID}" > "${LOCK_DIR}/holder_pid"
 
 mkdir -p "${run_dir}"
 printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"

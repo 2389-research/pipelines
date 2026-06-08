@@ -52,7 +52,15 @@ teardown() {
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
   rid_a="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
-  [ -d "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.dev_loop.lock" ]
+  LOCK_DIR="${XDG_CACHE_HOME}/dip/2389-research-pipelines/.dev_loop.lock"
+  [ -d "${LOCK_DIR}" ]
+  # bats's `run` uses a transient subshell, so the PID setup_run.sh wrote to
+  # holder_pid (its $PPID, which IS that subshell) has already exited by now.
+  # To model a real concurrent invocation — where tracker is still running —
+  # overwrite holder_pid with the bats main process's PID, which IS guaranteed
+  # alive for the duration of this test.
+  printf '%s' "$$" > "${LOCK_DIR}/holder_pid"
+
   # A second setup_run starting in this window must fail closed and leave
   # rid_a as the active rid so the first run can keep going.
   run sh -c "$(cat "${SCRIPT}")"
