@@ -1,0 +1,1 @@
+Read the filtered issue list from the `---FILTERED_ISSUES_BEGIN---` … `---FILTERED_ISSUES_END---` section of your input. Apply the selection rules in your system prompt and emit a JSON object conforming to the SelectedIssue schema.
