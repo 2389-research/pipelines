@@ -1,0 +1,8 @@
+{
+  "outcome": "approved",
+  "summary": "All 5 personas converge: pragmatism PASS, yagni PASS, testability PASS (coverage delta 0, no test deletions), holistic PASS, blocker ATTEST with 3 walked references. Recommending merge.",
+  "reasoning": "pragmatism: scope matches issue. yagni: no speculative knobs. testability: bats regression added, no deletions. holistic: change is local to the recovery manager; no cross-module impact. blocker: walked 3 file:line refs (.dip:690, .dip:691, test.bats:12-28).",
+  "block_count": 0,
+  "attest_valid": true,
+  "feedback": []
+}

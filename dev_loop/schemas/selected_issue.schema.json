@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://2389-research.github.io/pipelines/dev_loop/selected_issue.schema.json",
+  "title": "SelectedIssue",
+  "description": "Output of the SelectNextIssue agent. One open GitHub issue chosen for this run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "issue_number",
+    "title",
+    "url",
+    "labels",
+    "author",
+    "selection_rationale"
+  ],
+  "properties": {
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "url": {
+      "type": "string",
+      "pattern": "^https://github\\.com/2389-research/pipelines/issues/[0-9]+$"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "priority_label": {
+      "type": "string",
+      "enum": ["P0", "P1", "P2", "P3"]
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "selection_rationale": {
+      "type": "string",
+      "minLength": 20,
+      "description": "One paragraph: why this issue ranks highest among the pre-filtered candidates."
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "issue_number": 42,
+  "title": "fix(sprint): tracker no longer honors writable_paths glob anchoring",
+  "url": "https://github.com/2389-research/pipelines/issues/42",
+  "labels": ["bug", "P1", "sprint"],
+  "priority_label": "P1",
+  "author": "clintonecker",
+  "created_at": "2026-06-01T15:32:11Z",
+  "selection_rationale": "Top P1 bug touching a single .dip and a few scripts; no upstream tracker/dippin change needed; well-scoped diff that can be implemented and reviewed within a single iter."
+}

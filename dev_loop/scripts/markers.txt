@@ -1,0 +1,87 @@
+# dev_loop marker registry.
+#
+# Every line below is a literal marker that one of dev_loop/scripts/*.sh
+# may emit on stdout for tracker to consume as ctx.tool_marker. Each marker
+# is referenced by exactly one marker_grep regex on a routing tool node in
+# dev_loop/dev_loop.dip. tests/test_marker_coverage.sh asserts the union of
+# all markers a script COULD emit is a subset of this file, and that every
+# marker_grep regex in dev_loop.dip matches at least one entry below.
+#
+# Format: one literal marker per line. Comments start with #. Blank lines
+# allowed. Variable-iter markers are listed with the placeholder convention
+# documented inline (e.g. iter-init-1-of-5).
+#
+# When you add a new script branch, add the marker here FIRST, then update
+# the corresponding marker_grep on the routing node.
+
+# --- setup_run.sh ---
+setup-ok
+setup-resume-required
+setup-failed
+
+# --- fetch_open_issues.sh ---
+# Emits fetched-ok when N>=0 issues were fetched (count goes to runs/<rid>/issues_count.txt).
+fetched-ok
+fetch-failed
+
+# --- pre_filter_issues.sh ---
+# Emits filter-ok when >=1 issue survives the pre-filter; filter-empty when 0 survive.
+# The surviving count goes to runs/<rid>/filter_count.txt.
+filter-ok
+filter-empty
+filter-failed
+
+# --- create_worktree.sh ---
+worktree-ok
+worktree-failed
+
+# --- init_iter_counter.sh / inc_iter_counter.sh ---
+# Current iter number is written to runs/<rid>/iter.txt (init=1, then N+=1 per loop).
+# init emits iter-init-ok; inc emits iter-next while N<max_iters, iter-exhausted at N>max_iters.
+iter-init-ok
+iter-next
+iter-exhausted
+
+# --- push_and_open_pr.sh ---
+# Emits pr-ready on successful gh pr create; PR number to runs/<rid>/pr_number.txt.
+pr-ready
+pr-push-failed
+
+# --- fetch_pr_context.sh ---
+pr-context-ok
+pr-closed
+pr-merged-externally
+
+# --- recheck_pr_sha.sh ---
+sha-same
+sha-drifted
+
+# --- local_gates.sh ---
+gates-pass
+gates-fail
+
+# --- poll_ci.sh ---
+ci-success
+ci-failed
+ci-timeout
+ci-no-checks
+
+# --- merge_pr.sh ---
+# The block class (protected / conflicts / missing-reviews / unknown) is
+# written to runs/<rid>/merge_block_reason.txt and ratcheted by ratchet_log.sh.
+merge-ok
+merge-blocked
+
+# --- post_squad_comment.sh ---
+comment-posted
+
+# --- persist_synthesis.sh (emits routing marker for synthesizer outcome) ---
+synthesized-approved
+synthesized-changes_requested
+synthesized-abandoned
+
+# --- cleanup_worktree.sh ---
+worktree-cleaned
+
+# --- ratchet_log.sh ---
+ratcheted

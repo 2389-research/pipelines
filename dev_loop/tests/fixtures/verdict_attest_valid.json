@@ -1,0 +1,11 @@
+{
+  "persona": "blocker",
+  "verdict": "ATTEST",
+  "summary": "Walked the diff. The anchor change is local, the new bats case is exercised, and the existing tests still cover the recovery-manager path. No structural failure modes found.",
+  "concerns": [],
+  "attestation": [
+    "sprint/sprint_exec_yaml_v2.dip:690",
+    "sprint/sprint_exec_yaml_v2.dip:691",
+    "sprint/tests/test_recovery_paths.bats:12-28"
+  ]
+}

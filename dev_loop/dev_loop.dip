@@ -1,0 +1,650 @@
+# ABOUTME: Autonomous issue-driven dev loop. Picks the highest-priority open issue from
+# ABOUTME: 2389-research/pipelines, plans minimal PR(s), implements in a git worktree,
+# ABOUTME: runs a 5-persona squad review against the PR diff, synthesizes verdicts, and
+# ABOUTME: routes to merge / iterate / abandon under deterministic mechanical gates.
+workflow DevLoop
+  goal: "End-to-end autonomous loop: select an open issue, plan + implement minimal PR(s), run a 5-persona squad review, synthesize verdicts, gate by SHA-recheck + LocalGates + CI status, then merge / iterate / abandon. Cleans up the worktree and ratchets a log on every exit path."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_restarts: 6
+    fidelity: summary:medium
+
+  # ── PHASE 1: pick + plan (linear) ──────────────────────────────────────────
+
+  agent Start
+    label: Start
+    max_turns: 1
+    tool_access: none
+    prompt:
+      Acknowledge that the dev_loop pipeline is starting. Report ready status.
+      Your ONLY job is to acknowledge. Do not read, write, or run anything.
+
+  tool SetupRun
+    label: "Setup Run"
+    timeout: 30s
+    marker_grep: '^(setup-ok|setup-resume-required|setup-failed)$'
+    command_file: scripts/setup_run.sh
+
+  tool FetchOpenIssues
+    label: "Fetch Open Issues"
+    timeout: 60s
+    marker_grep: '^(fetched-ok|fetch-failed)$'
+    command_file: scripts/fetch_open_issues.sh
+
+  tool PreFilter
+    label: "Pre-Filter Issues"
+    timeout: 15s
+    marker_grep: '^(filter-ok|filter-empty|filter-failed)$'
+    command_file: scripts/pre_filter_issues.sh
+
+  agent SelectNextIssue
+    label: "Select Next Issue"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/select_next_issue.system.md
+    prompt_file: prompts/select_next_issue.task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "SelectedIssue",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_number","title","url","labels","author","selection_rationale"],
+        "properties": {
+          "issue_number": {"type": "integer", "minimum": 1},
+          "title": {"type": "string", "minLength": 1},
+          "url": {"type": "string", "pattern": "^https://github\\.com/2389-research/pipelines/issues/[0-9]+$"},
+          "labels": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "priority_label": {"type": "string", "enum": ["P0","P1","P2","P3"]},
+          "author": {"type": "string", "minLength": 1},
+          "created_at": {"type": "string", "format": "date-time"},
+          "selection_rationale": {"type": "string", "minLength": 20}
+        }
+      }
+
+  tool PersistSelectedIssue
+    label: "Persist Selected Issue"
+    timeout: 10s
+    command_file: scripts/persist_selected_issue.sh
+
+  agent PlanMinimalPRs
+    label: "Plan Minimal PRs"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/plan_minimal_prs.system.md
+    prompt_file: prompts/plan_minimal_prs.task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Plan",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_number","branch_name","pr_title","pr_body","changes","risk_class","test_strategy"],
+        "properties": {
+          "issue_number": {"type": "integer", "minimum": 1},
+          "branch_name": {"type": "string", "pattern": "^(feat|fix|chore|docs|refactor|test)/[a-z0-9][a-z0-9_./-]*$", "maxLength": 100},
+          "pr_title": {"type": "string", "minLength": 10, "maxLength": 80},
+          "pr_body": {"type": "string", "minLength": 50},
+          "changes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path","action","summary"],
+              "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "action": {"type": "string", "enum": ["create","modify","delete"]},
+                "summary": {"type": "string", "minLength": 10}
+              }
+            }
+          },
+          "estimated_diff_loc": {"type": "integer", "minimum": 0},
+          "risk_class": {"type": "string", "enum": ["low","medium","high"]},
+          "test_strategy": {"type": "string", "minLength": 20}
+        }
+      }
+
+  tool PersistPlan
+    label: "Persist Plan"
+    timeout: 10s
+    command_file: scripts/persist_plan.sh
+
+  tool CreateWorktree
+    label: "Create Worktree"
+    timeout: 60s
+    marker_grep: '^(worktree-ok|worktree-failed)$'
+    command_file: scripts/create_worktree.sh
+
+  tool InitIterCounter
+    label: "Init Iter Counter"
+    timeout: 5s
+    marker_grep: '^iter-init-ok$'
+    command_file: scripts/init_iter_counter.sh
+
+  # ── PHASE 2: implement + squad-review iteration ────────────────────────────
+
+  agent Implementer
+    label: "Implementer"
+    model: gpt-5.3-codex
+    provider: openai
+    reasoning_effort: high
+    max_turns: 25
+    auto_status: true
+    working_dir: .dev_loop_worktree
+    writable_paths: .dev_loop_worktree/**
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/implementer.system.md
+    prompt_file: prompts/implementer.task.md
+
+  tool PushAndOpenPR
+    label: "Push + Open PR"
+    timeout: 120s
+    marker_grep: '^(pr-ready|pr-push-failed)$'
+    command_file: scripts/push_and_open_pr.sh
+
+  tool FetchPRContext
+    label: "Fetch PR Context"
+    timeout: 60s
+    marker_grep: '^(pr-context-ok|pr-closed|pr-merged-externally)$'
+    command_file: scripts/fetch_pr_context.sh
+
+  parallel SquadFanout -> SquadPragmatism, SquadYagni, SquadTestability, SquadHolistic, SquadBlocker
+
+  agent SquadPragmatism
+    label: "Squad — Pragmatism"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/squad/pragmatism.system.md
+    prompt_file: prompts/squad/task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Verdict",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persona","verdict","summary","concerns"],
+        "properties": {
+          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
+          "concerns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file","line_range","severity","description","recommendation"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "line_range": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+                "severity": {"type": "string", "enum": ["low","medium","high"]},
+                "description": {"type": "string", "minLength": 10},
+                "recommendation": {"type": "string", "minLength": 5}
+              }
+            }
+          },
+          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
+          "coverage_delta_acceptable": {"type": "boolean"},
+          "test_deletions": {"type": "array", "items": {"type": "string"}}
+        },
+        "allOf": [
+          {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
+           "then": {"properties": {"concerns": {"minItems": 1}}}},
+          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
+           "then": {"required": ["attestation"],
+                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+        ]
+      }
+
+  tool PersistPragmatismVerdict
+    label: "Persist Pragmatism Verdict"
+    timeout: 5s
+    command_file: scripts/persist_pragmatism_verdict.sh
+
+  agent SquadYagni
+    label: "Squad — YAGNI"
+    model: gemini-3.1-pro-preview
+    provider: gemini
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/squad/yagni.system.md
+    prompt_file: prompts/squad/task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Verdict",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persona","verdict","summary","concerns"],
+        "properties": {
+          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
+          "concerns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file","line_range","severity","description","recommendation"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "line_range": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+                "severity": {"type": "string", "enum": ["low","medium","high"]},
+                "description": {"type": "string", "minLength": 10},
+                "recommendation": {"type": "string", "minLength": 5}
+              }
+            }
+          },
+          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
+          "coverage_delta_acceptable": {"type": "boolean"},
+          "test_deletions": {"type": "array", "items": {"type": "string"}}
+        },
+        "allOf": [
+          {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
+           "then": {"properties": {"concerns": {"minItems": 1}}}},
+          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
+           "then": {"required": ["attestation"],
+                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+        ]
+      }
+
+  tool PersistYagniVerdict
+    label: "Persist YAGNI Verdict"
+    timeout: 5s
+    command_file: scripts/persist_yagni_verdict.sh
+
+  agent SquadTestability
+    label: "Squad — Testability"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/squad/testability.system.md
+    prompt_file: prompts/squad/task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Verdict",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persona","verdict","summary","concerns"],
+        "properties": {
+          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
+          "concerns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file","line_range","severity","description","recommendation"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "line_range": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+                "severity": {"type": "string", "enum": ["low","medium","high"]},
+                "description": {"type": "string", "minLength": 10},
+                "recommendation": {"type": "string", "minLength": 5}
+              }
+            }
+          },
+          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
+          "coverage_delta_acceptable": {"type": "boolean"},
+          "test_deletions": {"type": "array", "items": {"type": "string"}}
+        },
+        "allOf": [
+          {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
+           "then": {"properties": {"concerns": {"minItems": 1}}}},
+          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
+           "then": {"required": ["attestation"],
+                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+        ]
+      }
+
+  tool PersistTestabilityVerdict
+    label: "Persist Testability Verdict"
+    timeout: 5s
+    command_file: scripts/persist_testability_verdict.sh
+
+  agent SquadHolistic
+    label: "Squad — Holistic"
+    model: gpt-5.3-codex
+    provider: openai
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/squad/holistic.system.md
+    prompt_file: prompts/squad/task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Verdict",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persona","verdict","summary","concerns"],
+        "properties": {
+          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
+          "concerns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file","line_range","severity","description","recommendation"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "line_range": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+                "severity": {"type": "string", "enum": ["low","medium","high"]},
+                "description": {"type": "string", "minLength": 10},
+                "recommendation": {"type": "string", "minLength": 5}
+              }
+            }
+          },
+          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
+          "coverage_delta_acceptable": {"type": "boolean"},
+          "test_deletions": {"type": "array", "items": {"type": "string"}}
+        },
+        "allOf": [
+          {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
+           "then": {"properties": {"concerns": {"minItems": 1}}}},
+          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
+           "then": {"required": ["attestation"],
+                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+        ]
+      }
+
+  tool PersistHolisticVerdict
+    label: "Persist Holistic Verdict"
+    timeout: 5s
+    command_file: scripts/persist_holistic_verdict.sh
+
+  agent SquadBlocker
+    label: "Squad — Blocker"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/squad/blocker.system.md
+    prompt_file: prompts/squad/task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Verdict",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persona","verdict","summary","concerns"],
+        "properties": {
+          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
+          "concerns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file","line_range","severity","description","recommendation"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "line_range": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+                "severity": {"type": "string", "enum": ["low","medium","high"]},
+                "description": {"type": "string", "minLength": 10},
+                "recommendation": {"type": "string", "minLength": 5}
+              }
+            }
+          },
+          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
+          "coverage_delta_acceptable": {"type": "boolean"},
+          "test_deletions": {"type": "array", "items": {"type": "string"}}
+        },
+        "allOf": [
+          {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
+           "then": {"properties": {"concerns": {"minItems": 1}}}},
+          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
+           "then": {"required": ["attestation"],
+                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+        ]
+      }
+
+  tool PersistBlockerVerdict
+    label: "Persist Blocker Verdict"
+    timeout: 5s
+    command_file: scripts/persist_blocker_verdict.sh
+
+  # fan_in source set must match the parallel target set (dippin DIP007).
+  # Each branch's Persist*Verdict tool sits between the agent and SquadJoin
+  # via explicit edges below; the persist tools run BEFORE SquadJoin
+  # completes so verdicts land on disk before last_response collapses.
+  fan_in SquadJoin <- SquadPragmatism, SquadYagni, SquadTestability, SquadHolistic, SquadBlocker
+
+  agent SquadSynthesizer
+    label: "Squad Synthesizer"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    tool_access: none
+    max_turns: 1
+    auto_status: true
+    fallback_target: CleanupWorktree
+    system_prompt_file: prompts/squad_synthesizer.system.md
+    prompt_file: prompts/squad_synthesizer.task.md
+    response_format: json_schema
+    response_schema:
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Synthesis",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["outcome","summary","reasoning","block_count","attest_valid","feedback"],
+        "properties": {
+          "outcome": {"type": "string", "enum": ["approved","changes_requested","abandoned"]},
+          "summary": {"type": "string", "minLength": 50},
+          "reasoning": {"type": "string", "minLength": 30},
+          "block_count": {"type": "integer", "minimum": 0, "maximum": 5},
+          "attest_valid": {"type": "boolean"},
+          "feedback": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["persona","file","line_range","description","recommendation"],
+              "properties": {
+                "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
+                "file": {"type": "string", "minLength": 1},
+                "line_range": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+                "description": {"type": "string", "minLength": 10},
+                "recommendation": {"type": "string", "minLength": 5}
+              }
+            }
+          },
+          "abandon_reason": {"type": "string", "minLength": 20}
+        },
+        "allOf": [
+          {"if": {"properties": {"outcome": {"const": "abandoned"}}, "required": ["outcome"]},
+           "then": {"required": ["abandon_reason"]}},
+          {"if": {"properties": {"outcome": {"const": "changes_requested"}}, "required": ["outcome"]},
+           "then": {"properties": {"feedback": {"minItems": 1}}}}
+        ]
+      }
+
+  tool PersistSynthesis
+    label: "Persist Synthesis"
+    timeout: 10s
+    marker_grep: '^synthesized-(approved|changes_requested|abandoned)$'
+    command_file: scripts/persist_synthesis.sh
+
+  tool RecheckPRSHA
+    label: "Recheck PR HEAD SHA"
+    timeout: 15s
+    marker_grep: '^(sha-same|sha-drifted)$'
+    command_file: scripts/recheck_pr_sha.sh
+
+  tool LocalGates
+    label: "Local Gates"
+    timeout: 180s
+    marker_grep: '^(gates-pass|gates-fail)$'
+    command_file: scripts/local_gates.sh
+
+  tool PollCI
+    label: "Poll CI"
+    timeout: 1200s
+    marker_grep: '^(ci-success|ci-failed|ci-timeout|ci-no-checks)$'
+    command_file: scripts/poll_ci.sh
+
+  tool MergePR
+    label: "Merge PR"
+    timeout: 60s
+    marker_grep: '^(merge-ok|merge-blocked)$'
+    command_file: scripts/merge_pr.sh
+
+  tool PostSquadComment
+    label: "Post Squad Comment"
+    timeout: 30s
+    marker_grep: '^comment-posted$'
+    command_file: scripts/post_squad_comment.sh
+
+  tool IncIterCounter
+    label: "Increment Iter Counter"
+    timeout: 5s
+    marker_grep: '^(iter-next|iter-exhausted)$'
+    command_file: scripts/inc_iter_counter.sh
+
+  # ── PHASE 3: cleanup + ratchet ─────────────────────────────────────────────
+
+  tool CleanupWorktree
+    label: "Cleanup Worktree"
+    timeout: 30s
+    marker_grep: '^worktree-cleaned$'
+    command_file: scripts/cleanup_worktree.sh
+
+  tool RatchetLog
+    label: "Ratchet Log"
+    timeout: 10s
+    marker_grep: '^ratcheted$'
+    command_file: scripts/ratchet_log.sh
+
+  agent Exit
+    label: Exit
+    max_turns: 1
+    tool_access: none
+    prompt:
+      The dev_loop pipeline is complete. Report final status.
+      Your ONLY job is to acknowledge completion. Do not read, write, or run anything.
+
+  # ── EDGES ──────────────────────────────────────────────────────────────────
+
+  edges
+    # Phase 1: pick + plan
+    Start                 -> SetupRun
+    SetupRun              -> FetchOpenIssues          when ctx.tool_marker = setup-ok
+    SetupRun              -> Exit                     when ctx.tool_marker = setup-resume-required   label: resume_required
+    SetupRun              -> CleanupWorktree          when ctx.tool_marker = setup-failed             label: setup_failed
+    FetchOpenIssues       -> PreFilter                when ctx.tool_marker = fetched-ok
+    FetchOpenIssues       -> CleanupWorktree          when ctx.tool_marker = fetch-failed             label: fetch_failed
+    PreFilter             -> SelectNextIssue          when ctx.tool_marker = filter-ok
+    PreFilter             -> CleanupWorktree          when ctx.tool_marker = filter-empty             label: no_candidates
+    PreFilter             -> CleanupWorktree          when ctx.tool_marker = filter-failed            label: filter_failed
+    SelectNextIssue       -> PersistSelectedIssue     when ctx.outcome = success
+    SelectNextIssue       -> CleanupWorktree          when ctx.outcome = fail   label: select_failed
+    PersistSelectedIssue  -> PlanMinimalPRs
+    PlanMinimalPRs        -> PersistPlan              when ctx.outcome = success
+    PlanMinimalPRs        -> CleanupWorktree          when ctx.outcome = fail   label: plan_failed
+    PersistPlan           -> CreateWorktree
+    CreateWorktree        -> InitIterCounter          when ctx.tool_marker = worktree-ok
+    CreateWorktree        -> CleanupWorktree          when ctx.tool_marker = worktree-failed          label: worktree_failed
+    InitIterCounter       -> Implementer              when ctx.tool_marker = iter-init-ok
+
+    # Phase 2: implement + squad-review iteration
+    Implementer           -> PushAndOpenPR            when ctx.outcome = success
+    Implementer           -> CleanupWorktree          when ctx.outcome = fail   label: implementer_failed
+    PushAndOpenPR         -> FetchPRContext           when ctx.tool_marker = pr-ready
+    PushAndOpenPR         -> CleanupWorktree          when ctx.tool_marker = pr-push-failed           label: push_failed
+    FetchPRContext        -> SquadFanout              when ctx.tool_marker = pr-context-ok
+    FetchPRContext        -> CleanupWorktree          when ctx.tool_marker = pr-closed                label: pr_closed_externally
+    FetchPRContext        -> CleanupWorktree          when ctx.tool_marker = pr-merged-externally     label: pr_merged_externally
+
+    # Each squad branch persists its verdict to disk via its own Persist*Verdict
+    # tool BEFORE rejoining the fan_in. The fan_in declaration's source set
+    # remains the agent set (DIP007 requirement), but the runtime path runs
+    # agent -> persist -> join.
+    SquadPragmatism       -> PersistPragmatismVerdict   when ctx.outcome = success
+    SquadPragmatism       -> CleanupWorktree            when ctx.outcome = fail   label: squad_pragmatism_failed
+    SquadYagni            -> PersistYagniVerdict        when ctx.outcome = success
+    SquadYagni            -> CleanupWorktree            when ctx.outcome = fail   label: squad_yagni_failed
+    SquadTestability      -> PersistTestabilityVerdict  when ctx.outcome = success
+    SquadTestability      -> CleanupWorktree            when ctx.outcome = fail   label: squad_testability_failed
+    SquadHolistic         -> PersistHolisticVerdict     when ctx.outcome = success
+    SquadHolistic         -> CleanupWorktree            when ctx.outcome = fail   label: squad_holistic_failed
+    SquadBlocker          -> PersistBlockerVerdict      when ctx.outcome = success
+    SquadBlocker          -> CleanupWorktree            when ctx.outcome = fail   label: squad_blocker_failed
+    PersistPragmatismVerdict   -> SquadJoin
+    PersistYagniVerdict        -> SquadJoin
+    PersistTestabilityVerdict  -> SquadJoin
+    PersistHolisticVerdict     -> SquadJoin
+    PersistBlockerVerdict      -> SquadJoin
+
+    SquadJoin             -> SquadSynthesizer
+    SquadSynthesizer      -> PersistSynthesis           when ctx.outcome = success
+    SquadSynthesizer      -> CleanupWorktree            when ctx.outcome = fail   label: synth_failed
+
+    # Synthesis outcome routing (see commit message for clarification vs v6).
+    PersistSynthesis      -> RecheckPRSHA               when ctx.tool_marker = synthesized-approved
+    PersistSynthesis      -> PostSquadComment           when ctx.tool_marker = synthesized-changes_requested  label: changes_requested
+    PersistSynthesis      -> CleanupWorktree            when ctx.tool_marker = synthesized-abandoned          label: synth_abandoned
+
+    # Mechanical gate path (only reached on synthesized-approved)
+    RecheckPRSHA          -> LocalGates                 when ctx.tool_marker = sha-same
+    RecheckPRSHA          -> CleanupWorktree            when ctx.tool_marker = sha-drifted   label: sha_drift_abandon
+    LocalGates            -> PollCI                     when ctx.tool_marker = gates-pass
+    LocalGates            -> PostSquadComment           when ctx.tool_marker = gates-fail    label: local_gates_failed
+    PollCI                -> MergePR                    when ctx.tool_marker = ci-success
+    PollCI                -> CleanupWorktree            when ctx.tool_marker = ci-no-checks  label: ci_no_checks_escalate
+    PollCI                -> PostSquadComment           when ctx.tool_marker = ci-failed
+    PollCI                -> PostSquadComment           when ctx.tool_marker = ci-timeout
+    MergePR               -> CleanupWorktree            when ctx.tool_marker = merge-ok
+    MergePR               -> CleanupWorktree            when ctx.tool_marker = merge-blocked   label: merge_blocked
+
+    # Changes-requested / gates-fail / CI-fail path: comment, iterate
+    PostSquadComment      -> IncIterCounter             when ctx.tool_marker = comment-posted
+
+    # Iteration back-edge (bounded by max_iters AND max_restarts)
+    IncIterCounter        -> Implementer                when ctx.tool_marker = iter-next       restart: true   label: next_iter
+    IncIterCounter        -> CleanupWorktree            when ctx.tool_marker = iter-exhausted  label: max_iters_exhausted
+
+    # Phase 3: cleanup -> ratchet -> exit
+    CleanupWorktree       -> RatchetLog                 when ctx.tool_marker = worktree-cleaned
+    RatchetLog            -> Exit                       when ctx.tool_marker = ratcheted

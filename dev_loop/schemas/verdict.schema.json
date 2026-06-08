@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://2389-research.github.io/pipelines/dev_loop/verdict.schema.json",
+  "title": "Verdict",
+  "description": "Output of one squad reviewer (pragmatism, yagni, testability, holistic, or blocker).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["persona", "verdict", "summary", "concerns"],
+  "properties": {
+    "persona": {
+      "type": "string",
+      "enum": ["pragmatism", "yagni", "testability", "holistic", "blocker"]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "BLOCK", "ATTEST"],
+      "description": "PASS allowed for all personas. BLOCK requires at least one concern. ATTEST is blocker-only and requires an attestation list of length >= 3."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 2000
+    },
+    "concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "line_range", "severity", "description", "recommendation"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line_range": {
+            "type": "string",
+            "pattern": "^[0-9]+(-[0-9]+)?$"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 5
+          }
+        }
+      }
+    },
+    "attestation": {
+      "type": "array",
+      "description": "Blocker-persona only when verdict=ATTEST. Each item must name a file:line in the diff the reviewer walked.",
+      "items": {
+        "type": "string",
+        "pattern": "^.+:[0-9]+(-[0-9]+)?$",
+        "minLength": 3
+      }
+    },
+    "coverage_delta_acceptable": {
+      "type": "boolean",
+      "description": "Testability-persona only. True when coverage on changed code is non-negative."
+    },
+    "test_deletions": {
+      "type": "array",
+      "description": "Testability-persona only. List of tests removed or weakened in the diff.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "BLOCK" } }, "required": ["verdict"] },
+      "then": { "properties": { "concerns": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "ATTEST" } }, "required": ["verdict"] },
+      "then": {
+        "required": ["attestation"],
+        "properties": {
+          "persona": { "const": "blocker" },
+          "attestation": { "minItems": 3 }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "persona": "pragmatism",
+  "verdict": "PASS",
+  "summary": "Scope matches the issue: re-anchor the glob and add one regression test. No incidental refactors, no new abstractions, no speculative knobs. Reads as the minimum change.",
+  "concerns": []
+}
