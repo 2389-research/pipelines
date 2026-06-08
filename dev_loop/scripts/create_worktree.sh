@@ -37,9 +37,13 @@ issue_num=$(cat "${RUN_DIR}/selected_issue_number.txt")
 worktree_path="${RUN_DIR}/worktree"
 symlink="$(pwd)/.dev_loop_worktree"
 
-# Clean any leftover from a prior failed run.
-if [ -L "${symlink}" ] || [ -e "${symlink}" ]; then
-  rm -rf "${symlink}"
+# Clean any leftover from a prior failed run, but ONLY if it is a symlink
+# (which is what create_worktree.sh itself writes). If a user happens to have
+# a real directory at .dev_loop_worktree/ we refuse to clobber it.
+if [ -L "${symlink}" ]; then
+  rm -f "${symlink}"
+elif [ -e "${symlink}" ]; then
+  emit_failure ".dev_loop_worktree exists and is not a symlink; refusing to overwrite"
 fi
 if [ -d "${worktree_path}" ]; then
   git worktree remove --force "${worktree_path}" 2>/dev/null || rm -rf "${worktree_path}"

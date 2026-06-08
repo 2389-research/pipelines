@@ -43,6 +43,20 @@ teardown() {
   [ "${branch}" = "fix/42-test-fixture" ]
 }
 
+@test "create_worktree refuses to clobber an existing non-symlink directory at .dev_loop_worktree" {
+  # User foot-gun: an unrelated directory at the symlink path. Script must
+  # NOT rm -rf it. (Earlier versions did.)
+  mkdir "${WORKDIR}/.dev_loop_worktree"
+  echo "important user data" > "${WORKDIR}/.dev_loop_worktree/keep.txt"
+  run sh -c "$(cat "${CREATE}")"
+  [ "${output}" = "worktree-failed" ]
+  # Critical: the user's directory and file are still there.
+  [ -d "${WORKDIR}/.dev_loop_worktree" ]
+  [ ! -L "${WORKDIR}/.dev_loop_worktree" ]
+  [ -f "${WORKDIR}/.dev_loop_worktree/keep.txt" ]
+  grep -q "not a symlink" "${RUN_DIR}/worktree_error.txt"
+}
+
 @test "create_worktree without branch_name.txt fails" {
   rm "${RUN_DIR}/branch_name.txt"
   run sh -c "$(cat "${CREATE}")"

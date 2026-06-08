@@ -14,8 +14,16 @@ if [ -n "${rid}" ]; then
 fi
 
 symlink="$(pwd)/.dev_loop_worktree"
-if [ -L "${symlink}" ] || [ -e "${symlink}" ]; then
-  rm -rf "${symlink}" 2>/dev/null || true
+# Only unlink when it IS the symlink we created. If a user has a real
+# directory at this path we leave it alone (and let the rest of cleanup
+# proceed) — never `rm -rf` an unrelated dir that happens to match the name.
+if [ -L "${symlink}" ]; then
+  rm -f "${symlink}" 2>/dev/null || true
+elif [ -e "${symlink}" ]; then
+  if [ -n "${RUN_DIR}" ]; then
+    printf 'refused to clean .dev_loop_worktree (not a symlink)\n' \
+      >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
+  fi
 fi
 
 if [ -n "${RUN_DIR}" ] && [ -f "${RUN_DIR}/worktree.path" ]; then

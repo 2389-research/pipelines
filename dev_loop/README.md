@@ -100,9 +100,15 @@ overrides too (dippin's lint does not catch per-branch typos).
   `abandon_reason`.
 - **`iter-exhausted`** (max_iters reached without merging) → cleanup, exit.
 
-`CleanupWorktree` is idempotent and runs from every exit path *and* from each
-agent's `fallback_target`. `RatchetLog` appends one TSV line per run to
-`$DIP_ROOT/ratchet.tsv`.
+`CleanupWorktree` is idempotent and runs from every cleanup-bearing exit
+path *and* from each agent's `fallback_target`. `RatchetLog` runs immediately
+after, appending one TSV line per run to `$DIP_ROOT/ratchet.tsv`.
+
+There is one deliberate short-circuit exit that does NOT cleanup or
+ratchet: `setup-resume-required`. setup_run.sh emits this when it detects
+a prior run's worktree still on disk, so the operator can invoke
+`tracker --resume <run-id>` to pick up where the prior run left off.
+Deleting the worktree there would defeat the resume.
 
 ## Notable design choices vs issue #40 v6
 

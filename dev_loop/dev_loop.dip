@@ -3,7 +3,7 @@
 # ABOUTME: runs a 5-persona squad review against the PR diff, synthesizes verdicts, and
 # ABOUTME: routes to merge / iterate / abandon under deterministic mechanical gates.
 workflow DevLoop
-  goal: "End-to-end autonomous loop: select an open issue, plan + implement minimal PR(s), run a 5-persona squad review, synthesize verdicts, gate by SHA-recheck + LocalGates + CI status, then merge / iterate / abandon. Cleans up the worktree and ratchets a log on every exit path."
+  goal: "End-to-end autonomous loop: select an open issue, plan + implement minimal PR(s), run a 5-persona squad review, synthesize verdicts, gate by SHA-recheck + LocalGates + CI status, then merge / iterate / abandon. Routes through CleanupWorktree + RatchetLog on every cleanup-bearing exit. setup-resume-required is the only short-circuit exit; it skips cleanup deliberately so `tracker --resume` can pick up the prior run's worktree."
   start: Start
   exit: Exit
 
