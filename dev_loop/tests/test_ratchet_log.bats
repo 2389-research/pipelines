@@ -1,0 +1,55 @@
+#!/usr/bin/env bats
+# test_ratchet_log.bats
+
+setup() {
+  TMPDIR="$(mktemp -d)"
+  export XDG_CACHE_HOME="${TMPDIR}/cache"
+  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
+  rid="t-$$"
+  mkdir -p "${DIP_ROOT}/runs/${rid}"
+  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
+  SCRIPT="${BATS_TEST_DIRNAME}/../scripts/ratchet_log.sh"
+}
+
+teardown() {
+  rm -rf "${TMPDIR}"
+}
+
+@test "first run writes header + one record" {
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  printf 'fix/42-x' > "${RUN_DIR}/branch_name.txt"
+  printf '2' > "${RUN_DIR}/iter.txt"
+  printf '{"outcome":"approved"}' > "${RUN_DIR}/synthesis.json"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${output}" = "ratcheted" ]
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  [ -f "${RATCHET}" ]
+  [ "$(awk 'NR==1' "${RATCHET}")" = "rid	ts	issue	branch	outcome	iters_used	notes" ]
+  line2="$(awk 'NR==2' "${RATCHET}")"
+  echo "${line2}" | grep -q "42"
+  echo "${line2}" | grep -q "approved"
+}
+
+@test "ratchet picks up merge-blocked outcome" {
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  printf 'fix/42-x' > "${RUN_DIR}/branch_name.txt"
+  printf 'protected' > "${RUN_DIR}/merge_block_reason.txt"
+  run sh -c "$(cat "${SCRIPT}")"
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  grep -q "merge-blocked-protected" "${RATCHET}"
+}
+
+@test "ratchet writes 'unknown' when no synthesis exists" {
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  run sh -c "$(cat "${SCRIPT}")"
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  grep -q "unknown" "${RATCHET}"
+}
+
+@test "ratchet falls back to latest run dir when .current_rid is gone" {
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  rm "${DIP_ROOT}/.current_rid"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${output}" = "ratcheted" ]
+}
