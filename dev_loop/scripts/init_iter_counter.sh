@@ -13,8 +13,11 @@ if [ -z "${rid}" ]; then exit 1; fi
 RUN_DIR="${DIP_ROOT}/runs/${rid}"
 mkdir -p "${RUN_DIR}"
 
-# max_iters comes from config/dev_loop.config.yaml; written by setup_run.sh into
-# $RUN_DIR/env (forthcoming). For now, hardcode the same value the .dip uses.
+# `max_iters` is one of the values that v1 duplicates across this script,
+# config/dev_loop.config.yaml, and `defaults max_restarts:` in dev_loop.dip.
+# When you change any of them, change all of them — README's "Config"
+# section documents the duplication contract. (Runtime YAML loading is a
+# follow-up, not a v1 promise.)
 max_iters=5
 printf '%s' "${max_iters}" > "${RUN_DIR}/max_iters.txt"
 printf '1' > "${RUN_DIR}/iter.txt"

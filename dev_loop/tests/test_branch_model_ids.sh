@@ -1,10 +1,13 @@
 #!/bin/sh
-# test_branch_model_ids.sh — enumerate every per-branch `model:` declaration
-# in dev_loop.dip and reject any that isn't on the tracker-known allowlist.
+# test_branch_model_ids.sh — enumerate every `model:` declaration in
+# dev_loop.dip (both node-level and parallel-branch overrides) and reject any
+# that isn't on the tracker-known allowlist.
 #
-# dippin's `checkNodeModelProvider` does not inspect per-branch overrides
-# (review finding M3 on issue #40), so DIP108 silently passes typos. This
-# script is the smoke-CI backstop.
+# Why pick up both forms: dippin's `checkNodeModelProvider` covers node-level
+# `model:` lines, but does NOT inspect per-branch overrides (review finding
+# M3 on issue #40), so DIP108 silently passes typos inside parallel branches.
+# Validating every model: line is the simplest CI backstop that catches both;
+# the node-level checks are redundant with dippin lint but harmless.
 set -eu
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"

@@ -3,7 +3,10 @@
 # Emits: setup-ok | setup-resume-required | setup-failed
 #
 # Runs under dash (tracker invokes via `sh -c <content>` — the shebang is
-# advisory). POSIX-portable; no bash arrays, no trap ERR, no `[[ ]]`.
+# advisory). POSIX `sh` style (no bash arrays, no `trap ERR`, no `[[ ]]`),
+# augmented with a few Linux-only utilities where they read clearly
+# (`find -mmin`, GNU stat). dev_loop already requires Linux for the
+# writable_paths Landlock jail, so the Linux pin is not a new constraint.
 #
 # State layout:
 #   $DIP_ROOT/.current_rid               — sentinel pointing at the active run
@@ -37,8 +40,18 @@ emit_failure() {
   exit 0
 }
 
-# EXIT trap as a safety net for unexpected non-zero exits.
-trap 'if [ $? -ne 0 ]; then printf "setup-failed"; exit 0; fi' EXIT
+# EXIT trap as a safety net for unexpected non-zero exits. Records the rc
+# and the trap-invocation line into setup_error.txt so post-mortems can
+# find where it tripped — the explicit `emit_failure` paths still produce
+# richer messages.
+# shellcheck disable=SC2154  # rc is assigned inside the single-quoted trap body
+trap 'rc=$?; if [ "${rc}" -ne 0 ]; then
+        mkdir -p "${run_dir}" 2>/dev/null || true
+        printf "unexpected non-zero exit (rc=%s) at line %s\n" "${rc}" "${LINENO}" \
+          > "${run_dir}/setup_error.txt" 2>/dev/null || true
+        printf "setup-failed"
+        exit 0
+      fi' EXIT
 
 # Concurrency lock — atomic mkdir is the POSIX-portable pattern. Without
 # this, a second `tracker dev_loop/dev_loop.dip` started in the same workdir
