@@ -41,13 +41,17 @@ emit_failure() {
 }
 
 # EXIT trap as a safety net for unexpected non-zero exits. Records the rc
-# and the trap-invocation line into setup_error.txt so post-mortems can
-# find where it tripped — the explicit `emit_failure` paths still produce
-# richer messages.
+# into setup_error.txt so post-mortems can find that it tripped — the
+# explicit `emit_failure` paths still produce richer per-mode messages.
+#
+# `LINENO` is intentionally NOT referenced here: dash does not guarantee it
+# is set, and under `set -u` an unset `${LINENO}` would error inside the
+# trap itself, suppressing the setup-failed marker and leaving the pipeline
+# with no routable outcome. The rc alone is enough breadcrumb.
 # shellcheck disable=SC2154  # rc is assigned inside the single-quoted trap body
 trap 'rc=$?; if [ "${rc}" -ne 0 ]; then
         mkdir -p "${run_dir}" 2>/dev/null || true
-        printf "unexpected non-zero exit (rc=%s) at line %s\n" "${rc}" "${LINENO}" \
+        printf "unexpected non-zero exit (rc=%s)\n" "${rc}" \
           > "${run_dir}/setup_error.txt" 2>/dev/null || true
         printf "setup-failed"
         exit 0

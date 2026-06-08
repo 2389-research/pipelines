@@ -81,6 +81,23 @@ EOF
   grep -q "auth required" "${RUN_DIR}/poll_ci_error.txt"
 }
 
+@test "non-numeric DEV_LOOP_CI_POLL_INTERVAL falls back to default + logs" {
+  export DEV_LOOP_CI_POLL_INTERVAL=abc
+  write_gh_shim 'printf "[{\"bucket\":\"pass\",\"state\":\"COMPLETED\",\"name\":\"a\",\"workflow\":\"w\"}]"'
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "ci-success" ]
+  grep -q "invalid DEV_LOOP_CI_POLL_INTERVAL" "${RUN_DIR}/poll_ci_error.txt"
+}
+
+@test "zero DEV_LOOP_CI_POLL_INTERVAL falls back (no infinite tight loop)" {
+  export DEV_LOOP_CI_POLL_INTERVAL=0
+  write_gh_shim 'printf "[{\"bucket\":\"pass\",\"state\":\"COMPLETED\",\"name\":\"a\",\"workflow\":\"w\"}]"'
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "ci-success" ]
+}
+
 @test "no PR number emits ci-no-checks" {
   rm "${RUN_DIR}/pr_number.txt"
   write_gh_shim 'exit 0'

@@ -33,8 +33,28 @@ if [ ! -f "${RUN_DIR}/pr_number.txt" ]; then
 fi
 pr_num=$(cat "${RUN_DIR}/pr_number.txt")
 
-interval="${DEV_LOOP_CI_POLL_INTERVAL:-30}"
-timeout="${DEV_LOOP_CI_POLL_TIMEOUT:-1200}"
+# Validate env-var overrides. Non-numeric inputs would crash the arithmetic
+# `$((elapsed + interval))`; interval=0 would spin the loop with no sleep.
+# Fall back to the documented defaults whenever the override is invalid and
+# log the rejection (so an operator who typo'd the env var can find out).
+case "${DEV_LOOP_CI_POLL_INTERVAL:-30}" in
+  *[!0-9]*|'') interval=30 ;;
+  *) interval="${DEV_LOOP_CI_POLL_INTERVAL:-30}" ;;
+esac
+if [ "${interval}" -lt 1 ]; then interval=30; fi
+case "${DEV_LOOP_CI_POLL_TIMEOUT:-1200}" in
+  *[!0-9]*|'') timeout=1200 ;;
+  *) timeout="${DEV_LOOP_CI_POLL_TIMEOUT:-1200}" ;;
+esac
+if [ "${timeout}" -lt 1 ]; then timeout=1200; fi
+if [ "${interval}" != "${DEV_LOOP_CI_POLL_INTERVAL:-30}" ] \
+   || [ "${timeout}" != "${DEV_LOOP_CI_POLL_TIMEOUT:-1200}" ]; then
+  {
+    printf 'invalid DEV_LOOP_CI_POLL_INTERVAL=%s or DEV_LOOP_CI_POLL_TIMEOUT=%s; using defaults interval=%s timeout=%s\n' \
+      "${DEV_LOOP_CI_POLL_INTERVAL:-}" "${DEV_LOOP_CI_POLL_TIMEOUT:-}" \
+      "${interval}" "${timeout}"
+  } >> "${RUN_DIR}/poll_ci_error.txt" 2>/dev/null || true
+fi
 elapsed=0
 
 while [ "${elapsed}" -lt "${timeout}" ]; do
