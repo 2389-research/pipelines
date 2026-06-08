@@ -38,10 +38,17 @@ jobs:
       - name: Install ajv-cli
         run: sudo npm install -g ajv-cli@5
 
-      - name: Install tracker (bundles dippin)
+      # Pin tracker/dippin to known-good tags so CI failures reflect changes
+      # in THIS repo, not upstream toolchain drift. Both pins were verified
+      # locally against this PR's gates. Bump intentionally as a separate
+      # change.
+      - name: Install tracker + dippin (pinned)
+        env:
+          TRACKER_VERSION: v0.35.1
+          DIPPIN_VERSION: v0.36.0
         run: |
-          go install github.com/2389-research/tracker/cmd/tracker@latest
-          go install github.com/2389-research/dippin-lang/cmd/dippin@latest
+          go install "github.com/2389-research/tracker/cmd/tracker@${TRACKER_VERSION}"
+          go install "github.com/2389-research/dippin-lang/cmd/dippin@${DIPPIN_VERSION}"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       - name: Print toolchain versions

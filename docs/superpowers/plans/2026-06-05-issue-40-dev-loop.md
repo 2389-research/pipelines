@@ -1,6 +1,16 @@
 # Plan — `dev_loop/` autonomous issue-driven PR-review squad loop (issue #40, v6 design)
 
-> Source of truth: `gh issue view 40 --repo 2389-research/pipelines` (v6 body). An implementer brief was used in the original planning session as `/tmp/dev_loop_implementer_brief.md`; that file was ephemeral and is not committed. Implement v6 as specified. Stop, document, and ask if dippin/tracker constraints diverge from v6.
+> **ARCHIVAL — PRE-IMPLEMENTATION SNAPSHOT.** This file captured the
+> planning session that produced PR #42 and is preserved as a record of how
+> the decisions were settled. **It is NOT the canonical reference for the
+> shipped dev_loop.** The shipped behavior, design deviations, and operator
+> docs live in `dev_loop/README.md`; the executable contract is
+> `dev_loop/dev_loop.dip` + `dev_loop/scripts/` + `dev_loop/prompts/`. When
+> the two disagree, the shipped tree wins. Reading this doc as if it were
+> implementation guidance will reintroduce unsupported constructs (see the
+> "deviations from v6" section of the README for the actual list).
+>
+> Original source-of-truth pointer: `gh issue view 40 --repo 2389-research/pipelines` (v6 body). An implementer brief was used in the original planning session as `/tmp/dev_loop_implementer_brief.md`; that file was ephemeral and is not committed.
 
 ## 1. Mission
 
