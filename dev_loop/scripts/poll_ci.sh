@@ -4,6 +4,13 @@
 #
 # Defaults: poll every 30s for up to 20 minutes. Overridable via
 # DEV_LOOP_CI_POLL_INTERVAL / DEV_LOOP_CI_POLL_TIMEOUT env vars (in seconds).
+#
+# Reads `bucket` from `gh pr checks --json` — the resolved outcome bucket
+# (`fail | pass | pending | skipping | cancel`). Fails closed: any settled
+# bucket other than `pass` or `skipping` routes to ci-failed (covers
+# action_required, startup_failure, stale, neutral, cancelled, etc.).
+# gh exits 8 when any check is still pending; that exit code is treated as
+# "still polling" rather than a hard error.
 set -eu
 
 DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
@@ -31,7 +38,21 @@ timeout="${DEV_LOOP_CI_POLL_TIMEOUT:-1200}"
 elapsed=0
 
 while [ "${elapsed}" -lt "${timeout}" ]; do
-  checks=$(gh pr checks "${pr_num}" --json state,conclusion 2>/dev/null || printf '[]')
+  set +e
+  checks=$(gh pr checks "${pr_num}" --json bucket,state,name,workflow 2>/dev/null)
+  rc=$?
+  set -e
+
+  # gh exit codes: 0 = settled, 8 = pending. Anything else = real error.
+  if [ "${rc}" -ne 0 ] && [ "${rc}" -ne 8 ]; then
+    printf 'ci-no-checks'
+    exit 0
+  fi
+
+  # Empty / unparseable response.
+  if [ -z "${checks}" ]; then
+    checks='[]'
+  fi
   printf '%s' "${checks}" > "${RUN_DIR}/ci_checks.json"
 
   count=$(printf '%s' "${checks}" | jq 'length' 2>/dev/null || printf '0')
@@ -40,23 +61,28 @@ while [ "${elapsed}" -lt "${timeout}" ]; do
     exit 0
   fi
 
-  in_progress=$(printf '%s' "${checks}" \
-    | jq '[.[] | select(.state == "IN_PROGRESS" or .state == "QUEUED" or .state == "PENDING")] | length' 2>/dev/null \
+  # Any pending? Keep polling.
+  pending=$(printf '%s' "${checks}" \
+    | jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null \
     || printf '0')
-  if [ "${in_progress}" -eq 0 ]; then
-    failed=$(printf '%s' "${checks}" \
-      | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED")] | length' 2>/dev/null \
-      || printf '0')
-    if [ "${failed}" -gt 0 ]; then
-      printf 'ci-failed'
-    else
-      printf 'ci-success'
-    fi
-    exit 0
+  if [ "${pending}" -gt 0 ]; then
+    sleep "${interval}"
+    elapsed=$((elapsed + interval))
+    continue
   fi
 
-  sleep "${interval}"
-  elapsed=$((elapsed + interval))
+  # All settled. ci-success only when every check is `pass` or `skipping`;
+  # anything else (fail / cancel / action_required / stale / neutral etc.)
+  # routes to ci-failed.
+  nonpass=$(printf '%s' "${checks}" \
+    | jq '[.[] | select(.bucket != "pass" and .bucket != "skipping")] | length' 2>/dev/null \
+    || printf '1')
+  if [ "${nonpass}" -gt 0 ]; then
+    printf 'ci-failed'
+  else
+    printf 'ci-success'
+  fi
+  exit 0
 done
 
 printf 'ci-timeout'

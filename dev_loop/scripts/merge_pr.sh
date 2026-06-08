@@ -28,7 +28,20 @@ if [ ! -f "${RUN_DIR}/pr_number.txt" ]; then
 fi
 pr_num=$(cat "${RUN_DIR}/pr_number.txt")
 
-merge_out=$(gh pr merge "${pr_num}" --squash --delete-branch 2>&1) && rc=0 || rc=$?
+# Pin the HEAD SHA so gh refuses to merge if the PR head changed between
+# RecheckPRSHA and this command. Closes the residual race window — LocalGates
+# + PollCI run in between, and a force-push during that window would
+# otherwise land here unreviewed.
+match_arg=""
+if [ -f "${RUN_DIR}/pr_head_sha.txt" ]; then
+  pinned_sha=$(cat "${RUN_DIR}/pr_head_sha.txt")
+  if [ -n "${pinned_sha}" ]; then
+    match_arg="--match-head-commit=${pinned_sha}"
+  fi
+fi
+
+# shellcheck disable=SC2086
+merge_out=$(gh pr merge "${pr_num}" --squash --delete-branch ${match_arg} 2>&1) && rc=0 || rc=$?
 
 if [ "${rc}" -eq 0 ]; then
   printf '%s\n' "${merge_out}" > "${RUN_DIR}/merge_log.txt"
@@ -49,6 +62,9 @@ case "${lower}" in
     ;;
   *"missing required reviews"*|*"review required"*)
     reason='missing-reviews'
+    ;;
+  *"expected head sha"*|*"head sha did not match"*|*"head commit did not match"*)
+    reason='sha-drifted'
     ;;
   *)
     reason='unknown'

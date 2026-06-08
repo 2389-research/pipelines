@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
 # test_poll_ci.bats — covers ci-success / ci-failed / ci-timeout / ci-no-checks.
+# Real `gh pr checks --json` returns bucket / state / name / workflow; the
+# bucket field is the resolved outcome enum (pass / fail / pending / skipping /
+# cancel). Shims emit that shape, not the older conclusion-based fixture.
 
 setup() {
   TMPDIR="$(mktemp -d)"
@@ -37,22 +40,41 @@ EOF
   [ "${output}" = "ci-no-checks" ]
 }
 
-@test "all checks SUCCESS emits ci-success" {
-  write_gh_shim 'printf "[{\"state\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]"'
+@test "all bucket=pass emits ci-success" {
+  write_gh_shim 'printf "[{\"bucket\":\"pass\",\"state\":\"COMPLETED\",\"name\":\"smoke\",\"workflow\":\"ci\"}]"'
   run sh -c "$(cat "${SCRIPT}")"
   [ "${output}" = "ci-success" ]
 }
 
-@test "one FAILURE conclusion emits ci-failed" {
-  write_gh_shim 'printf "[{\"state\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"},{\"state\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]"'
+@test "pass + skipping still emits ci-success" {
+  write_gh_shim 'printf "[{\"bucket\":\"pass\",\"state\":\"COMPLETED\",\"name\":\"a\",\"workflow\":\"w\"},{\"bucket\":\"skipping\",\"state\":\"COMPLETED\",\"name\":\"b\",\"workflow\":\"w\"}]"'
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${output}" = "ci-success" ]
+}
+
+@test "one bucket=fail emits ci-failed" {
+  write_gh_shim 'printf "[{\"bucket\":\"pass\",\"state\":\"COMPLETED\",\"name\":\"a\",\"workflow\":\"w\"},{\"bucket\":\"fail\",\"state\":\"COMPLETED\",\"name\":\"b\",\"workflow\":\"w\"}]"'
   run sh -c "$(cat "${SCRIPT}")"
   [ "${output}" = "ci-failed" ]
 }
 
-@test "checks still IN_PROGRESS past timeout emits ci-timeout" {
-  write_gh_shim 'printf "[{\"state\":\"IN_PROGRESS\",\"conclusion\":null}]"'
+@test "bucket=cancel emits ci-failed (fail-closed default)" {
+  write_gh_shim 'printf "[{\"bucket\":\"cancel\",\"state\":\"COMPLETED\",\"name\":\"a\",\"workflow\":\"w\"}]"'
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${output}" = "ci-failed" ]
+}
+
+@test "bucket=pending past timeout emits ci-timeout" {
+  # gh exits 8 while checks are pending; shim mimics that.
+  write_gh_shim 'printf "[{\"bucket\":\"pending\",\"state\":\"IN_PROGRESS\",\"name\":\"a\",\"workflow\":\"w\"}]"; exit 8'
   run sh -c "$(cat "${SCRIPT}")"
   [ "${output}" = "ci-timeout" ]
+}
+
+@test "gh hard error (non-0, non-8) routes to ci-no-checks" {
+  write_gh_shim 'echo "auth required" >&2; exit 4'
+  run sh -c "$(cat "${SCRIPT}") 2>/dev/null"
+  [ "${output}" = "ci-no-checks" ]
 }
 
 @test "no PR number emits ci-no-checks" {

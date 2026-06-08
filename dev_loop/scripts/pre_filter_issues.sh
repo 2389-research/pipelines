@@ -28,7 +28,7 @@ emit_failure() {
   exit 0
 }
 
-trap 'if [ $? -ne 0 ]; then printf "filter-failed"; fi' EXIT
+trap 'if [ $? -ne 0 ]; then printf "filter-failed"; exit 0; fi' EXIT
 
 if [ ! -f "${RUN_DIR}/issues.json" ]; then
   emit_failure "issues.json missing"

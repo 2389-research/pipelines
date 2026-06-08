@@ -44,7 +44,19 @@ fi
 head_sha=$(printf '%s' "${pr_view}" | jq -r '.headRefOid')
 printf '%s' "${head_sha}" > "${RUN_DIR}/pr_head_sha.txt"
 
-gh pr diff "${pr_num}" > "${RUN_DIR}/pr_diff.txt" 2>/dev/null || true
+# Fail closed: if we cannot fetch the diff, do NOT emit pr-context-ok with an
+# empty payload. The squad would then "review" an empty diff and potentially
+# approve it. Route to pr-closed (cleanup path) instead and record the error.
+if ! gh pr diff "${pr_num}" > "${RUN_DIR}/pr_diff.txt" \
+     2> "${RUN_DIR}/pr_diff_error.txt"; then
+  printf 'pr-closed'
+  exit 0
+fi
+if [ ! -s "${RUN_DIR}/pr_diff.txt" ]; then
+  printf 'empty pr_diff for PR #%s\n' "${pr_num}" >> "${RUN_DIR}/pr_diff_error.txt"
+  printf 'pr-closed'
+  exit 0
+fi
 
 # Emit the marker first so marker_grep (which anchors on whole lines) extracts
 # it as ctx.tool_marker. The rest of stdout becomes ctx.tool_stdout and

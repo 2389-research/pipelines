@@ -22,7 +22,7 @@ emit_failure() {
   exit 0
 }
 
-trap 'if [ $? -ne 0 ]; then printf "fetch-failed"; fi' EXIT
+trap 'if [ $? -ne 0 ]; then printf "fetch-failed"; exit 0; fi' EXIT
 
 # Re-export env so gh stays repo-locked regardless of how this is invoked.
 if [ -f "${RUN_DIR}/env" ]; then

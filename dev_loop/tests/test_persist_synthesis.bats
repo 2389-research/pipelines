@@ -51,16 +51,20 @@ stage() {
   [ "${feedback_count}" -ge 1 ]
 }
 
-@test "missing response.md falls back to synthesized-abandoned" {
+@test "missing response.md falls back to synthesized-abandoned + exit 0" {
   rm -f "${TRACKER_RUN}/SquadSynthesizer/response.md"
   run sh -c "$(cat "${SCRIPT}")"
+  # Routing tools MUST exit 0 even on the fallback path. A non-zero exit can
+  # bypass marker_grep routing in the .dip and halt the pipeline mid-flight.
+  [ "${status}" -eq 0 ]
   [ "${output}" = "synthesized-abandoned" ]
   [ -f "${RUN_DIR}/persist_synthesis_error.txt" ]
 }
 
-@test "missing rid sentinel falls back to synthesized-abandoned" {
+@test "missing rid sentinel falls back to synthesized-abandoned + exit 0" {
   rm "${DIP_ROOT}/.current_rid"
   stage synthesis_approved.json
   run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
   [ "${output}" = "synthesized-abandoned" ]
 }

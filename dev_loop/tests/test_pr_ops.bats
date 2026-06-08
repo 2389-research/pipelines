@@ -86,6 +86,10 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   printf "{\"state\":\"OPEN\",\"mergedAt\":null,\"headRefOid\":\"sha-now\",\"number\":7,\"url\":\"u\",\"headRefName\":\"b\",\"baseRefName\":\"main\"}"
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "diff" ]; then
+  printf "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n"
+  exit 0
+fi
 exit 0'
   run sh -c "$(cat "${SCRIPTS}/fetch_pr_context.sh")"
   [ "${status}" -eq 0 ]
@@ -96,6 +100,24 @@ exit 0'
   printf '%s\n' "${output}" | grep -q -- "<plan>"
   printf '%s\n' "${output}" | grep -q -- "<feedback>"
   printf '%s\n' "${output}" | grep -q -- "<repo_conventions>"
+}
+
+@test "fetch_pr_context fails closed when gh pr diff fails (no empty-diff approval)" {
+  printf '7' > "${RUN_DIR}/pr_number.txt"
+  write_gh_shim '
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf "{\"state\":\"OPEN\",\"mergedAt\":null,\"headRefOid\":\"sha-now\",\"number\":7,\"url\":\"u\",\"headRefName\":\"b\",\"baseRefName\":\"main\"}"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "diff" ]; then
+  echo "Not found" >&2
+  exit 1
+fi
+exit 0'
+  run sh -c "$(cat "${SCRIPTS}/fetch_pr_context.sh") 2>/dev/null"
+  [ "${status}" -eq 0 ]
+  [ "${lines[0]}" = "pr-closed" ]
+  [ -f "${RUN_DIR}/pr_diff_error.txt" ]
 }
 
 @test "fetch_pr_context emits pr-merged-externally when state=MERGED" {

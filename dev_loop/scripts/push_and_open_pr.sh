@@ -24,7 +24,7 @@ emit_failure() {
   exit 0
 }
 
-trap 'if [ $? -ne 0 ]; then printf "pr-push-failed"; fi' EXIT
+trap 'if [ $? -ne 0 ]; then printf "pr-push-failed"; exit 0; fi' EXIT
 
 if [ ! -f "${RUN_DIR}/worktree.path" ]; then
   emit_failure "worktree.path missing"

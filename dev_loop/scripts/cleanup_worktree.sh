@@ -20,11 +20,26 @@ fi
 
 if [ -n "${RUN_DIR}" ] && [ -f "${RUN_DIR}/worktree.path" ]; then
   worktree_path=$(cat "${RUN_DIR}/worktree.path")
-  if [ -d "${worktree_path}" ]; then
-    git worktree remove --force "${worktree_path}" 2>/dev/null \
-      || rm -rf "${worktree_path}"
-  fi
-  printf 'cleaned %s\n' "${worktree_path}" >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
+  # Validate the path is inside RUN_DIR before destructive removal. A
+  # corrupted worktree.path file (or a malicious override) could otherwise
+  # delete arbitrary directories. create_worktree.sh always writes
+  # "${RUN_DIR}/worktree", so anything else is rejected.
+  expected_prefix="${RUN_DIR}/worktree"
+  case "${worktree_path}" in
+    "${expected_prefix}"|"${expected_prefix}"/*)
+      if [ -d "${worktree_path}" ]; then
+        git worktree remove --force "${worktree_path}" 2>/dev/null \
+          || rm -rf "${worktree_path}"
+      fi
+      printf 'cleaned %s\n' "${worktree_path}" \
+        >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
+      ;;
+    *)
+      printf 'refused to clean unsafe path %s (not under %s)\n' \
+        "${worktree_path}" "${expected_prefix}" \
+        >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
+      ;;
+  esac
 fi
 
 # Drop the .current_rid sentinel so the next setup_run starts fresh.

@@ -26,7 +26,7 @@ emit_failure() {
   exit 0
 }
 
-trap 'if [ $? -ne 0 ]; then printf "worktree-failed"; fi' EXIT
+trap 'if [ $? -ne 0 ]; then printf "worktree-failed"; exit 0; fi' EXIT
 
 if [ ! -f "${RUN_DIR}/branch_name.txt" ] || [ ! -f "${RUN_DIR}/selected_issue_number.txt" ]; then
   emit_failure "missing branch_name.txt or selected_issue_number.txt"

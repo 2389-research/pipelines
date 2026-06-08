@@ -38,7 +38,7 @@ emit_failure() {
 }
 
 # EXIT trap as a safety net for unexpected non-zero exits.
-trap 'if [ $? -ne 0 ]; then printf "setup-failed"; fi' EXIT
+trap 'if [ $? -ne 0 ]; then printf "setup-failed"; exit 0; fi' EXIT
 
 mkdir -p "${run_dir}"
 printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"

@@ -20,7 +20,7 @@ mkdir -p "${RUN_DIR}"
 # A non-zero exit anywhere routes to CleanupWorktree via the fail edge on the
 # SquadSynthesizer agent fallback; we choose abandoned as the conservative
 # default if the response can't be read.
-trap 'if [ $? -ne 0 ]; then printf "synthesized-abandoned"; fi' EXIT
+trap 'if [ $? -ne 0 ]; then printf "synthesized-abandoned"; exit 0; fi' EXIT
 
 TRACKER_ROOT="$(pwd)/.tracker/runs"
 # shellcheck disable=SC2012

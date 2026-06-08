@@ -73,6 +73,7 @@ workflow DevLoop
   tool PersistSelectedIssue
     label: "Persist Selected Issue"
     timeout: 10s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_selected_issue.sh
 
   agent PlanMinimalPRs
@@ -122,6 +123,7 @@ workflow DevLoop
   tool PersistPlan
     label: "Persist Plan"
     timeout: 10s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_plan.sh
 
   tool CreateWorktree
@@ -185,8 +187,8 @@ workflow DevLoop
         "additionalProperties": false,
         "required": ["persona","verdict","summary","concerns"],
         "properties": {
-          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
-          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "persona": {"const": "pragmatism"},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK"]},
           "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
           "concerns": {
             "type": "array",
@@ -202,23 +204,18 @@ workflow DevLoop
                 "recommendation": {"type": "string", "minLength": 5}
               }
             }
-          },
-          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
-          "coverage_delta_acceptable": {"type": "boolean"},
-          "test_deletions": {"type": "array", "items": {"type": "string"}}
+          }
         },
         "allOf": [
           {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
-           "then": {"properties": {"concerns": {"minItems": 1}}}},
-          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
-           "then": {"required": ["attestation"],
-                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+           "then": {"properties": {"concerns": {"minItems": 1}}}}
         ]
       }
 
   tool PersistPragmatismVerdict
     label: "Persist Pragmatism Verdict"
     timeout: 5s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_pragmatism_verdict.sh
 
   agent SquadYagni
@@ -241,8 +238,8 @@ workflow DevLoop
         "additionalProperties": false,
         "required": ["persona","verdict","summary","concerns"],
         "properties": {
-          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
-          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "persona": {"const": "yagni"},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK"]},
           "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
           "concerns": {
             "type": "array",
@@ -258,23 +255,18 @@ workflow DevLoop
                 "recommendation": {"type": "string", "minLength": 5}
               }
             }
-          },
-          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
-          "coverage_delta_acceptable": {"type": "boolean"},
-          "test_deletions": {"type": "array", "items": {"type": "string"}}
+          }
         },
         "allOf": [
           {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
-           "then": {"properties": {"concerns": {"minItems": 1}}}},
-          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
-           "then": {"required": ["attestation"],
-                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+           "then": {"properties": {"concerns": {"minItems": 1}}}}
         ]
       }
 
   tool PersistYagniVerdict
     label: "Persist YAGNI Verdict"
     timeout: 5s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_yagni_verdict.sh
 
   agent SquadTestability
@@ -295,10 +287,10 @@ workflow DevLoop
         "title": "Verdict",
         "type": "object",
         "additionalProperties": false,
-        "required": ["persona","verdict","summary","concerns"],
+        "required": ["persona","verdict","summary","concerns","coverage_delta_acceptable","test_deletions"],
         "properties": {
-          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
-          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "persona": {"const": "testability"},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK"]},
           "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
           "concerns": {
             "type": "array",
@@ -315,22 +307,19 @@ workflow DevLoop
               }
             }
           },
-          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
           "coverage_delta_acceptable": {"type": "boolean"},
-          "test_deletions": {"type": "array", "items": {"type": "string"}}
+          "test_deletions": {"type": "array", "items": {"type": "string", "minLength": 1}}
         },
         "allOf": [
           {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
-           "then": {"properties": {"concerns": {"minItems": 1}}}},
-          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
-           "then": {"required": ["attestation"],
-                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+           "then": {"properties": {"concerns": {"minItems": 1}}}}
         ]
       }
 
   tool PersistTestabilityVerdict
     label: "Persist Testability Verdict"
     timeout: 5s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_testability_verdict.sh
 
   agent SquadHolistic
@@ -353,8 +342,8 @@ workflow DevLoop
         "additionalProperties": false,
         "required": ["persona","verdict","summary","concerns"],
         "properties": {
-          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
-          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "persona": {"const": "holistic"},
+          "verdict": {"type": "string", "enum": ["PASS","BLOCK"]},
           "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
           "concerns": {
             "type": "array",
@@ -370,23 +359,18 @@ workflow DevLoop
                 "recommendation": {"type": "string", "minLength": 5}
               }
             }
-          },
-          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
-          "coverage_delta_acceptable": {"type": "boolean"},
-          "test_deletions": {"type": "array", "items": {"type": "string"}}
+          }
         },
         "allOf": [
           {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
-           "then": {"properties": {"concerns": {"minItems": 1}}}},
-          {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
-           "then": {"required": ["attestation"],
-                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+           "then": {"properties": {"concerns": {"minItems": 1}}}}
         ]
       }
 
   tool PersistHolisticVerdict
     label: "Persist Holistic Verdict"
     timeout: 5s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_holistic_verdict.sh
 
   agent SquadBlocker
@@ -409,8 +393,8 @@ workflow DevLoop
         "additionalProperties": false,
         "required": ["persona","verdict","summary","concerns"],
         "properties": {
-          "persona": {"type": "string", "enum": ["pragmatism","yagni","testability","holistic","blocker"]},
-          "verdict": {"type": "string", "enum": ["PASS","BLOCK","ATTEST"]},
+          "persona": {"const": "blocker"},
+          "verdict": {"type": "string", "enum": ["BLOCK","ATTEST"]},
           "summary": {"type": "string", "minLength": 20, "maxLength": 2000},
           "concerns": {
             "type": "array",
@@ -427,22 +411,21 @@ workflow DevLoop
               }
             }
           },
-          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}},
-          "coverage_delta_acceptable": {"type": "boolean"},
-          "test_deletions": {"type": "array", "items": {"type": "string"}}
+          "attestation": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+(-[0-9]+)?$"}}
         },
         "allOf": [
           {"if": {"properties": {"verdict": {"const": "BLOCK"}}, "required": ["verdict"]},
            "then": {"properties": {"concerns": {"minItems": 1}}}},
           {"if": {"properties": {"verdict": {"const": "ATTEST"}}, "required": ["verdict"]},
            "then": {"required": ["attestation"],
-                    "properties": {"persona": {"const": "blocker"}, "attestation": {"minItems": 3}}}}
+                    "properties": {"attestation": {"minItems": 3}}}}
         ]
       }
 
   tool PersistBlockerVerdict
     label: "Persist Blocker Verdict"
     timeout: 5s
+    fallback_target: CleanupWorktree
     command_file: scripts/persist_blocker_verdict.sh
 
   # fan_in source set must match the parallel target set (dippin DIP007).
@@ -504,6 +487,7 @@ workflow DevLoop
   tool PersistSynthesis
     label: "Persist Synthesis"
     timeout: 10s
+    fallback_target: CleanupWorktree
     marker_grep: '^synthesized-(approved|changes_requested|abandoned)$'
     command_file: scripts/persist_synthesis.sh
 
