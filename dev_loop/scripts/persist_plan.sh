@@ -44,7 +44,7 @@ printf 'persisted-plan'
 plan_text=$(cat "${target}")
 cat <<DATA
 
----PLAN_BEGIN---
+<plan>
 ${plan_text}
----PLAN_END---
+</plan>
 DATA

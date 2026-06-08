@@ -91,10 +91,11 @@ exit 0'
   [ "${status}" -eq 0 ]
   [ "${lines[0]}" = "pr-context-ok" ]
   [ "$(cat "${RUN_DIR}/pr_head_sha.txt")" = "sha-now" ]
-  # The stdout embeds the diff + plan + feedback sections for the reviewers.
-  printf '%s\n' "${output}" | grep -q -- "---PR_DIFF_BEGIN---"
-  printf '%s\n' "${output}" | grep -q -- "---PLAN_BEGIN---"
-  printf '%s\n' "${output}" | grep -q -- "---FEEDBACK_BEGIN---"
+  # The stdout embeds the diff + plan + feedback + repo_conventions sections for the reviewers.
+  printf '%s\n' "${output}" | grep -q -- "<pr_diff>"
+  printf '%s\n' "${output}" | grep -q -- "<plan>"
+  printf '%s\n' "${output}" | grep -q -- "<feedback>"
+  printf '%s\n' "${output}" | grep -q -- "<repo_conventions>"
 }
 
 @test "fetch_pr_context emits pr-merged-externally when state=MERGED" {

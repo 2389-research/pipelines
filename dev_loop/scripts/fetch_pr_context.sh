@@ -49,23 +49,41 @@ gh pr diff "${pr_num}" > "${RUN_DIR}/pr_diff.txt" 2>/dev/null || true
 # Emit the marker first so marker_grep (which anchors on whole lines) extracts
 # it as ctx.tool_marker. The rest of stdout becomes ctx.tool_stdout and
 # downstream agents see it via ctx.last_response (auto-injected into their
-# prompts at summary:medium fidelity). Section delimiters are read by the
-# shared squad/task.md prompt.
+# prompts at summary:medium fidelity).
+#
+# Sections are XML-tagged. repo_conventions is loaded from
+# dev_loop/config/repo_conventions.md so the squad personas stay universal
+# (no project-specific knowledge baked into the persona prompts themselves).
 printf 'pr-context-ok'
 diff_text=$(cat "${RUN_DIR}/pr_diff.txt" 2>/dev/null || true)
 plan_text=$(cat "${RUN_DIR}/plan.json" 2>/dev/null || printf '{}')
 feedback_text=$(cat "${RUN_DIR}/feedback.json" 2>/dev/null || printf '[]')
+
+# Locate the conventions file relative to the .dip's script dir. tracker's
+# workdir is typically the repo root, so this resolves there. Falls back to
+# a minimal stub if missing so reviewers still get a verdict.
+conventions_path="dev_loop/config/repo_conventions.md"
+if [ -f "${conventions_path}" ]; then
+  conventions_text=$(cat "${conventions_path}")
+else
+  conventions_text='(no repo_conventions.md found; reviewers, fall back to general programming sense and the plan + diff)'
+fi
+
 cat <<DATA
 
----PR_DIFF_BEGIN---
+<pr_diff>
 ${diff_text}
----PR_DIFF_END---
+</pr_diff>
 
----PLAN_BEGIN---
+<plan>
 ${plan_text}
----PLAN_END---
+</plan>
 
----FEEDBACK_BEGIN---
+<feedback>
 ${feedback_text}
----FEEDBACK_END---
+</feedback>
+
+<repo_conventions>
+${conventions_text}
+</repo_conventions>
 DATA

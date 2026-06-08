@@ -69,11 +69,13 @@ fi
 
 # Emit marker first; SelectNextIssue agent (tool_access: none) reads the
 # filtered issue list via ctx.last_response (auto-injected into its prompt).
+# Anthropic/Gemini prompt guidance both recommend XML tags over text fences
+# for parser reliability with long-context structured inputs.
 printf 'filter-ok'
 issues_text=$(cat "${RUN_DIR}/filtered_issues.json")
 cat <<DATA
 
----FILTERED_ISSUES_BEGIN---
+<filtered_issues>
 ${issues_text}
----FILTERED_ISSUES_END---
+</filtered_issues>
 DATA

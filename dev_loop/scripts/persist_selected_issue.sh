@@ -36,12 +36,33 @@ mv "${target}.tmp" "${target}"
 # Surface the issue number into a sidecar file for downstream scripts that need it.
 jq -r '.issue_number' "${target}" > "${RUN_DIR}/selected_issue_number.txt"
 
-# PlanMinimalPRs (tool_access: none) reads the selected issue via ctx.last_response.
+# PlanMinimalPRs (tool_access: none) reads the selected issue via ctx.last_response
+# plus a repo snapshot so it can ground changes[].path values against files that
+# actually exist (otherwise the planner fabricates paths).
 printf 'persisted-selected'
 selected_text=$(cat "${target}")
+
+# repo_tree: top-level dirs + recently-touched files. Cap at ~200 entries each
+# to keep prompt overhead bounded. Run from $(pwd) which is tracker's workdir
+# (the repo root).
+repo_top=""
+if [ -d .git ]; then
+  repo_top=$(git ls-tree --name-only HEAD 2>/dev/null | head -100)
+  repo_recent=$(git log -50 --pretty=format: --name-only 2>/dev/null \
+    | sed '/^$/d' | sort -u | head -100)
+fi
+
 cat <<DATA
 
----SELECTED_ISSUE_BEGIN---
+<selected_issue>
 ${selected_text}
----SELECTED_ISSUE_END---
+</selected_issue>
+
+<repo_tree>
+top-level entries:
+${repo_top}
+
+most-recently-touched files (last 50 commits):
+${repo_recent:-(no recent activity)}
+</repo_tree>
 DATA
