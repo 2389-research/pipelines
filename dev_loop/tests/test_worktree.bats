@@ -75,6 +75,27 @@ teardown() {
   [ ! -e "${WORKDIR}/.dev_loop_worktree" ]
 }
 
+@test "cleanup_worktree refuses path-traversal escape from RUN_DIR" {
+  # Stage an "innocent bystander" directory outside RUN_DIR that must NOT be
+  # touched. Then plant a malicious worktree.path that lexically passes the
+  # `${RUN_DIR}/worktree` prefix check but resolves via .. to the bystander.
+  bystander="${WORKDIR}/bystander"
+  mkdir -p "${bystander}"
+  echo "important data" > "${bystander}/keep.txt"
+  # rel path that lexically starts with ${RUN_DIR}/worktree but escapes via ..
+  mkdir -p "${RUN_DIR}/worktree"
+  printf '%s' "${RUN_DIR}/worktree/../../bystander" > "${RUN_DIR}/worktree.path"
+
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+  # Bystander dir + file must survive — readlink -f canonicalization caught
+  # the traversal.
+  [ -d "${bystander}" ]
+  [ -f "${bystander}/keep.txt" ]
+  grep -q "refused to clean unsafe path" "${RUN_DIR}/cleanup_log.txt"
+}
+
 @test "cleanup_worktree is idempotent (no worktree)" {
   run sh -c "$(cat "${CLEANUP}")"
   [ "${status}" -eq 0 ]

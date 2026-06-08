@@ -28,12 +28,17 @@ fi
 
 if [ -n "${RUN_DIR}" ] && [ -f "${RUN_DIR}/worktree.path" ]; then
   worktree_path=$(cat "${RUN_DIR}/worktree.path")
-  # Validate the path is inside RUN_DIR before destructive removal. A
-  # corrupted worktree.path file (or a malicious override) could otherwise
-  # delete arbitrary directories. create_worktree.sh always writes
-  # "${RUN_DIR}/worktree", so anything else is rejected.
-  expected_prefix="${RUN_DIR}/worktree"
-  case "${worktree_path}" in
+  # Canonicalize both paths before the prefix check. A naive `case` against
+  # the lexical string lets traversal segments like
+  # "${RUN_DIR}/worktree/../../somewhere" pass the prefix check while
+  # actually pointing outside RUN_DIR — `rm -rf` would then delete the
+  # wrong thing. `readlink -f` resolves both symlinks AND `..` segments
+  # before comparison. Linux-only, which matches dev_loop's existing pin.
+  expected_prefix=$(readlink -f "${RUN_DIR}/worktree" 2>/dev/null \
+                    || printf '%s' "${RUN_DIR}/worktree")
+  canonical_path=$(readlink -f "${worktree_path}" 2>/dev/null \
+                   || printf '%s' "${worktree_path}")
+  case "${canonical_path}" in
     "${expected_prefix}"|"${expected_prefix}"/*)
       if [ -d "${worktree_path}" ]; then
         git worktree remove --force "${worktree_path}" 2>/dev/null \
@@ -43,8 +48,8 @@ if [ -n "${RUN_DIR}" ] && [ -f "${RUN_DIR}/worktree.path" ]; then
         >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
       ;;
     *)
-      printf 'refused to clean unsafe path %s (not under %s)\n' \
-        "${worktree_path}" "${expected_prefix}" \
+      printf 'refused to clean unsafe path %s (canonical=%s; not under %s)\n' \
+        "${worktree_path}" "${canonical_path}" "${expected_prefix}" \
         >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
       ;;
   esac

@@ -92,6 +92,21 @@ stage_response() {
   [ "${persona}" = "pragmatism" ]
 }
 
+@test "env file present with missing/invalid TRACKER_RUN_DIR fails closed (no mtime fallback)" {
+  # The contract: when setup_run.sh has written an env file, we MUST honor
+  # TRACKER_RUN_DIR from it. If the env file is corrupted (TRACKER_RUN_DIR
+  # missing or pointing at a non-existent dir), falling back to the mtime
+  # heuristic would silently route to whichever .tracker/runs/ dir is newest
+  # — defeating the concurrency-isolation guarantee. Stage an env file
+  # without TRACKER_RUN_DIR + a perfectly-readable mtime-fallback target; the
+  # script must still exit non-zero.
+  mkdir -p "${TRACKER_RUN}/SquadPragmatism"
+  cp "${FIXTURES}/verdict_pass.json" "${TRACKER_RUN}/SquadPragmatism/response.md"
+  printf 'GH_REPO=2389-research/pipelines\n' > "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -ne 0 ]
+}
+
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {
   stage_response SquadPragmatism verdict_block.json
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"

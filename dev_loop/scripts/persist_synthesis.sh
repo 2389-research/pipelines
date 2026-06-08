@@ -22,20 +22,29 @@ mkdir -p "${RUN_DIR}"
 # default if the response can't be read.
 trap 'if [ $? -ne 0 ]; then printf "synthesized-abandoned"; exit 0; fi' EXIT
 
-# Prefer the TRACKER_RUN_DIR pinned by setup_run.sh (per-pipeline-invocation
-# isolation). Fall back to the latest-mtime heuristic only when the env file
-# is missing — that path is unsafe under concurrent runs in the same workdir.
-# shellcheck disable=SC1091
-if [ -f "${RUN_DIR}/env" ]; then
-  set -a; . "${RUN_DIR}/env"; set +a
-fi
+# Resolve tracker's active artifact dir. Hard contract:
+#   1. If the per-run env file exists, setup_run.sh ran and was responsible
+#      for pinning TRACKER_RUN_DIR there. If TRACKER_RUN_DIR is then missing
+#      or invalid, something corrupted the env file — falling back to ls -dt
+#      mtime would defeat the concurrency-isolation guarantee and silently
+#      route to whichever run finished most recently. Fail closed.
+#   2. If the env file does not exist (operator invoked us before setup, or
+#      this is a bats fixture without one), use the ls -dt heuristic as a
+#      best-effort discovery.
 TRACKER_ROOT="$(pwd)/.tracker/runs"
-if [ -n "${TRACKER_RUN_DIR:-}" ] && [ -d "${TRACKER_RUN_DIR}" ]; then
-  tracker_run_dir="${TRACKER_RUN_DIR%/}/"
+if [ -f "${RUN_DIR}/env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "${RUN_DIR}/env"
+  set +a
+  if [ -z "${TRACKER_RUN_DIR:-}" ] || [ ! -d "${TRACKER_RUN_DIR}" ]; then
+    tracker_run_dir=""
+  else
+    tracker_run_dir="${TRACKER_RUN_DIR%/}/"
+  fi
 else
   # shellcheck disable=SC2012
-
-tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
+  tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
 fi
 if [ -z "${tracker_run_dir}" ]; then
   printf 'no tracker run dir under %s\n' "${TRACKER_ROOT}" \
