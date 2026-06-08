@@ -9,11 +9,21 @@ if [ -z "${rid}" ]; then exit 1; fi
 RUN_DIR="${DIP_ROOT}/runs/${rid}"
 mkdir -p "${RUN_DIR}"
 
-# Locate tracker's active run dir (latest mtime under <workdir>/.tracker/runs/).
+# Prefer the TRACKER_RUN_DIR pinned by setup_run.sh (per-pipeline-invocation
+# isolation). Fall back to the latest-mtime heuristic only when the env file
+# is missing — that path is unsafe under concurrent runs in the same workdir.
+# shellcheck disable=SC1091
+if [ -f "${RUN_DIR}/env" ]; then
+  set -a; . "${RUN_DIR}/env"; set +a
+fi
 TRACKER_ROOT="$(pwd)/.tracker/runs"
-# shellcheck disable=SC2012
+if [ -n "${TRACKER_RUN_DIR:-}" ] && [ -d "${TRACKER_RUN_DIR}" ]; then
+  tracker_run_dir="${TRACKER_RUN_DIR%/}/"
+else
+  # shellcheck disable=SC2012
 
 tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
+fi
 if [ -z "${tracker_run_dir}" ]; then
   printf 'no tracker run dir under %s\n' "${TRACKER_ROOT}" \
     > "${RUN_DIR}/persist_testability_error.txt"

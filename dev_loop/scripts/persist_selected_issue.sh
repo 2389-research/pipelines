@@ -9,10 +9,21 @@ if [ -z "${rid}" ]; then exit 1; fi
 RUN_DIR="${DIP_ROOT}/runs/${rid}"
 mkdir -p "${RUN_DIR}"
 
+# Prefer the TRACKER_RUN_DIR pinned by setup_run.sh (per-pipeline-invocation
+# isolation). Fall back to the latest-mtime heuristic only when the env file
+# is missing — that path is unsafe under concurrent runs in the same workdir.
+# shellcheck disable=SC1091
+if [ -f "${RUN_DIR}/env" ]; then
+  set -a; . "${RUN_DIR}/env"; set +a
+fi
 TRACKER_ROOT="$(pwd)/.tracker/runs"
-# shellcheck disable=SC2012
+if [ -n "${TRACKER_RUN_DIR:-}" ] && [ -d "${TRACKER_RUN_DIR}" ]; then
+  tracker_run_dir="${TRACKER_RUN_DIR%/}/"
+else
+  # shellcheck disable=SC2012
 
 tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
+fi
 if [ -z "${tracker_run_dir}" ]; then
   printf 'no tracker run dir under %s\n' "${TRACKER_ROOT}" \
     > "${RUN_DIR}/persist_selected_error.txt"
@@ -33,7 +44,17 @@ if ! jq '.' < "${response}" > "${target}.tmp" 2> "${RUN_DIR}/persist_selected_er
 fi
 mv "${target}.tmp" "${target}"
 
-# Surface the issue number into a sidecar file for downstream scripts that need it.
+# Surface the issue number into a sidecar file. Validate it is a positive
+# integer BEFORE writing — create_worktree and push_and_open_pr substitute
+# this value into branch names and commit messages, and `jq -r` emits the
+# literal "null" for a missing or null field, which would silently break
+# downstream interpolation.
+if ! jq -e '.issue_number | type == "number" and . > 0 and . == floor' "${target}" \
+     >/dev/null 2>"${RUN_DIR}/persist_selected_error.txt"; then
+  printf 'selected_issue.issue_number is missing, non-numeric, or non-positive\n' \
+    >> "${RUN_DIR}/persist_selected_error.txt"
+  exit 1
+fi
 jq -r '.issue_number' "${target}" > "${RUN_DIR}/selected_issue_number.txt"
 
 # PlanMinimalPRs (tool_access: none) reads the selected issue via ctx.last_response

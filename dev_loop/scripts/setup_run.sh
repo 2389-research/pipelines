@@ -56,11 +56,27 @@ if [ -n "${missing}" ]; then
   emit_failure "missing required commands: ${missing}"
 fi
 
-# GH_REPO lock — downstream `gh` invocations source this env file.
+# Discover tracker's per-invocation artifact dir NOW (at pipeline start) so
+# downstream persist scripts can address it explicitly rather than via
+# ls -dt mtime — which would clash with any concurrent tracker run in the
+# same workdir. tracker creates <workdir>/.tracker/runs/<runID>/ when it
+# starts, so by the time SetupRun executes the dir already exists and is
+# the newest under .tracker/runs.
+TRACKER_ROOT="$(pwd)/.tracker/runs"
+# shellcheck disable=SC2012
+tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
+# Strip the trailing slash for cleaner env-file output.
+tracker_run_dir=${tracker_run_dir%/}
+
+# GH_REPO lock + per-run identity — downstream `gh` invocations and persist
+# scripts source this env file.
 {
   printf 'GH_REPO=2389-research/pipelines\n'
   printf 'DEV_LOOP_RUN_ID=%s\n' "${rid}"
   printf 'DEV_LOOP_RUN_DIR=%s\n' "${run_dir}"
+  if [ -n "${tracker_run_dir}" ]; then
+    printf 'TRACKER_RUN_DIR=%s\n' "${tracker_run_dir}"
+  fi
 } > "${run_dir}/env"
 
 printf 'setup-ok'

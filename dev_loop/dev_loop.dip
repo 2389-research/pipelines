@@ -13,13 +13,15 @@ workflow DevLoop
 
   # ── PHASE 1: pick + plan (linear) ──────────────────────────────────────────
 
-  agent Start
+  # Start/Exit are tool passthroughs per `docs/agent-node-safety.md`. An
+  # `agent` Start with a `prompt:` body triggers the v0.28.2 anti-pattern
+  # (full LLM session for a no-op acknowledgement). The tool form is
+  # deterministic, free, and the safety doc's stated preference.
+  tool Start
     label: Start
-    max_turns: 1
-    tool_access: none
-    prompt:
-      Acknowledge that the dev_loop pipeline is starting. Report ready status.
-      Your ONLY job is to acknowledge. Do not read, write, or run anything.
+    timeout: 5s
+    command:
+      printf 'dev-loop-start'
 
   tool SetupRun
     label: "Setup Run"
@@ -541,13 +543,11 @@ workflow DevLoop
     marker_grep: '^ratcheted$'
     command_file: scripts/ratchet_log.sh
 
-  agent Exit
+  tool Exit
     label: Exit
-    max_turns: 1
-    tool_access: none
-    prompt:
-      The dev_loop pipeline is complete. Report final status.
-      Your ONLY job is to acknowledge completion. Do not read, write, or run anything.
+    timeout: 5s
+    command:
+      printf 'dev-loop-complete'
 
   # ── EDGES ──────────────────────────────────────────────────────────────────
 

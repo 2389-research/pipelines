@@ -72,6 +72,26 @@ stage_response() {
   [ "${output}" = "persisted-holistic" ]
 }
 
+@test "TRACKER_RUN_DIR env var takes precedence over mtime fallback" {
+  # Stage TWO tracker run dirs; the older one carries the verdict, the newer
+  # one is empty. Without explicit TRACKER_RUN_DIR the mtime heuristic would
+  # pick the newer (wrong) dir. Set env to point at the older one and verify
+  # the persister reads from there.
+  older="${WORKDIR}/.tracker/runs/trk-older"
+  newer="${WORKDIR}/.tracker/runs/trk-newer"
+  mkdir -p "${older}/SquadPragmatism"
+  cp "${FIXTURES}/verdict_pass.json" "${older}/SquadPragmatism/response.md"
+  sleep 1
+  mkdir -p "${newer}"
+  printf 'TRACKER_RUN_DIR=%s\n' "${older}" > "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "persisted-pragmatism" ]
+  # Verify it read from the explicitly-pinned older dir, not the mtime-newer one.
+  persona="$(jq -r '.persona' "${RUN_DIR}/verdict_pragmatism.json")"
+  [ "${persona}" = "pragmatism" ]
+}
+
 @test "missing response.md exits non-zero with error file" {
   # No stage_response call -> response.md missing.
   mkdir -p "${TRACKER_RUN}/SquadPragmatism"   # keep tracker_run_dir resolvable
