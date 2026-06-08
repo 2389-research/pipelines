@@ -61,14 +61,30 @@ trap 'rc=$?; if [ "${rc}" -ne 0 ]; then
 # this, a second `tracker dev_loop/dev_loop.dip` started in the same workdir
 # during the early window (after setup_run but before CreateWorktree)
 # overwrites .current_rid and corrupts the first run's RUN_DIR resolution.
-# cleanup_worktree.sh releases the lock at pipeline exit. The lock dir's
-# mtime is used as a staleness signal: anything older than 4 hours is
-# considered abandoned and reclaimed (covers crashed runs that never reached
-# CleanupWorktree).
+# cleanup_worktree.sh releases the lock at pipeline exit.
+#
+# Staleness check: PID-based liveness is the primary signal. At lock acquire
+# we walk up the process tree to find the tracker pid (our grandparent: sh →
+# tracker) and persist it as ${LOCK_DIR}/holder_pid. A second invocation
+# checks `kill -0 <holder_pid>` to see if the holder is still alive. mtime
+# is the fallback when the PID file is missing (e.g., from an older lock
+# format) — set to 4 hours since any well-behaved run reaches
+# CleanupWorktree well before then, but `kill -0` is the real authority.
 LOCK_DIR="${DIP_ROOT}/.dev_loop.lock"
 LOCK_STALE_MIN=240
+lock_holder_alive() {
+  pid_file="${LOCK_DIR}/holder_pid"
+  if [ ! -f "${pid_file}" ]; then
+    # No PID file (older lock format or crash before write). Fall back
+    # to the mtime heuristic.
+    [ -z "$(find "${LOCK_DIR}" -maxdepth 0 -mmin "+${LOCK_STALE_MIN}" 2>/dev/null)" ]
+    return $?
+  fi
+  pid=$(cat "${pid_file}" 2>/dev/null || true)
+  [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null
+}
 if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
-  if [ -n "$(find "${LOCK_DIR}" -maxdepth 0 -mmin "+${LOCK_STALE_MIN}" 2>/dev/null)" ]; then
+  if ! lock_holder_alive; then
     rm -rf "${LOCK_DIR}" 2>/dev/null || true
     mkdir "${LOCK_DIR}"
   else
@@ -83,6 +99,13 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
   fi
 fi
 printf '%s' "${rid}" > "${LOCK_DIR}/rid"
+# Persist the tracker pid (our grandparent: sh -> tracker) so the next
+# invocation's lock_holder_alive check can do `kill -0 <pid>` instead of
+# relying purely on mtime. Linux-only; matches the existing pin.
+tracker_pid=$(awk '/^PPid:/ {print $2}' "/proc/${PPID}/status" 2>/dev/null || true)
+if [ -n "${tracker_pid}" ]; then
+  printf '%s' "${tracker_pid}" > "${LOCK_DIR}/holder_pid"
+fi
 
 mkdir -p "${run_dir}"
 printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"

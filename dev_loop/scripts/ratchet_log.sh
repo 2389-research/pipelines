@@ -53,9 +53,20 @@ if [ -f "${RUN_DIR}/gates_error.txt" ]; then
   notes="gates-fail: $(head -1 "${RUN_DIR}/gates_error.txt")"
 fi
 
+# Sanitize TSV-breaking control characters in every column before writing.
+# A literal tab or newline in any field would break ratchet.tsv's column
+# structure and make downstream parsing unreliable. Replace tab/CR/LF with a
+# single space.
+tsv_safe() { printf '%s' "$1" | tr '\t\r\n' '   '; }
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "${rid}" "${ts}" "${issue}" "${branch}" "${outcome}" "${iters_used}" "${notes}" \
+  "$(tsv_safe "${rid}")" \
+  "${ts}" \
+  "$(tsv_safe "${issue}")" \
+  "$(tsv_safe "${branch}")" \
+  "$(tsv_safe "${outcome}")" \
+  "$(tsv_safe "${iters_used}")" \
+  "$(tsv_safe "${notes}")" \
   >> "${RATCHET}"
 
 printf 'ratcheted'

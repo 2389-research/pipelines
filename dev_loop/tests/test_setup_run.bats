@@ -72,6 +72,29 @@ teardown() {
   [ "${output}" = "setup-resume-required" ]
 }
 
+@test "stale lock with dead holder_pid is reclaimed (not blocked on mtime)" {
+  # Stage a lock dir whose holder_pid points at a process that has been dead
+  # for a long time. The PID-based liveness check must let the next
+  # setup_run reclaim the lock — even though the lock's mtime is fresh
+  # (so the mtime fallback would have wrongly rejected). PID 1 (init) is
+  # always alive, so we use a guaranteed-dead PID: a fresh `false` subshell.
+  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
+  mkdir -p "${DIP_ROOT}/.dev_loop.lock"
+  # Spawn a short-lived child and capture its PID after it exits — that PID
+  # is guaranteed dead by the time we check it.
+  ( exec true ) &
+  dead_pid=$!
+  wait "${dead_pid}" 2>/dev/null || true
+  printf '%s' "${dead_pid}" > "${DIP_ROOT}/.dev_loop.lock/holder_pid"
+  printf 'stale-rid' > "${DIP_ROOT}/.dev_loop.lock/rid"
+
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  [ "${rid}" != "stale-rid" ]
+}
+
 @test "missing .tracker/runs (no tracker artifact dir) routes to setup-failed" {
   # Without staged .tracker/runs/<id>/, tracker_run_dir resolves empty.
   # setup_run.sh must catch this and emit setup-failed with a clear message —

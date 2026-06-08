@@ -26,7 +26,7 @@ teardown() {
 
 write_gh_shim() {
   cat > "${SHIM}/gh" <<EOF
-#!/usr/bin/env bash
+#!/bin/sh
 $1
 EOF
   chmod +x "${SHIM}/gh"
