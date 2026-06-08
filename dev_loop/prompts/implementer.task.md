@@ -1,1 +1,1 @@
-Implement the plan delivered in your prompt context. Address any squad feedback that arrived from a prior iter before making other changes. Commit with a Conventional Commits message and verify the repo's gates pass before stopping.
+Execute the `<plan>` delivered in your prompt context. Address any prior-iter squad feedback before making other changes. Commit with a Conventional Commits message and run the gates the plan's `test_strategy` specifies before stopping.
