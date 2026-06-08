@@ -1,0 +1,117 @@
+name: dev_loop smoke
+
+on:
+  pull_request:
+    paths:
+      - "dev_loop/**"
+      - ".github/workflows/dev_loop_smoke.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "dev_loop/**"
+      - ".github/workflows/dev_loop_smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Set up Node (for ajv-cli)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install bats + shellcheck + jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y bats shellcheck jq
+
+      - name: Install ajv-cli
+        run: sudo npm install -g ajv-cli@5
+
+      - name: Install tracker (bundles dippin)
+        run: |
+          go install github.com/2389-research/tracker/cmd/tracker@latest
+          go install github.com/2389-research/dippin-lang/cmd/dippin@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Print toolchain versions
+        run: |
+          tracker version
+          dippin version
+          bats --version
+          shellcheck --version | head -2
+          ajv --version
+          jq --version
+
+      - name: dippin check
+        run: dippin check dev_loop/dev_loop.dip
+
+      - name: dippin doctor (target Grade A)
+        run: |
+          out=$(dippin doctor dev_loop/dev_loop.dip)
+          echo "$out"
+          grade=$(echo "$out" | sed -nE 's/.*Grade: ([A-F]).*/\1/p' | head -1)
+          if [ "$grade" != "A" ]; then
+            echo "::error::doctor grade $grade (expected A)"
+            exit 1
+          fi
+
+      - name: dippin simulate (mandatory; catches validator B5 blind spot)
+        run: dippin simulate dev_loop/dev_loop.dip > /tmp/simulate.jsonl
+
+      - name: simulate post-check
+        run: |
+          # The last line of simulate output is a human-readable summary
+          # (`path: Start → ...`); filter for the JSON events first.
+          grep '^{' /tmp/simulate.jsonl | tail -1 \
+            | jq -e '.event == "pipeline_end" and .status == "success"'
+
+      - name: tracker validate
+        run: tracker validate dev_loop/dev_loop.dip
+
+      - name: shellcheck (sh dialect) on all scripts + tests
+        run: |
+          shellcheck --shell=sh dev_loop/scripts/*.sh
+          shellcheck --shell=sh dev_loop/tests/test_marker_coverage.sh
+          shellcheck --shell=sh dev_loop/tests/test_branch_model_ids.sh
+
+      - name: ajv validate fixtures against schemas
+        run: |
+          AJV='ajv validate --strict=false'
+          $AJV -s dev_loop/schemas/selected_issue.schema.json \
+               -d dev_loop/tests/fixtures/selected_issue_sample.json
+          $AJV -s dev_loop/schemas/plan.schema.json \
+               -d dev_loop/tests/fixtures/plan_sample.json
+          for f in dev_loop/tests/fixtures/verdict_pass.json \
+                   dev_loop/tests/fixtures/verdict_block.json \
+                   dev_loop/tests/fixtures/verdict_attest_valid.json; do
+            $AJV -s dev_loop/schemas/verdict.schema.json -d "$f"
+          done
+          if $AJV -s dev_loop/schemas/verdict.schema.json \
+                  -d dev_loop/tests/fixtures/verdict_attest_invalid.json 2>/dev/null; then
+            echo "::error::verdict_attest_invalid.json should not validate"
+            exit 1
+          fi
+          for f in dev_loop/tests/fixtures/synthesis_approved.json \
+                   dev_loop/tests/fixtures/synthesis_changes_requested.json; do
+            $AJV -s dev_loop/schemas/synthesis.schema.json -d "$f"
+          done
+
+      - name: bats unit tests
+        run: bats dev_loop/tests/*.bats
+
+      - name: marker coverage (regex <-> literal bijection)
+        run: ./dev_loop/tests/test_marker_coverage.sh
+
+      - name: branch model-ID allowlist
+        run: ./dev_loop/tests/test_branch_model_ids.sh
