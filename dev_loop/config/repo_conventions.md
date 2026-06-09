@@ -50,7 +50,7 @@ out-of-scope list), drop in a different `repo_conventions.md` and update
   edges check `ctx.tool_marker` literal-equality. No regex in edges. Tool
   command_file content runs via `sh -c <content>`; scripts must be POSIX
   (no bash arrays, no `trap ERR`, no `[[ ]]`).
-- Run state: keyed by `${XDG_CACHE_HOME:-$HOME/.cache}/dip/2389-research-pipelines/runs/<rid>/`.
+- Run state: keyed by `${XDG_CACHE_HOME:-$HOME/.cache}/dip/dev_loop/runs/<rid>/` (workflow-keyed; override the parent via `DEV_LOOP_STATE_ROOT` env or YAML `runtime_state_root`).
 - Tracker per-node artifacts: `<workdir>/.tracker/runs/<runID>/<NodeID>/response.md`.
 - Sidecar files under `runs/<rid>/` (e.g. `pr_number.txt`, `branch_name.txt`)
   rather than passing state via `ctx.last_response` between scripts.

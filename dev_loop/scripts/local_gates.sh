@@ -44,8 +44,8 @@ fi
 
 cd "${worktree_path}"
 
-# Collect changed .dip files since main.
-changed_dips=$(git diff --name-only --diff-filter=AM main...HEAD -- '*.dip' 2>/dev/null || true)
+# Collect changed .dip files since BASE_BRANCH (sourced from env via bootstrap).
+changed_dips=$(git diff --name-only --diff-filter=AM "${BASE_BRANCH}...HEAD" -- '*.dip' 2>/dev/null || true)
 
 : > "${RUN_DIR}/gates_log.txt"
 

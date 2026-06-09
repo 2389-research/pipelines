@@ -34,6 +34,7 @@ emit_failure() {
 trap 'if [ $? -ne 0 ]; then printf "fetch-failed"; exit 0; fi' EXIT
 
 if ! gh issue list \
+    --repo "${GH_REPO}" \
     --limit 200 \
     --state open \
     --json number,title,url,labels,author,createdAt,body \
