@@ -1,0 +1,56 @@
+[
+  {
+    "number": 100,
+    "title": "P0: data loss when worktree is interrupted mid-iter",
+    "url": "https://github.com/2389-research/pipelines/issues/100",
+    "labels": [{"name": "P0"}, {"name": "bug"}],
+    "author": {"login": "alice"},
+    "createdAt": "2026-05-30T10:00:00Z",
+    "body": "Repro: kill tracker during iter 3..."
+  },
+  {
+    "number": 99,
+    "title": "P1: stale lock blocks new runs",
+    "url": "https://github.com/2389-research/pipelines/issues/99",
+    "labels": [{"name": "P1"}, {"name": "bug"}],
+    "author": {"login": "bob"},
+    "createdAt": "2026-05-28T12:00:00Z",
+    "body": ""
+  },
+  {
+    "number": 98,
+    "title": "dev_loop meta: bump max_iters default",
+    "url": "https://github.com/2389-research/pipelines/issues/98",
+    "labels": [{"name": "tracking"}],
+    "author": {"login": "carol"},
+    "createdAt": "2026-05-25T09:00:00Z",
+    "body": "Tracker for the dev_loop meta thread."
+  },
+  {
+    "number": 97,
+    "title": "P2: doc nit about config knob",
+    "url": "https://github.com/2389-research/pipelines/issues/97",
+    "labels": [{"name": "P2"}, {"name": "docs"}],
+    "author": {"login": "dependabot[bot]"},
+    "createdAt": "2026-05-24T08:00:00Z",
+    "body": "from a bot, should be filtered out."
+  },
+  {
+    "number": 96,
+    "title": "P3: bumps for fmtcheck",
+    "url": "https://github.com/2389-research/pipelines/issues/96",
+    "labels": [{"name": "P3"}, {"name": "question"}],
+    "author": {"login": "eve"},
+    "createdAt": "2026-05-23T07:00:00Z",
+    "body": "Survey-style question."
+  },
+  {
+    "number": 95,
+    "title": "Unlabeled: think about caching",
+    "url": "https://github.com/2389-research/pipelines/issues/95",
+    "labels": [],
+    "author": {"login": "fred"},
+    "createdAt": "2026-05-22T06:00:00Z",
+    "body": ""
+  }
+]

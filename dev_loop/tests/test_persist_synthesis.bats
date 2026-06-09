@@ -1,0 +1,62 @@
+#!/usr/bin/env bats
+# test_persist_synthesis.bats — covers synthesized-approved | _changes_requested | _abandoned
+# routing markers + synthesis.json / feedback.json persistence.
+
+setup() {
+  load 'test_helpers'
+  setup_env
+  stage_run
+  mkdir -p "${TRACKER_RUN_DIR}/SquadSynthesizer"
+
+  SCRIPT="${BATS_TEST_DIRNAME}/../scripts/persist_synthesis.sh"
+  FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
+}
+
+teardown() {
+  rm -rf "${TMPDIR}"
+}
+
+stage() {
+  cp "${FIXTURES}/$1" "${TRACKER_RUN_DIR}/SquadSynthesizer/response.md"
+}
+
+@test "approved synthesis emits synthesized-approved" {
+  stage synthesis_approved.json
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "synthesized-approved" ]
+  [ -f "${RUN_DIR}/synthesis.json" ]
+  [ -f "${RUN_DIR}/feedback.json" ]
+  feedback_count="$(jq 'length' "${RUN_DIR}/feedback.json")"
+  [ "${feedback_count}" -eq 0 ]
+}
+
+@test "changes_requested synthesis emits synthesized-changes_requested + non-empty feedback" {
+  stage synthesis_changes_requested.json
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "synthesized-changes_requested" ]
+  [ -f "${RUN_DIR}/feedback.json" ]
+  feedback_count="$(jq 'length' "${RUN_DIR}/feedback.json")"
+  [ "${feedback_count}" -ge 1 ]
+}
+
+@test "missing response.md falls back to synthesized-abandoned + exit 0" {
+  rm -f "${TRACKER_RUN_DIR}/SquadSynthesizer/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  # Routing tools MUST exit 0 even on the fallback path. A non-zero exit can
+  # bypass marker_grep routing in the .dip and halt the pipeline mid-flight.
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "synthesized-abandoned" ]
+  [ -f "${RUN_DIR}/persist_synthesis_error.txt" ]
+}
+
+@test "missing rid sentinel exits non-zero" {
+  # The canonical bootstrap fails closed before the trap installs that would
+  # otherwise emit synthesized-abandoned. Missing rid means setup_run did not
+  # run; the pipeline should not have routed here.
+  rm "${DIP_ROOT}/.current_rid"
+  stage synthesis_approved.json
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -ne 0 ]
+}

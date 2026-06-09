@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://2389-research.github.io/pipelines/dev_loop/synthesis.schema.json",
+  "title": "Synthesis",
+  "description": "Output of the SquadSynthesizer agent. Combines the 5 verdicts into a single routing outcome and PR comment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome",
+    "summary",
+    "reasoning",
+    "block_count",
+    "attest_valid",
+    "feedback"
+  ],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["approved", "changes_requested", "abandoned"]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 50,
+      "description": "Markdown body. Persisted to runs/<rid>/synthesis.json and posted as a PR comment by post_squad_comment.sh when outcome=changes_requested. Not appended to merge commits (merge_pr.sh runs `gh pr merge --squash` with no body interpolation)."
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 30,
+      "description": "Synthesizer's per-persona reasoning trail. Used for the ratchet log; not posted to GitHub."
+    },
+    "block_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "attest_valid": {
+      "type": "boolean",
+      "description": "True iff blocker.verdict==ATTEST and len(attestation)>=3."
+    },
+    "feedback": {
+      "type": "array",
+      "description": "Concrete change requests seeded back into the next iter's implementer prompt. Empty when outcome=approved.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persona", "file", "line_range", "description", "recommendation"],
+        "properties": {
+          "persona": {
+            "type": "string",
+            "enum": ["pragmatism", "yagni", "testability", "holistic", "blocker"]
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line_range": {
+            "type": "string",
+            "pattern": "^[0-9]+(-[0-9]+)?$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 5
+          }
+        }
+      }
+    },
+    "abandon_reason": {
+      "type": "string",
+      "minLength": 20,
+      "description": "Required when outcome=abandoned. Explains why no further iteration would help."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "abandoned" } }, "required": ["outcome"] },
+      "then": { "required": ["abandon_reason"] }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "changes_requested" } }, "required": ["outcome"] },
+      "then": { "properties": { "feedback": { "minItems": 1 } } }
+    }
+  ]
+}

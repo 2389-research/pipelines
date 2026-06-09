@@ -1,0 +1,32 @@
+repo: 2389-research/pipelines
+base_branch: main
+# Per-run state lives under "<runtime_state_root>/dev_loop/runs/<rid>/".
+# Uncomment and set to an absolute path to override the built-in default of
+# "${XDG_CACHE_HOME:-${HOME}/.cache}/dip". The script treats this value as a
+# literal path — no shell interpolation. Operators who want env-var anchoring
+# should use the DEV_LOOP_STATE_ROOT env var instead (which overrides this).
+# runtime_state_root: /var/lib/dev_loop
+max_iters: 5
+allow_no_ci: false
+
+issue_filter:
+  priority_label_order: ["P0", "P1", "P2", "P3"]
+  excluded_labels: ["survey", "question", "tracking", "blocked"]
+  excluded_author_globs: ["*[bot]"]
+  excluded_title_regex: "(?i)(dev_loop|dippin meta|tracker meta)"
+
+models:
+  selector: claude-opus-4-6
+  planner: claude-opus-4-6
+  implementer: gpt-5.3-codex
+  squad:
+    pragmatism: claude-opus-4-6
+    yagni: gemini-3.1-pro-preview
+    testability: gpt-5.2
+    holistic: gpt-5.3-codex
+    blocker: claude-opus-4-6
+  synthesizer: claude-opus-4-6
+
+# Reserved for a future repo-level smoke check the implementer must pass before
+# pushing. Empty for v1 — LocalGates runs `dippin check` + `tracker validate`.
+local_test_command: ""

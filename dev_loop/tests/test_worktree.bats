@@ -1,0 +1,137 @@
+#!/usr/bin/env bats
+# test_worktree.bats — covers create_worktree.sh + cleanup_worktree.sh.
+
+setup() {
+  load 'test_helpers'
+  setup_env
+  stage_run
+
+  # Initialize the workdir (helper-staged) as a git repo so create_worktree
+  # can operate on it.
+  git init -q -b main
+  git config user.email "test@example.com"
+  git config user.name "Test"
+  echo "seed" > README.md
+  git add README.md
+  git commit -q -m "seed"
+
+  printf 'fix/42-test-fixture' > "${RUN_DIR}/branch_name.txt"
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+
+  CREATE="${BATS_TEST_DIRNAME}/../scripts/create_worktree.sh"
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+}
+
+teardown() {
+  rm -rf "${TMPDIR}"
+}
+
+@test "create_worktree provisions a worktree on a new branch" {
+  run sh -c "$(cat "${CREATE}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-ok" ]
+  [ -d "${WORKDIR}/.dev_loop_worktree" ]
+  [ -d "${RUN_DIR}/worktree" ]
+  [ -f "${RUN_DIR}/worktree.path" ]
+  branch="$(cd "${WORKDIR}/.dev_loop_worktree" && git branch --show-current)"
+  [ "${branch}" = "fix/42-test-fixture" ]
+}
+
+@test "create_worktree refuses to clobber an existing non-symlink directory at .dev_loop_worktree" {
+  # User foot-gun: an unrelated directory at the symlink path. Script must
+  # NOT rm -rf it. (Earlier versions did.)
+  mkdir "${WORKDIR}/.dev_loop_worktree"
+  echo "important user data" > "${WORKDIR}/.dev_loop_worktree/keep.txt"
+  run sh -c "$(cat "${CREATE}")"
+  [ "${output}" = "worktree-failed" ]
+  # Critical: the user's directory and file are still there.
+  [ -d "${WORKDIR}/.dev_loop_worktree" ]
+  [ ! -L "${WORKDIR}/.dev_loop_worktree" ]
+  [ -f "${WORKDIR}/.dev_loop_worktree/keep.txt" ]
+  grep -q "not a symlink" "${RUN_DIR}/worktree_error.txt"
+}
+
+@test "create_worktree without branch_name.txt fails" {
+  rm "${RUN_DIR}/branch_name.txt"
+  run sh -c "$(cat "${CREATE}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-failed" ]
+  grep -q "missing branch_name" "${RUN_DIR}/worktree_error.txt"
+}
+
+@test "cleanup_worktree removes a created worktree" {
+  run sh -c "$(cat "${CREATE}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-ok" ]
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+  [ ! -e "${WORKDIR}/.dev_loop_worktree" ]
+}
+
+@test "cleanup_worktree refuses path-traversal escape from RUN_DIR" {
+  # Stage an "innocent bystander" directory outside RUN_DIR that must NOT be
+  # touched. Then plant a malicious worktree.path that lexically passes the
+  # `${RUN_DIR}/worktree` prefix check but resolves via .. to the bystander.
+  bystander="${WORKDIR}/bystander"
+  mkdir -p "${bystander}"
+  echo "important data" > "${bystander}/keep.txt"
+  # rel path that lexically starts with ${RUN_DIR}/worktree but escapes via ..
+  mkdir -p "${RUN_DIR}/worktree"
+  printf '%s' "${RUN_DIR}/worktree/../../bystander" > "${RUN_DIR}/worktree.path"
+
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+  # Bystander dir + file must survive — readlink -f canonicalization caught
+  # the traversal.
+  [ -d "${bystander}" ]
+  [ -f "${bystander}/keep.txt" ]
+  grep -q "refused to clean unsafe path" "${RUN_DIR}/cleanup_log.txt"
+}
+
+@test "cleanup_worktree is idempotent (no worktree)" {
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+}
+
+@test "cleanup_worktree retains .current_rid (ratchet_log runs after cleanup)" {
+  # Contract: cleanup_worktree releases the concurrency lock but leaves
+  # .current_rid in place. ratchet_log runs AFTER cleanup in dev_loop.dip
+  # and needs .current_rid to resolve its run_dir. The next setup_run
+  # atomically overwrites .current_rid.
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${DIP_ROOT}/.current_rid" ]
+  # Lock is released so the next setup_run can claim it.
+  [ ! -d "${DIP_ROOT}/.dev_loop.lock" ]
+}
+
+@test "BASE_BRANCH from env drives create_worktree (no main branch)" {
+  cd "${WORKDIR}"
+  git init -q -b develop "${WORKDIR}/upstream"
+  cd "${WORKDIR}/upstream"
+  git config user.email t@t
+  git config user.name t
+  printf 'seed\n' > README.md
+  git add README.md
+  git commit -q -m seed
+  cd "${WORKDIR}"
+  git clone -q "${WORKDIR}/upstream" "${WORKDIR}/work"
+  cd "${WORKDIR}/work"
+  rid="rid-$$"
+  stage_run "${rid}"
+  # Override BASE_BRANCH in the env file to drive create_worktree off develop.
+  sed -i "s/^BASE_BRANCH=.*/BASE_BRANCH='develop'/" "${DIP_ROOT}/runs/${rid}/env"
+  printf 'feat/test-branch' > "${DIP_ROOT}/runs/${rid}/branch_name.txt"
+  printf '999' > "${DIP_ROOT}/runs/${rid}/selected_issue_number.txt"
+  SCRIPT="${BATS_TEST_DIRNAME}/../scripts/create_worktree.sh"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-ok" ]
+  worktree_path="$(cat "${DIP_ROOT}/runs/${rid}/worktree.path")"
+  ( cd "${worktree_path}"
+    [ "$(git rev-parse --abbrev-ref HEAD)" = "feat/test-branch" ]
+    git rev-parse develop >/dev/null 2>&1 )
+}

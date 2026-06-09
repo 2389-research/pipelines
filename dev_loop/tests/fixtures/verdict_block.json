@@ -1,0 +1,14 @@
+{
+  "persona": "yagni",
+  "verdict": "BLOCK",
+  "summary": "The diff adds a `config/writable_paths_overrides.yaml` and a 60-line loader for a single-use override that the issue never asked for. Speculative configurability; delete it and inline the one path.",
+  "concerns": [
+    {
+      "file": "sprint/sprint_exec_yaml_v2.dip",
+      "line_range": "688-694",
+      "severity": "high",
+      "description": "New `writable_paths_overrides` indirection adds a config knob with no caller in this PR.",
+      "recommendation": "Remove the overrides loader and inline the anchored glob directly on the RecoveryManager agent."
+    }
+  ]
+}

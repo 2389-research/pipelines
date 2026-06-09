@@ -1,0 +1,21 @@
+{
+  "issue_number": 42,
+  "branch_name": "fix/42-writable-paths-anchor",
+  "pr_title": "fix(sprint): re-anchor writable_paths glob to session root",
+  "pr_body": "Closes #42.\n\n## Summary\n- Restore the `.ai/sprints/SPRINT-*.md` glob anchor to the tracker session root in `sprint/sprint_exec_yaml_v2.dip`.\n- Add a smoke check to the existing tests/ harness that fails when the anchor is missing.\n\n## Test plan\n- [ ] `dippin check sprint/sprint_exec_yaml_v2.dip` clean\n- [ ] `tracker validate` clean\n- [ ] new bats case covers the anchor regression",
+  "changes": [
+    {
+      "path": "sprint/sprint_exec_yaml_v2.dip",
+      "action": "modify",
+      "summary": "Re-anchor the writable_paths glob on the RecoveryManager agent to the session-rooted path."
+    },
+    {
+      "path": "sprint/tests/test_recovery_paths.bats",
+      "action": "create",
+      "summary": "New regression test that asserts the anchored glob is present and resolves under the session root."
+    }
+  ],
+  "estimated_diff_loc": 60,
+  "risk_class": "low",
+  "test_strategy": "Add a bats regression test that greps for the anchored glob, plus rerun dippin check + tracker validate on the touched file."
+}

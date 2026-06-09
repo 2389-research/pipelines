@@ -1,0 +1,10 @@
+{
+  "issue_number": 7,
+  "title": "feat: add OAuth refresh on token expiry",
+  "url": "https://github.com/acme/widget-service/issues/7",
+  "labels": ["enhancement", "P2"],
+  "priority_label": "P2",
+  "author": "alice",
+  "created_at": "2026-06-09T10:15:00Z",
+  "selection_rationale": "Sample SelectedIssue from a non-2389 repo, used to verify the generalized URL regex accepts owner/name patterns beyond the upstream repo."
+}
