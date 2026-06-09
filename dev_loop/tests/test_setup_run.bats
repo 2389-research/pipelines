@@ -318,3 +318,28 @@ YAML
   ! [ -e "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid.tmp" ]
   ! [ -e "${run_dir}/env.tmp" ]
 }
+
+@test "env file emits only allow-listed keys (drift guard vs comment block)" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+base_branch: main
+YAML
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+
+  # Read the canonical allow-list from setup_run.sh's comment block.
+  # The block is delimited by "Allow-list" header until the next `-----` line.
+  allow=$(awk '/^# Allow-list/,/^# -+$/' "${SCRIPT}" \
+    | tr -d '#' | tr -s ' \n' ' ' | tr ' ' '\n' \
+    | grep -E '^[A-Z][A-Z0-9_]+$' | sort -u)
+  [ -n "${allow}" ]
+
+  # Every key emitted to env must be in the allow-list.
+  emitted=$(awk -F= '/^[A-Z]/ {print $1}' "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env" | sort -u)
+  for key in ${emitted}; do
+    printf '%s\n' "${allow}" | grep -qx "${key}" \
+      || { printf 'env emitted forbidden key: %s\n' "${key}" >&2; return 1; }
+  done
+}
