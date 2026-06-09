@@ -162,9 +162,13 @@ yaml_repo=""
 yaml_base_branch=""
 yaml_allow_no_ci=""
 if [ -f "${CFG}" ]; then
+  # TODO(Task 1.5): the env-write reconstruction must stop emit_failure from
+  # clobbering yq's stderr breadcrumb that lands in setup_error.txt here.
   if ! yaml_repo=$(yq -r '.repo // ""' "${CFG}" 2>"${run_dir}/setup_error.txt"); then
     emit_failure "yq parse failed; see setup_error.txt"
   fi
+  # base_branch and allow_no_ci are resolved + validated here; emission to the
+  # env file lands in Task 1.5 (full atomic write + allow-list).
   yaml_base_branch=$(yq -r '.base_branch // ""' "${CFG}")
   yaml_allow_no_ci=$(yq -r '.allow_no_ci // ""' "${CFG}")
 fi
@@ -188,9 +192,9 @@ reject_special "${yaml_allow_no_ci}" allow_no_ci
 
 # Resolve with precedence env > YAML > default. Track source for the log.
 if [ -n "${GH_REPO:-}" ]; then
-  resolved_repo="${GH_REPO}"; src_repo=env
+  resolved_repo="${GH_REPO}"; src_repo='env'
 elif [ -n "${yaml_repo}" ]; then
-  resolved_repo="${yaml_repo}"; src_repo=yaml
+  resolved_repo="${yaml_repo}"; src_repo='yaml'
 else
   emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
 fi
