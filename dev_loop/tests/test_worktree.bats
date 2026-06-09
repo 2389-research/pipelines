@@ -2,18 +2,12 @@
 # test_worktree.bats — covers create_worktree.sh + cleanup_worktree.sh.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
+  load 'test_helpers'
+  setup_env
+  stage_run
 
-  # Fresh git repo under workdir for worktree to act on.
-  WORKDIR="${TMPDIR}/repo"
-  mkdir -p "${WORKDIR}"
-  cd "${WORKDIR}"
+  # Initialize the workdir (helper-staged) as a git repo so create_worktree
+  # can operate on it.
   git init -q -b main
   git config user.email "test@example.com"
   git config user.name "Test"

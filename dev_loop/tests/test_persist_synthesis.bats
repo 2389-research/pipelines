@@ -3,20 +3,10 @@
 # routing markers + synthesis.json / feedback.json persistence.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
-
-  WORKDIR="${TMPDIR}/workdir"
-  mkdir -p "${WORKDIR}"
-  cd "${WORKDIR}"
-  TRACKER_RID="trk-$$"
-  TRACKER_RUN="${WORKDIR}/.tracker/runs/${TRACKER_RID}"
-  mkdir -p "${TRACKER_RUN}/SquadSynthesizer"
+  load 'test_helpers'
+  setup_env
+  stage_run
+  mkdir -p "${TRACKER_RUN_DIR}/SquadSynthesizer"
 
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/persist_synthesis.sh"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
@@ -27,7 +17,7 @@ teardown() {
 }
 
 stage() {
-  cp "${FIXTURES}/$1" "${TRACKER_RUN}/SquadSynthesizer/response.md"
+  cp "${FIXTURES}/$1" "${TRACKER_RUN_DIR}/SquadSynthesizer/response.md"
 }
 
 @test "approved synthesis emits synthesized-approved" {
@@ -52,7 +42,7 @@ stage() {
 }
 
 @test "missing response.md falls back to synthesized-abandoned + exit 0" {
-  rm -f "${TRACKER_RUN}/SquadSynthesizer/response.md"
+  rm -f "${TRACKER_RUN_DIR}/SquadSynthesizer/response.md"
   run sh -c "$(cat "${SCRIPT}")"
   # Routing tools MUST exit 0 even on the fallback path. A non-zero exit can
   # bypass marker_grep routing in the .dip and halt the pipeline mid-flight.
@@ -61,10 +51,12 @@ stage() {
   [ -f "${RUN_DIR}/persist_synthesis_error.txt" ]
 }
 
-@test "missing rid sentinel falls back to synthesized-abandoned + exit 0" {
+@test "missing rid sentinel exits non-zero" {
+  # The canonical bootstrap fails closed before the trap installs that would
+  # otherwise emit synthesized-abandoned. Missing rid means setup_run did not
+  # run; the pipeline should not have routed here.
   rm "${DIP_ROOT}/.current_rid"
   stage synthesis_approved.json
   run sh -c "$(cat "${SCRIPT}")"
-  [ "${status}" -eq 0 ]
-  [ "${output}" = "synthesized-abandoned" ]
+  [ "${status}" -ne 0 ]
 }

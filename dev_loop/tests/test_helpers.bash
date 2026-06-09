@@ -1,6 +1,6 @@
 # dev_loop/tests/test_helpers.bash — shared bats test fixture helper.
 #
-# Exports ONE function: setup_env().
+# Exports two functions: setup_env() and stage_run().
 #
 # Conventions:
 # - DIP_ROOT (test-side) is an inspection alias for DEV_LOOP_STATE_ROOT
@@ -16,6 +16,7 @@
 #   setup() {
 #     load 'test_helpers'
 #     setup_env
+#     stage_run                              # creates rid + env + .current_rid
 #     SCRIPT="${BATS_TEST_DIRNAME}/../scripts/<name>.sh"
 #   }
 #   teardown() { rm -rf "${TMPDIR}"; }
@@ -35,4 +36,25 @@ setup_env() {
   mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
   cd "${WORKDIR}" || return 1
   mkdir -p "${DIP_ROOT}/runs"
+}
+
+# stage_run [rid] — provision a minimal RUN_DIR + env + .current_rid so the
+# canonical bootstrap (every downstream script's preamble) resolves cleanly.
+# Sets rid, RUN_DIR, TRACKER_RUN_DIR for the caller. Optional first arg
+# overrides the rid (default "t-$$").
+stage_run() {
+  rid="${1:-t-$$}"
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
+  TRACKER_RUN_DIR="${WORKDIR}/.tracker/runs/trk-$$"
+  mkdir -p "${RUN_DIR}" "${TRACKER_RUN_DIR}"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+TRACKER_RUN_DIR='${TRACKER_RUN_DIR}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
 }

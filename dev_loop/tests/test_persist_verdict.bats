@@ -4,22 +4,10 @@
 # verifies the persister copies the verdict JSON to $RUN_DIR/verdict_<persona>.json.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
-
-  # Fake tracker workdir under TMPDIR.
-  WORKDIR="${TMPDIR}/workdir"
-  mkdir -p "${WORKDIR}"
-  cd "${WORKDIR}"
-  TRACKER_RID="trk-$$"
-  TRACKER_RUN="${WORKDIR}/.tracker/runs/${TRACKER_RID}"
-  mkdir -p "${TRACKER_RUN}"
-
+  load 'test_helpers'
+  setup_env
+  stage_run
+  # stage_run set TRACKER_RUN_DIR; reuse it as the persister's tracker root.
   SCRIPTS="${BATS_TEST_DIRNAME}/../scripts"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
 }
@@ -30,8 +18,8 @@ teardown() {
 
 stage_response() {
   # $1 = NodeID (e.g. SquadPragmatism), $2 = fixture filename
-  mkdir -p "${TRACKER_RUN}/$1"
-  cp "${FIXTURES}/$2" "${TRACKER_RUN}/$1/response.md"
+  mkdir -p "${TRACKER_RUN_DIR}/$1"
+  cp "${FIXTURES}/$2" "${TRACKER_RUN_DIR}/$1/response.md"
 }
 
 @test "persist_pragmatism_verdict copies the verdict JSON" {
@@ -72,37 +60,44 @@ stage_response() {
   [ "${lines[0]}" = "persisted-holistic" ]
 }
 
-@test "TRACKER_RUN_DIR env var takes precedence over mtime fallback" {
-  # Stage TWO tracker run dirs; the older one carries the verdict, the newer
-  # one is empty. Without explicit TRACKER_RUN_DIR the mtime heuristic would
-  # pick the newer (wrong) dir. Set env to point at the older one and verify
-  # the persister reads from there.
+@test "TRACKER_RUN_DIR env var pins exact tracker run dir" {
+  # Stage TWO tracker run dirs; the explicitly-pinned one carries the verdict,
+  # the other is empty. Setting TRACKER_RUN_DIR in env points the persister at
+  # the right dir regardless of mtime.
   older="${WORKDIR}/.tracker/runs/trk-older"
   newer="${WORKDIR}/.tracker/runs/trk-newer"
   mkdir -p "${older}/SquadPragmatism"
   cp "${FIXTURES}/verdict_pass.json" "${older}/SquadPragmatism/response.md"
-  sleep 1
   mkdir -p "${newer}"
-  printf 'TRACKER_RUN_DIR=%s\n' "${older}" > "${RUN_DIR}/env"
+  # Overwrite the env file with TRACKER_RUN_DIR pointing at the older dir.
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+TRACKER_RUN_DIR='${older}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   [ "${lines[0]}" = "persisted-pragmatism" ]
-  # Verify it read from the explicitly-pinned older dir, not the mtime-newer one.
   persona="$(jq -r '.persona' "${RUN_DIR}/verdict_pragmatism.json")"
   [ "${persona}" = "pragmatism" ]
 }
 
-@test "env file present with missing/invalid TRACKER_RUN_DIR fails closed (no mtime fallback)" {
+@test "env file present with missing/invalid TRACKER_RUN_DIR fails closed" {
   # The contract: when setup_run.sh has written an env file, we MUST honor
-  # TRACKER_RUN_DIR from it. If the env file is corrupted (TRACKER_RUN_DIR
-  # missing or pointing at a non-existent dir), falling back to the mtime
-  # heuristic would silently route to whichever .tracker/runs/ dir is newest
-  # — defeating the concurrency-isolation guarantee. Stage an env file
-  # without TRACKER_RUN_DIR + a perfectly-readable mtime-fallback target; the
-  # script must still exit non-zero.
-  mkdir -p "${TRACKER_RUN}/SquadPragmatism"
-  cp "${FIXTURES}/verdict_pass.json" "${TRACKER_RUN}/SquadPragmatism/response.md"
-  printf 'GH_REPO=2389-research/pipelines\n' > "${RUN_DIR}/env"
+  # TRACKER_RUN_DIR from it. If it's missing or points at a non-existent dir,
+  # fail closed rather than fall back to mtime (which would route to whichever
+  # .tracker/runs/ dir is newest — defeating concurrency isolation).
+  stage_response SquadPragmatism verdict_pass.json
+  # Rewrite env without TRACKER_RUN_DIR.
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+EOF
+  chmod 600 "${RUN_DIR}/env"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -ne 0 ]
 }
@@ -124,7 +119,7 @@ stage_response() {
 
 @test "missing response.md exits non-zero with error file" {
   # No stage_response call -> response.md missing.
-  mkdir -p "${TRACKER_RUN}/SquadPragmatism"   # keep tracker_run_dir resolvable
+  mkdir -p "${TRACKER_RUN_DIR}/SquadPragmatism"   # keep tracker_run_dir resolvable
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -ne 0 ]
   grep -q "response missing" "${RUN_DIR}/persist_pragmatism_error.txt"

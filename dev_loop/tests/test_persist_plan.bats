@@ -2,23 +2,14 @@
 # test_persist_plan.bats — covers persist_plan.sh + sidecar branch/PR files.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
-
-  WORKDIR="${TMPDIR}/workdir"
-  mkdir -p "${WORKDIR}"
-  cd "${WORKDIR}"
-  TRACKER_RUN="${WORKDIR}/.tracker/runs/trk-$$"
-  mkdir -p "${TRACKER_RUN}/PlanMinimalPRs"
+  load 'test_helpers'
+  setup_env
+  stage_run
+  mkdir -p "${TRACKER_RUN_DIR}/PlanMinimalPRs"
 
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/persist_plan.sh"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
-  cp "${FIXTURES}/plan_sample.json" "${TRACKER_RUN}/PlanMinimalPRs/response.md"
+  cp "${FIXTURES}/plan_sample.json" "${TRACKER_RUN_DIR}/PlanMinimalPRs/response.md"
 }
 
 teardown() {
@@ -42,7 +33,7 @@ teardown() {
   # branch_name (null). Without validation, jq -r would write the literal
   # string "null" into branch_name.txt and create_worktree would try to
   # `git worktree add -b null`. Validation must catch it.
-  cat > "${TRACKER_RUN}/PlanMinimalPRs/response.md" <<'JSON'
+  cat > "${TRACKER_RUN_DIR}/PlanMinimalPRs/response.md" <<'JSON'
 {
   "issue_number": 42,
   "branch_name": null,
@@ -60,7 +51,7 @@ JSON
 }
 
 @test "missing response.md exits non-zero" {
-  rm -f "${TRACKER_RUN}/PlanMinimalPRs/response.md"
+  rm -f "${TRACKER_RUN_DIR}/PlanMinimalPRs/response.md"
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -ne 0 ]
   grep -q "response missing" "${RUN_DIR}/persist_plan_error.txt"

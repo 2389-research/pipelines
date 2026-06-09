@@ -3,16 +3,11 @@
 # Uses a PATH shim to mock `gh` without hitting the network.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
+  load 'test_helpers'
+  setup_env
+  stage_run
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/fetch_open_issues.sh"
   FIXTURE="${BATS_TEST_DIRNAME}/fixtures/issues_sample.json"
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  printf 'GH_REPO=2389-research/pipelines\n' > "${DIP_ROOT}/runs/${rid}/env"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
 
   # PATH shim directory.
   SHIM="${TMPDIR}/bin"
@@ -57,10 +52,9 @@ EOF
   grep -q "jq parse failed" "${RUN_DIR}/fetch_error.txt"
 }
 
-@test "missing rid sentinel routes to fetch-failed" {
+@test "missing rid sentinel exits non-zero" {
   rm "${DIP_ROOT}/.current_rid"
   write_gh_shim "exit 0"
   run sh -c "sh -c \"\$(cat '${SCRIPT}')\" 2>/dev/null"
-  [ "${status}" -eq 0 ]
-  [ "${output}" = "fetch-failed" ]
+  [ "${status}" -ne 0 ]
 }

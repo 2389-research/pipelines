@@ -2,16 +2,11 @@
 # test_pre_filter.bats — covers filter-ok, filter-empty, filter-failed.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
+  load 'test_helpers'
+  setup_env
+  stage_run
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/pre_filter_issues.sh"
   FIXTURE="${BATS_TEST_DIRNAME}/fixtures/issues_sample.json"
-  # Allocate a rid manually so the filter can find its run dir.
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
 }
 
 teardown() {
@@ -63,10 +58,10 @@ teardown() {
 @test "priority label variants (priority/P0, P0 - critical, prio:P1) sort correctly" {
   cat > "${RUN_DIR}/issues.json" <<'JSON'
 [
-  {"number":201,"title":"prio:P1 stuff","url":"https://github.com/2389-research/pipelines/issues/201","labels":[{"name":"prio:P1"}],"author":{"login":"a"},"createdAt":"2026-06-01T00:00:00Z","body":""},
-  {"number":202,"title":"variant","url":"https://github.com/2389-research/pipelines/issues/202","labels":[{"name":"priority/P0"}],"author":{"login":"b"},"createdAt":"2026-06-02T00:00:00Z","body":""},
-  {"number":203,"title":"verbose","url":"https://github.com/2389-research/pipelines/issues/203","labels":[{"name":"P0 - critical"}],"author":{"login":"c"},"createdAt":"2026-06-03T00:00:00Z","body":""},
-  {"number":204,"title":"colon","url":"https://github.com/2389-research/pipelines/issues/204","labels":[{"name":"priority:P2"}],"author":{"login":"d"},"createdAt":"2026-06-04T00:00:00Z","body":""}
+  {"number":201,"title":"prio:P1 stuff","url":"https://github.com/test/test/issues/201","labels":[{"name":"prio:P1"}],"author":{"login":"a"},"createdAt":"2026-06-01T00:00:00Z","body":""},
+  {"number":202,"title":"variant","url":"https://github.com/test/test/issues/202","labels":[{"name":"priority/P0"}],"author":{"login":"b"},"createdAt":"2026-06-02T00:00:00Z","body":""},
+  {"number":203,"title":"verbose","url":"https://github.com/test/test/issues/203","labels":[{"name":"P0 - critical"}],"author":{"login":"c"},"createdAt":"2026-06-03T00:00:00Z","body":""},
+  {"number":204,"title":"colon","url":"https://github.com/test/test/issues/204","labels":[{"name":"priority:P2"}],"author":{"login":"d"},"createdAt":"2026-06-04T00:00:00Z","body":""}
 ]
 JSON
   run sh -c "$(cat "${SCRIPT}")"

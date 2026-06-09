@@ -2,13 +2,9 @@
 # test_ratchet_log.bats
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
-  rid="t-$$"
-  mkdir -p "${DIP_ROOT}/runs/${rid}"
-  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
+  load 'test_helpers'
+  setup_env
+  stage_run
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/ratchet_log.sh"
 }
 
@@ -67,9 +63,11 @@ teardown() {
   awk -F '\t' 'NR>1 && NF != 7 {fail=1} END {exit fail}' "${RATCHET}"
 }
 
-@test "ratchet falls back to latest run dir when .current_rid is gone" {
-  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+@test "missing .current_rid exits non-zero (canonical bootstrap contract)" {
+  # ratchet_log runs after cleanup_worktree drops .current_rid. With the
+  # canonical bootstrap, this is now a hard error — the pipeline must keep
+  # .current_rid alive (or pass DEV_LOOP_RUN_DIR) until ratchet_log finishes.
   rm "${DIP_ROOT}/.current_rid"
   run sh -c "$(cat "${SCRIPT}")"
-  [ "${output}" = "ratcheted" ]
+  [ "${status}" -ne 0 ]
 }
