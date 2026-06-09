@@ -33,12 +33,15 @@ emit_failure() {
 
 trap 'if [ $? -ne 0 ]; then printf "fetch-failed"; exit 0; fi' EXIT
 
-gh issue list \
-  --limit 200 \
-  --state open \
-  --json number,title,url,labels,author,createdAt,body \
-  > "${RUN_DIR}/issues.json.tmp" \
-  || emit_failure "gh issue list failed"
+if ! gh issue list \
+    --limit 200 \
+    --state open \
+    --json number,title,url,labels,author,createdAt,body \
+    > "${RUN_DIR}/issues.json.tmp" \
+    2> "${RUN_DIR}/fetch_error.txt"; then
+  err=$(head -c 500 "${RUN_DIR}/fetch_error.txt" 2>/dev/null)
+  emit_failure "gh issue list failed for ${GH_REPO:-?}: ${err}"
+fi
 
 # Fail closed when gh returned 0 but the JSON is malformed/truncated; the
 # silent `|| printf '0'` fallback would otherwise route to fetched-ok with
