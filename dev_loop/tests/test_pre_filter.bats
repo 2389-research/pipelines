@@ -80,3 +80,29 @@ JSON
   meta_count="$(jq '[.[] | select(.title | test("dev_loop|dippin meta|tracker meta"; "i"))] | length' "${RUN_DIR}/filtered_issues.json")"
   [ "${meta_count}" = "0" ]
 }
+
+@test "YAML excluded_labels override filters out custom labels" {
+  rid="rid-$$"
+  stage_run "${rid}"
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+issue_filter:
+  excluded_labels: ["wontfix"]
+  excluded_title_regex: "(?i)WIP:"
+YAML
+
+  cat > "${DIP_ROOT}/runs/${rid}/issues.json" <<'JSON'
+[
+  {"number":1,"title":"keep me","url":"https://github.com/test/test/issues/1","labels":[{"name":"P1"}],"author":{"login":"a"},"createdAt":"2026-06-01T00:00:00Z","body":""},
+  {"number":2,"title":"WIP: skip","url":"https://github.com/test/test/issues/2","labels":[{"name":"P1"}],"author":{"login":"a"},"createdAt":"2026-06-01T00:00:00Z","body":""},
+  {"number":3,"title":"label skip","url":"https://github.com/test/test/issues/3","labels":[{"name":"wontfix"}],"author":{"login":"a"},"createdAt":"2026-06-01T00:00:00Z","body":""}
+]
+JSON
+
+  SCRIPT="${BATS_TEST_DIRNAME}/../scripts/pre_filter_issues.sh"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  count=$(cat "${DIP_ROOT}/runs/${rid}/filter_count.txt")
+  [ "${count}" = "1" ]
+  jq -e '.[0].number == 1' "${DIP_ROOT}/runs/${rid}/filtered_issues.json"
+}

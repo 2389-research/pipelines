@@ -43,9 +43,15 @@ if [ ! -f "${RUN_DIR}/issues.json" ]; then
   emit_failure "issues.json missing"
 fi
 
-# Filter knobs MUST match config/dev_loop.config.yaml defaults.
-EXCLUDED_LABELS='["survey","question","tracking","blocked"]'
-EXCLUDED_TITLE_RE='(dev_loop|dippin meta|tracker meta)'
+# Filter knobs: read directly from YAML (no env round-trip) per spec §4.6.
+CFG="dev_loop/config/dev_loop.config.yaml"
+if [ -f "${CFG}" ]; then
+  EXCLUDED_LABELS=$(yq -o=json '.issue_filter.excluded_labels // ["survey","question","tracking","blocked"]' "${CFG}")
+  EXCLUDED_TITLE_RE=$(yq -r '.issue_filter.excluded_title_regex // "(dev_loop|dippin meta|tracker meta)"' "${CFG}")
+else
+  EXCLUDED_LABELS='["survey","question","tracking","blocked"]'
+  EXCLUDED_TITLE_RE='(dev_loop|dippin meta|tracker meta)'
+fi
 
 jq --argjson excluded "${EXCLUDED_LABELS}" \
    --arg title_re "${EXCLUDED_TITLE_RE}" '
