@@ -362,6 +362,46 @@ YAML
   done
 }
 
+@test "YAML runtime_state_root drives DIP_ROOT when env unset" {
+  # Stage a YAML with a non-default runtime_state_root.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  # The helper exports DEV_LOOP_STATE_ROOT for test isolation; unset it
+  # so the YAML.runtime_state_root branch is exercised.
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  # Resolution: yaml_state_root + "/dev_loop"
+  effective_root="${custom_root}/dev_loop"
+  [ -f "${effective_root}/.current_rid" ]
+  rid="$(cat "${effective_root}/.current_rid")"
+  grep -qF "DIP_ROOT=${effective_root} (source=yaml)" \
+    "${effective_root}/runs/${rid}/config_resolution.txt"
+}
+
+@test "env DEV_LOOP_STATE_ROOT beats YAML runtime_state_root" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  yaml_root="${TMPDIR}/yaml-state-root"
+  env_root="${TMPDIR}/env-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${yaml_root}
+YAML
+  DEV_LOOP_STATE_ROOT="${env_root}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${env_root}/.current_rid" ]
+  rid="$(cat "${env_root}/.current_rid")"
+  grep -qF "DIP_ROOT=${env_root} (source=env)" \
+    "${env_root}/runs/${rid}/config_resolution.txt"
+}
+
 @test "malformed YAML routes to setup-failed with yq parse error" {
   mkdir -p "${WORKDIR}/dev_loop/config"
   # Syntactically invalid YAML — unclosed flow sequence.

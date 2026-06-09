@@ -1,6 +1,11 @@
 repo: 2389-research/pipelines
 base_branch: main
-runtime_state_root: ${XDG_CACHE_HOME:-$HOME/.cache}/dip
+# Per-run state lives under "<runtime_state_root>/dev_loop/runs/<rid>/".
+# Uncomment and set to an absolute path to override the built-in default of
+# "${XDG_CACHE_HOME:-${HOME}/.cache}/dip". The script treats this value as a
+# literal path — no shell interpolation. Operators who want env-var anchoring
+# should use the DEV_LOOP_STATE_ROOT env var instead (which overrides this).
+# runtime_state_root: /var/lib/dev_loop
 max_iters: 5
 allow_no_ci: false
 

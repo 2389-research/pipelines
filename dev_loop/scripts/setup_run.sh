@@ -17,7 +17,28 @@
 set -eu
 umask 077
 
-DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}"
+# Best-effort early peek at YAML.runtime_state_root so DIP_ROOT can honor
+# the 3-layer precedence env > YAML > default (spec §4.6). The full YAML
+# resolver runs later with strict parse-error handling; this peek is
+# silently lenient — if yq isn't installed yet, or the YAML is malformed,
+# the variant probe + full resolver will catch it downstream.
+yaml_state_root=""
+if [ -f "dev_loop/config/dev_loop.config.yaml" ] && command -v yq >/dev/null 2>&1; then
+  yaml_state_root=$(yq -r '.runtime_state_root // ""' dev_loop/config/dev_loop.config.yaml 2>/dev/null || true)
+  # Newline/CR rejection (reject_special is defined later; inline this minimal check):
+  case ${yaml_state_root} in *"$(printf '\n_')"*|*"$(printf '\r_')"*) yaml_state_root="" ;; esac
+fi
+
+if [ -n "${DEV_LOOP_STATE_ROOT:-}" ]; then
+  DIP_ROOT="${DEV_LOOP_STATE_ROOT}"
+  src_state_root='env'
+elif [ -n "${yaml_state_root}" ]; then
+  DIP_ROOT="${yaml_state_root}/dev_loop"
+  src_state_root='yaml'
+else
+  DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+  src_state_root='default'
+fi
 mkdir -p "${DIP_ROOT}/runs"
 
 # Resume detection: if a prior run still has a worktree, signal the operator
@@ -282,7 +303,7 @@ cat > "${run_dir}/config_resolution.txt" <<EOF
 GH_REPO=${resolved_repo} (source=${src_repo})
 BASE_BRANCH=${resolved_base} (source=${src_base})
 ALLOW_NO_CI=${resolved_allow_no_ci} (source=${src_allow})
-DIP_ROOT=${DIP_ROOT} (source=${DEV_LOOP_STATE_ROOT:+env}${DEV_LOOP_STATE_ROOT:-default})
+DIP_ROOT=${DIP_ROOT} (source=${src_state_root})
 EOF
 chmod 600 "${run_dir}/config_resolution.txt"
 
