@@ -35,6 +35,17 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y bats shellcheck jq
 
+      - name: Install mikefarah/yq v4.44.3
+        run: |
+          set -eu
+          YQ_VER=v4.44.3
+          YQ_SHA=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+          curl -fsSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VER}/yq_linux_amd64"
+          echo "${YQ_SHA}  /tmp/yq" | sha256sum -c -
+          sudo mv /tmp/yq /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          yq --version 2>&1 | grep -qF 'github.com/mikefarah/yq' || { echo "wrong yq variant"; exit 1; }
+
       - name: Install ajv-cli
         run: sudo npm install -g ajv-cli@5
 
@@ -98,6 +109,20 @@ jobs:
           shellcheck --shell=sh dev_loop/scripts/*.sh
           shellcheck --shell=sh dev_loop/tests/test_marker_coverage.sh
           shellcheck --shell=sh dev_loop/tests/test_branch_model_ids.sh
+
+      - name: Bootstrap identity gate
+        run: sh dev_loop/tests/test_bootstrap_identical.sh
+
+      - name: Repo-slug grep gate
+        run: |
+          set -eu
+          # Allowed slug locations: YAML default + repo_conventions.md (operator template) + fixtures.
+          hits=$(grep -rln '2389-research-pipelines\|2389-research/pipelines' dev_loop/ \
+            | grep -v -E '^dev_loop/(config/dev_loop\.config\.yaml|config/repo_conventions\.md|tests/fixtures/)' || true)
+          if [ -n "${hits}" ]; then
+            printf 'Repo-slug leaked outside allowed locations:\n%s\n' "${hits}" >&2
+            exit 1
+          fi
 
       - name: ajv validate fixtures against schemas
         run: |
