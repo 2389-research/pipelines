@@ -1,5 +1,6 @@
-# ABOUTME: Autonomous issue-driven dev loop. Picks the highest-priority open issue from
-# ABOUTME: 2389-research/pipelines, plans minimal PR(s), implements in a git worktree,
+# ABOUTME: Autonomous issue-driven dev loop. Picks the highest-priority open issue
+# ABOUTME: from the configured GitHub repo (GH_REPO env or YAML `repo:`), plans
+# ABOUTME: minimal PR(s), implements in a git worktree,
 # ABOUTME: runs a 5-persona squad review against the PR diff, synthesizes verdicts, and
 # ABOUTME: routes to merge / iterate / abandon under deterministic mechanical gates.
 workflow DevLoop

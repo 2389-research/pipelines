@@ -1,10 +1,11 @@
 # dev_loop
 
-Autonomous issue-driven PR-review squad loop for `2389-research/pipelines`. One
-`.dip` workflow picks the highest-priority open issue, plans a minimal PR,
-implements it in a git worktree, runs a 5-persona squad review against the
-diff, synthesises verdicts, and routes the result to merge / iterate / abandon
-under deterministic mechanical gates.
+dev_loop is an autonomous, issue-driven PR loop you can point at any GitHub
+repository (any language). It picks the highest-priority open issue, plans a
+minimal PR, implements it in a git worktree, runs a 5-persona squad review
+against the diff, and merges or iterates under deterministic gates — no human
+approval per iteration. Configured today for `tracker` as the executor;
+engine-pluggability deferred to pipelines#44.
 
 ## What it does
 
@@ -27,6 +28,52 @@ SetupRun → FetchOpenIssues → PreFilter
         max_iters (5) reached → CleanupWorktree → RatchetLog → Exit
 ```
 
+## Quick start — run against your repo
+
+### Option A — edit YAML (persistent)
+
+```sh
+# 1. From your target repo's root:
+cd ~/code/acme/widget-service
+
+# 2. Drop dev_loop/ into the repo root. The dev_loop/ tree ships from the
+#    pipelines repo (owner: 2389-research, repo: pipelines):
+DEV_LOOP_OWNER=2389-research
+DEV_LOOP_REPO=pipelines
+git clone --depth=1 "https://github.com/${DEV_LOOP_OWNER}/${DEV_LOOP_REPO}.git" /tmp/dl-src
+cp -r /tmp/dl-src/dev_loop ./dev_loop
+rm -rf /tmp/dl-src
+
+# 3. Edit dev_loop/config/repo_conventions.md for your project's commit/test
+#    /idiom conventions. The 5-persona squad reviewers read this as project
+#    context; if absent or unedited, they fall back to generic guidance.
+
+# 4. Edit dev_loop/config/dev_loop.config.yaml:
+#    repo: acme/widget-service
+#    base_branch: main         # or omit to auto-detect via gh
+#    allow_no_ci: false
+
+# 5. Run from the target repo root:
+tracker dev_loop/dev_loop.dip
+
+# 6. After setup-ok, verify the resolved config (one line per knob with
+#    source attribution: env, yaml, default, autodetect):
+cat ${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/runs/$(cat ${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.current_rid)/config_resolution.txt
+```
+
+### Option B — environment variables (per-run override)
+
+```sh
+cd ~/code/acme/widget-service
+# (still cp dev_loop/ into the repo as in Option A step 2)
+# (still edit dev_loop/config/repo_conventions.md as in Option A step 3)
+
+export GH_REPO=acme/widget-service
+export DEV_LOOP_BASE_BRANCH=develop      # optional; auto-detected via gh if unset
+export DEV_LOOP_STATE_ROOT=/tmp/dl       # optional; defaults to ${XDG_CACHE_HOME}/dip/dev_loop
+tracker dev_loop/dev_loop.dip
+```
+
 ## Prerequisites
 
 - **Linux.** `writable_paths` enforcement uses Landlock + openat2, which are
@@ -37,9 +84,22 @@ SetupRun → FetchOpenIssues → PreFilter
   versions reject these as unknown fields).
 - `dippin` is bundled inside `tracker`'s release; `dippin check` and
   `dippin doctor` are both used in CI.
-- `gh` (authenticated against `2389-research/pipelines`).
+- `gh` (authenticated against the target repo).
 - `jq`.
+- `yq` (see callout below).
 - `git`.
+
+> **⚠ yq variant matters**
+>
+> dev_loop requires `mikefarah/yq` v4+ (Go). Ubuntu/Debian's `apt install yq`
+> ships the Python `kislyuk/yq` which uses a different query syntax and will
+> cause setup_run to emit `setup-failed`. Install via:
+> ```sh
+> YQ_VER=v4.44.3
+> curl -fsSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VER}/yq_linux_amd64"
+> sudo mv /tmp/yq /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+> yq --version | grep mikefarah    # verification
+> ```
 
 For developing the workflow itself you also need `bats`, `shellcheck`, and
 `ajv-cli` — see the `dev_loop_smoke.yml` CI workflow for the exact apt/npm
@@ -54,7 +114,7 @@ tracker dev_loop/dev_loop.dip
 ```
 
 State for the run lives under
-`${XDG_CACHE_HOME:-$HOME/.cache}/dip/2389-research-pipelines/runs/<rid>/`. The
+`${XDG_CACHE_HOME:-$HOME/.cache}/dip/dev_loop/runs/<rid>/`. The
 git worktree the implementer writes to is symlinked at
 `./.dev_loop_worktree` so the `writable_paths: .dev_loop_worktree/**` glob
 resolves correctly. tracker's per-node artifacts (the LLM responses each agent
@@ -65,21 +125,34 @@ To resume a run after a process kill, re-invoke `tracker --resume <run-id>`.
 worktree, signaling the operator to use the resume flow rather than starting
 fresh.
 
-## Config
+## Configuration
 
-`config/dev_loop.config.yaml` is the **reference document** for the knobs the
-workflow uses (repo lock, branch base, max_iters, allow_no_ci, model
-assignments, issue-filter rules). v1 does not load the YAML at runtime — the
-same values are duplicated into the shell scripts (filter knobs, GH_REPO),
-the `.dip` (model IDs, `defaults max_restarts`), and `init_iter_counter.sh`
-(`max_iters`). The contract is: when you change a value in the YAML, also
-update its mirror in the script/`.dip` it travels with. Wiring runtime YAML
-loading is a follow-up.
+Resolved at setup time from `dev_loop/config/dev_loop.config.yaml` with
+env-var overrides. Precedence: **env > YAML > built-in default**. Verify
+resolution via `runs/<rid>/config_resolution.txt`.
+
+| Env var | YAML key | Default | What it does |
+|---|---|---|---|
+| `GH_REPO` | `repo` | — (setup-failed if absent) | Target GitHub repo as `owner/name`. |
+| `DEV_LOOP_BASE_BRANCH` | `base_branch` | autodetect via `gh repo view` | Branch to base PRs from. |
+| `DEV_LOOP_STATE_ROOT` | `runtime_state_root` | `${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop` | Per-run state dir. |
+| `DEV_LOOP_ALLOW_NO_CI` | `allow_no_ci` | `false` | Merge when no CI is configured. |
+
+The YAML carries three additional keys that are NOT wired in v1:
+`priority_label_order` (the jq priority function does its own normalize-and-rank
+for P0..P3), `excluded_author_globs` (the filter hardcodes the `[bot]` check), and
+`local_test_command` (reserved for a future repo-level smoke check the
+Implementer must pass before pushing).
+
+The Implementer's pre-push gate commands (`dippin check`, `tracker validate`,
+`bats`) are currently pipelines-specific. Operators with non-shell-script
+repos: expect these to be skipped or reported as mismatches; parameterization
+via `repo_conventions.md` is deferred.
 
 Model IDs must appear in tracker's embedded catalog (`tracker validate <file>`
 prints the allowlist as "known models for <provider>"). The
 `tests/test_branch_model_ids.sh` smoke check enforces this on the per-branch
-overrides too (dippin's lint does not catch per-branch typos).
+overrides too.
 
 ## Failure modes
 
@@ -110,29 +183,42 @@ a prior run's worktree still on disk, so the operator can invoke
 `tracker --resume <run-id>` to pick up where the prior run left off.
 Deleting the worktree there would defeat the resume.
 
-## Notable design choices vs issue #40 v6
+Setup failures write actionable reasons to `runs/<rid>/setup_error.txt`;
+tail it. Common new categories: invalid YAML, missing yq, GH_REPO not
+accessible, base-branch autodetect failure, no repo configured.
 
-- `fan_in SquadJoin` sources match the `SquadFanout` parallel target set
-  (the 5 reviewer agents). Each `Persist*Verdict` runs on the explicit edge
-  between its agent and `SquadJoin`. dippin requires the source/target sets
-  to match (DIP007); the docs' "persist tools as fan_in inputs" phrasing is
-  not realisable in the installed dippin.
-- `PersistSynthesis` branches on the synthesis outcome rather than routing
-  every `synthesized-*` marker through `RecheckPRSHA` (v6 §4's edge would
-  have auto-merged green-CI PRs that the squad asked to revise).
-- `merge-blocked-*` collapsed to a single `merge-blocked` marker; the class
-  goes to `merge_block_reason.txt`. dippin's coverage analyser cannot prove
-  `startswith merge-blocked-` covers a regex with `[a-z_]+`.
-- Per-agent `fallback_target: CleanupWorktree` rather than
-  `defaults on_failure:` — the latter is not in the installed dippin (the
-  feature exists on dippin-lang main but is not in any tagged release we
-  have).
-- Scripts are POSIX `sh` not bash. tracker invokes tool command_file content
-  via `sh -c <content>` and Ubuntu's `/bin/sh` is dash.
-- Markers with numeric suffixes (`fetched-N`, `pr-ready-N`, `iter-N-of-M`)
-  were simplified to literals (`fetched-ok`, `pr-ready`, `iter-next`); the
-  counts live in sidecar files under `runs/<rid>/`. dippin's coverage
-  analyser cannot match `[0-9]+` capture groups against `startswith` edges.
+## What dev_loop does NOT do
+
+- **Branch-protection bypass.** If your branch protection requires reviews,
+  status checks, or signed commits, dev_loop respects them — and may emit
+  `merge-blocked` if it can't merge.
+- **CODEOWNERS approval.** dev_loop doesn't impersonate code owners; if your
+  repo requires owner reviews, expect `merge-blocked`.
+- **Self-review.** dev_loop refuses to review its own dev_loop changes via
+  the issue filter's `excluded_title_regex`.
+- **Test authoring beyond plan.** The Implementer writes only the tests the
+  plan calls for. If your repo needs broader test coverage, file it as an
+  issue.
+- **Secret rotation, token management.** Out of scope.
+
+## Anti-patterns
+
+- **Don't commit secrets to `dev_loop/config/repo_conventions.md`.** The
+  file content flows into agent prompts via `ctx.last_response` — anything
+  there ends up in the LLM context for every PR review.
+- **Don't accept PRs that edit `repo_conventions.md` without review.**
+  `${ctx.last_response}` is a known cross-node prompt-injection vector; a
+  malicious convention edit could steer the Implementer or reviewers. This is
+  a separate threat from accidental secret-leak (which is item 1).
+- **Don't set `allow_no_ci: true` on a repo with branch protection.**
+  The combo means dev_loop will try to merge with no CI signal and get
+  blocked by branch protection late in the pipeline.
+- **Don't run dev_loop on a repo with auto-merge enabled.** Squad-merge
+  and auto-merge race; the squad result may be stale by the time auto-merge
+  fires.
+- **Don't set `DEV_LOOP_STATE_ROOT` to a network mount.** Atomic rename
+  guarantees (used for `.current_rid` and `env` publication) are weaker on
+  NFS/SMB; lost writes can corrupt the run.
 
 ## Layout
 
@@ -169,3 +255,33 @@ dev_loop/
 .github/workflows/
   dev_loop_smoke.yml               — gates the dev_loop tree
 ```
+
+Per-run state (under `${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}/runs/<rid>/`):
+
+- `env` — per-run env file sourced by all scripts (atomic-rename published).
+- `config_resolution.txt` — per-run resolved config log with source
+  attribution (`env` / `yaml` / `default` / `autodetect`) for every knob.
+
+## For workflow authors
+
+- `fan_in SquadJoin` sources match the `SquadFanout` parallel target set
+  (the 5 reviewer agents). Each `Persist*Verdict` runs on the explicit edge
+  between its agent and `SquadJoin`. dippin requires the source/target sets
+  to match (DIP007); the docs' "persist tools as fan_in inputs" phrasing is
+  not realisable in the installed dippin.
+- `PersistSynthesis` branches on the synthesis outcome rather than routing
+  every `synthesized-*` marker through `RecheckPRSHA` (v6 §4's edge would
+  have auto-merged green-CI PRs that the squad asked to revise).
+- `merge-blocked-*` collapsed to a single `merge-blocked` marker; the class
+  goes to `merge_block_reason.txt`. dippin's coverage analyser cannot prove
+  `startswith merge-blocked-` covers a regex with `[a-z_]+`.
+- Per-agent `fallback_target: CleanupWorktree` rather than
+  `defaults on_failure:` — the latter is not in the installed dippin (the
+  feature exists on dippin-lang main but is not in any tagged release we
+  have).
+- Scripts are POSIX `sh` not bash. tracker invokes tool command_file content
+  via `sh -c <content>` and Ubuntu's `/bin/sh` is dash.
+- Markers with numeric suffixes (`fetched-N`, `pr-ready-N`, `iter-N-of-M`)
+  were simplified to literals (`fetched-ok`, `pr-ready`, `iter-next`); the
+  counts live in sidecar files under `runs/<rid>/`. dippin's coverage
+  analyser cannot match `[0-9]+` capture groups against `startswith` edges.
