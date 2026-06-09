@@ -203,3 +203,50 @@ YAML
   grep -q "GH_REPO" "${err}"
   grep -q "dev_loop.config.yaml" "${err}"
 }
+
+@test "BASE_BRANCH autodetect via gh shim" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+YAML
+  shim="${TMPDIR}/shim"
+  mkdir -p "${shim}"
+  # Mock gh repo view to return a non-default branch.
+  cat > "${shim}/gh" <<'GH'
+#!/bin/sh
+case "$1 $2" in
+  "repo view")
+    if printf '%s\n' "$@" | grep -q defaultBranchRef; then
+      printf 'develop\n'
+      exit 0
+    fi ;;
+esac
+exit 1
+GH
+  chmod +x "${shim}/gh"
+  # Real yq/jq/git/tracker passthrough so prereq check passes.
+  ln -sf "$(command -v yq)" "${shim}/yq" 2>/dev/null || true
+  ln -sf "$(command -v jq)" "${shim}/jq" 2>/dev/null || true
+  ln -sf "$(command -v git)" "${shim}/git" 2>/dev/null || true
+  ln -sf "$(command -v tracker)" "${shim}/tracker" 2>/dev/null || true
+  PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  grep -q "^BASE_BRANCH='develop'$" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+  grep -qF "BASE_BRANCH=develop (source=autodetect)" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/config_resolution.txt"
+}
+
+@test "DEV_LOOP_BASE_BRANCH env beats YAML" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+base_branch: master
+YAML
+  DEV_LOOP_BASE_BRANCH=feature/foo run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  grep -q "^BASE_BRANCH='feature/foo'$" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+}

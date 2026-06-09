@@ -199,16 +199,46 @@ else
   emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
 fi
 
-# Per-run env file (resolver continues in Tasks 1.3-1.5; this is the v1 GH_REPO).
+# Resolve BASE_BRANCH with precedence env > YAML > autodetect via gh.
+if [ -n "${DEV_LOOP_BASE_BRANCH:-}" ]; then
+  resolved_base="${DEV_LOOP_BASE_BRANCH}"; src_base='env'
+elif [ -n "${yaml_base_branch}" ]; then
+  resolved_base="${yaml_base_branch}"; src_base='yaml'
+else
+  # Autodetect via gh; timeout caps network hang.
+  autodetect=$(timeout 5s gh repo view "${resolved_repo}" \
+    --json defaultBranchRef -q .defaultBranchRef.name 2>"${run_dir}/setup_error.txt")
+  if [ -z "${autodetect}" ]; then
+    emit_failure "base_branch autodetect failed; set DEV_LOOP_BASE_BRANCH or YAML base_branch (gh stderr in setup_error.txt)"
+  fi
+  resolved_base="${autodetect}"; src_base='autodetect'
+fi
+reject_special "${resolved_base}" base_branch
+
+# Resolve allow_no_ci with precedence env > YAML > "false".
+if [ -n "${DEV_LOOP_ALLOW_NO_CI:-}" ]; then
+  resolved_allow_no_ci="${DEV_LOOP_ALLOW_NO_CI}"; src_allow='env'
+elif [ -n "${yaml_allow_no_ci}" ]; then
+  resolved_allow_no_ci="${yaml_allow_no_ci}"; src_allow='yaml'
+else
+  resolved_allow_no_ci='false'; src_allow='default'
+fi
+
+# Per-run env file (resolver continues in Tasks 1.4-1.5; this is the v1 stop-gap).
 {
   printf "GH_REPO='%s'\n" "${resolved_repo}"
+  printf "BASE_BRANCH='%s'\n" "${resolved_base}"
+  printf "ALLOW_NO_CI='%s'\n" "${resolved_allow_no_ci}"
   printf 'DEV_LOOP_RUN_ID=%s\n' "${rid}"
   printf 'DEV_LOOP_RUN_DIR=%s\n' "${run_dir}"
   printf 'TRACKER_RUN_DIR=%s\n' "${tracker_run_dir}"
 } > "${run_dir}/env"
 
 # Per-run config resolution log (full format pinned in Task 1.5).
-printf 'GH_REPO=%s (source=%s)\n' "${resolved_repo}" "${src_repo}" \
-  > "${run_dir}/config_resolution.txt"
+{
+  printf 'GH_REPO=%s (source=%s)\n' "${resolved_repo}" "${src_repo}"
+  printf 'BASE_BRANCH=%s (source=%s)\n' "${resolved_base}" "${src_base}"
+  printf 'ALLOW_NO_CI=%s (source=%s)\n' "${resolved_allow_no_ci}" "${src_allow}"
+} > "${run_dir}/config_resolution.txt"
 
 printf 'setup-ok'
