@@ -64,9 +64,12 @@ teardown() {
 }
 
 @test "missing .current_rid exits non-zero (canonical bootstrap contract)" {
-  # ratchet_log runs after cleanup_worktree drops .current_rid. With the
-  # canonical bootstrap, this is now a hard error — the pipeline must keep
-  # .current_rid alive (or pass DEV_LOOP_RUN_DIR) until ratchet_log finishes.
+  # Today's pipeline contract: cleanup_worktree intentionally KEEPS
+  # .current_rid so ratchet_log can find run_dir (see test_worktree.bats
+  # "cleanup_worktree retains .current_rid"). This test simulates the
+  # degraded case where .current_rid is missing anyway (e.g. an operator
+  # manually nuked $DIP_ROOT) and asserts the bootstrap fails-closed
+  # rather than silently writing to the wrong place.
   rm "${DIP_ROOT}/.current_rid"
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -ne 0 ]

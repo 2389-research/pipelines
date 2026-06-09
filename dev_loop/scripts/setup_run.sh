@@ -25,8 +25,15 @@ umask 077
 yaml_state_root=""
 if [ -f "dev_loop/config/dev_loop.config.yaml" ] && command -v yq >/dev/null 2>&1; then
   yaml_state_root=$(yq -r '.runtime_state_root // ""' dev_loop/config/dev_loop.config.yaml 2>/dev/null || true)
-  # Newline/CR rejection (reject_special is defined later; inline this minimal check):
-  case ${yaml_state_root} in *"$(printf '\n_')"*|*"$(printf '\r_')"*) yaml_state_root="" ;; esac
+  # Newline/CR rejection (reject_special is defined later; inline this minimal
+  # check). Define NL/CR via the trailing-underscore trick so command
+  # substitution doesn't strip them: `$(printf '\n')` would return empty
+  # because trailing newlines are stripped, so the case pattern would silently
+  # match nothing.
+  _NL_INIT="$(printf '\n_')"; _NL_INIT="${_NL_INIT%_}"
+  _CR_INIT="$(printf '\r_')"; _CR_INIT="${_CR_INIT%_}"
+  case ${yaml_state_root} in *"${_NL_INIT}"*|*"${_CR_INIT}"*) yaml_state_root="" ;; esac
+  unset _NL_INIT _CR_INIT
 fi
 
 if [ -n "${DEV_LOOP_STATE_ROOT:-}" ]; then
@@ -83,6 +90,10 @@ trap 'rc=$?
         mkdir -p "${run_dir}" 2>/dev/null || true
         printf "unexpected non-zero exit (rc=%s)\n" "${rc}" \
           > "${run_dir}/setup_error.txt" 2>/dev/null || true
+        # Publish .current_rid so downstream cleanup/ratchet can find run_dir
+        # even when the trap (not emit_failure) is the marker emitter.
+        printf "%s" "${rid}" > "${DIP_ROOT}/.current_rid.tmp" 2>/dev/null || true
+        mv -Tf "${DIP_ROOT}/.current_rid.tmp" "${DIP_ROOT}/.current_rid" 2>/dev/null || true
         printf "setup-failed"
         exit 0
       fi' EXIT
@@ -169,7 +180,7 @@ date -u +%Y-%m-%dT%H:%M:%SZ > "${run_dir}/started_at.txt"
 
 # Verify prerequisite tooling.
 missing=""
-for cmd in gh jq git tracker yq; do
+for cmd in gh jq git tracker yq timeout; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     missing="${missing}${missing:+ }${cmd}"
   fi
@@ -259,9 +270,14 @@ if [ -n "${DEV_LOOP_BASE_BRANCH:-}" ]; then
 elif [ -n "${yaml_base_branch}" ]; then
   resolved_base="${yaml_base_branch}"; src_base='yaml'
 else
-  # Autodetect via gh; timeout caps network hang.
+  # Autodetect via gh; timeout caps network hang. `|| true` keeps `set -e`
+  # from exiting on gh failure (auth/network/timeout) — POSIX `set -e` DOES
+  # propagate cmd-sub failure to its assignment statement in dash/sh, so
+  # without the `|| true` the EXIT trap would fire instead of the explicit
+  # emit_failure path below.
   autodetect=$(timeout 5s gh repo view "${resolved_repo}" \
-    --json defaultBranchRef -q .defaultBranchRef.name 2>"${run_dir}/setup_error.txt")
+    --json defaultBranchRef -q .defaultBranchRef.name 2>"${run_dir}/setup_error.txt") \
+    || true
   if [ -z "${autodetect}" ]; then
     emit_failure "base_branch autodetect failed; set DEV_LOOP_BASE_BRANCH or YAML base_branch (gh stderr in setup_error.txt)"
   fi

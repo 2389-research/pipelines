@@ -402,6 +402,37 @@ YAML
     "${env_root}/runs/${rid}/config_resolution.txt"
 }
 
+@test "BASE_BRANCH autodetect failure emits actionable setup-failed (not generic trap)" {
+  # gh shim that mimics a network/auth failure (exit non-zero, no stdout).
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+YAML
+  shim="${TMPDIR}/shim"
+  mkdir -p "${shim}"
+  cat > "${shim}/gh" <<'GH'
+#!/bin/sh
+printf 'gh: simulated auth failure\n' >&2
+exit 1
+GH
+  chmod +x "${shim}/gh"
+  ln -sf "$(command -v yq)" "${shim}/yq" 2>/dev/null || true
+  ln -sf "$(command -v jq)" "${shim}/jq" 2>/dev/null || true
+  ln -sf "$(command -v git)" "${shim}/git" 2>/dev/null || true
+  ln -sf "$(command -v tracker)" "${shim}/tracker" 2>/dev/null || true
+  ln -sf "$(command -v timeout)" "${shim}/timeout" 2>/dev/null || true
+  PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  # The actionable emit_failure message must win over the generic trap.
+  grep -q "base_branch autodetect failed" \
+    "${DIP_ROOT}/runs/${rid}/setup_error.txt"
+  # And the message names BOTH knobs the operator can flip.
+  grep -q "DEV_LOOP_BASE_BRANCH" "${DIP_ROOT}/runs/${rid}/setup_error.txt"
+  grep -q "YAML base_branch" "${DIP_ROOT}/runs/${rid}/setup_error.txt"
+}
+
 @test "malformed YAML routes to setup-failed with yq parse error" {
   mkdir -p "${WORKDIR}/dev_loop/config"
   # Syntactically invalid YAML — unclosed flow sequence.
