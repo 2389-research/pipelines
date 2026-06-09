@@ -33,6 +33,6 @@ setup_env() {
         DEV_LOOP_CI_POLL_INTERVAL DEV_LOOP_CI_POLL_TIMEOUT
   WORKDIR="${TMPDIR}/workdir"
   mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
-  cd "${WORKDIR}"
+  cd "${WORKDIR}" || return 1
   mkdir -p "${DIP_ROOT}/runs"
 }

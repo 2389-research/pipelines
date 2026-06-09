@@ -2,36 +2,41 @@
 # test_setup_run.bats — covers setup-ok, setup-resume-required, setup-failed.
 
 setup() {
-  TMPDIR="$(mktemp -d)"
-  export XDG_CACHE_HOME="${TMPDIR}/cache"
-  # Move into a fresh workdir + stage a .tracker/runs/<runID>/ dir to mimic
-  # tracker's normal startup. setup_run.sh now requires this to be present.
-  WORKDIR="${TMPDIR}/workdir"
-  mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
-  cd "${WORKDIR}"
+  load 'test_helpers'
+  setup_env
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/setup_run.sh"
 }
 
-teardown() {
-  rm -rf "${TMPDIR}"
-}
+teardown() { rm -rf "${TMPDIR}"; }
 
-@test "first run emits setup-ok and seeds .current_rid" {
+@test "first run emits setup-ok and seeds .current_rid (from YAML)" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
-  [ -f "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  [ -f "${DIP_ROOT}/.current_rid" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
   [ -n "${rid}" ]
-  [ -f "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/env" ]
-  grep -q "^GH_REPO=2389-research/pipelines$" \
-    "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/env"
+  [ -f "${DIP_ROOT}/runs/${rid}/env" ]
+  grep -q "^GH_REPO='fixture-org/fixture-repo'$" \
+    "${DIP_ROOT}/runs/${rid}/env"
+  grep -qF "GH_REPO=fixture-org/fixture-repo (source=yaml)" \
+    "${DIP_ROOT}/runs/${rid}/config_resolution.txt"
 }
 
 @test "second run after cleanup allocates a fresh rid" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid_a="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  rid_a="$(cat "${DIP_ROOT}/.current_rid")"
   # Mimic the pipeline reaching CleanupWorktree (releases the concurrency
   # lock + .current_rid). Then a second invocation starts fresh.
   CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
@@ -40,7 +45,7 @@ teardown() {
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
-  rid_b="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  rid_b="$(cat "${DIP_ROOT}/.current_rid")"
   [ "${rid_a}" != "${rid_b}" ]
 }
 
@@ -48,11 +53,16 @@ teardown() {
   # First setup_run claims the lock and exits successfully; the lock dir
   # remains because cleanup_worktree has not run yet (this is the very
   # early-phase window the lock exists to protect).
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
-  rid_a="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
-  LOCK_DIR="${XDG_CACHE_HOME}/dip/2389-research-pipelines/.dev_loop.lock"
+  rid_a="$(cat "${DIP_ROOT}/.current_rid")"
+  LOCK_DIR="${DIP_ROOT}/.dev_loop.lock"
   [ -d "${LOCK_DIR}" ]
   # bats's `run` uses a transient subshell, so the PID setup_run.sh wrote to
   # holder_pid (its $PPID, which IS that subshell) has already exited by now.
@@ -66,15 +76,20 @@ teardown() {
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  rid_after="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
+  rid_after="$(cat "${DIP_ROOT}/.current_rid")"
   [ "${rid_after}" = "${rid_a}" ]
 }
 
 @test "prior worktree triggers setup-resume-required" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
-  mkdir -p "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/worktree"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  mkdir -p "${DIP_ROOT}/runs/${rid}/worktree"
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-resume-required" ]
@@ -86,7 +101,11 @@ teardown() {
   # setup_run reclaim the lock — even though the lock's mtime is fresh
   # (so the mtime fallback would have wrongly rejected). PID 1 (init) is
   # always alive, so we use a guaranteed-dead PID: a fresh `false` subshell.
-  DIP_ROOT="${XDG_CACHE_HOME}/dip/2389-research-pipelines"
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
   mkdir -p "${DIP_ROOT}/.dev_loop.lock"
   # Spawn a short-lived child and capture its PID after it exits — that PID
   # is guaranteed dead by the time we check it.
@@ -113,9 +132,9 @@ teardown() {
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
-  grep -q "no tracker run dir" \
-    "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/setup_error.txt"
+  # Atomic publish: .current_rid is NOT written on failure paths.
+  run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
+  grep -q "no tracker run dir" "${run_dir%/}/setup_error.txt"
 }
 
 @test "missing tools route to setup-failed" {
@@ -134,13 +153,13 @@ teardown() {
   done
 
   run env -i HOME="${HOME}" XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      DEV_LOOP_STATE_ROOT="${DEV_LOOP_STATE_ROOT}" \
       PATH="${sysbin}" /bin/sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/2389-research-pipelines/.current_rid")"
-  [ -n "${rid}" ]
-  grep -q "missing required commands" \
-    "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/setup_error.txt"
+  # Atomic publish: .current_rid is NOT written on failure paths.
+  run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
+  grep -q "missing required commands" "${run_dir%/}/setup_error.txt"
 }
 
 @test "wrong-variant yq (kislyuk) routes to setup-failed" {
@@ -160,7 +179,7 @@ YQ
   [ "${output}" = "setup-failed" ]
   # Atomic publish: .current_rid is NOT written on failure paths. Locate the
   # run_dir via the single subdir under runs/ instead.
-  run_dir="$(ls -d "${XDG_CACHE_HOME}/dip/dev_loop/runs/"*/ | head -1)"
+  run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   grep -q "mikefarah" "${run_dir%/}/setup_error.txt"
 }
 
@@ -173,11 +192,11 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
   grep -q "^GH_REPO='test-org/test-repo'$" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+    "${DIP_ROOT}/runs/${rid}/env"
   grep -qF "GH_REPO=test-org/test-repo (source=yaml)" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/config_resolution.txt"
+    "${DIP_ROOT}/runs/${rid}/config_resolution.txt"
 }
 
 @test "env GH_REPO beats YAML" {
@@ -188,11 +207,11 @@ base_branch: main
 YAML
   GH_REPO=env-org/env-repo run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
   grep -q "^GH_REPO='env-org/env-repo'$" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+    "${DIP_ROOT}/runs/${rid}/env"
   grep -qF "GH_REPO=env-org/env-repo (source=env)" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/config_resolution.txt"
+    "${DIP_ROOT}/runs/${rid}/config_resolution.txt"
 }
 
 @test "no repo configured (no env, no YAML) routes to setup-failed" {
@@ -200,7 +219,7 @@ YAML
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
   # Atomic publish: .current_rid is NOT written on failure paths.
-  run_dir="$(ls -d "${XDG_CACHE_HOME}/dip/dev_loop/runs/"*/ | head -1)"
+  run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   err="${run_dir%/}/setup_error.txt"
   grep -q "no repo configured" "${err}"
   grep -q "GH_REPO" "${err}"
@@ -234,11 +253,11 @@ GH
   ln -sf "$(command -v tracker)" "${shim}/tracker" 2>/dev/null || true
   PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
   grep -q "^BASE_BRANCH='develop'$" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+    "${DIP_ROOT}/runs/${rid}/env"
   grep -qF "BASE_BRANCH=develop (source=autodetect)" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/config_resolution.txt"
+    "${DIP_ROOT}/runs/${rid}/config_resolution.txt"
 }
 
 @test "DEV_LOOP_BASE_BRANCH env beats YAML" {
@@ -249,9 +268,9 @@ base_branch: master
 YAML
   DEV_LOOP_BASE_BRANCH=feature/foo run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
   grep -q "^BASE_BRANCH='feature/foo'$" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+    "${DIP_ROOT}/runs/${rid}/env"
 }
 
 @test "atomic env write: env file mode 600, RUN_DIR mode 700, config_resolution.txt format" {
@@ -264,8 +283,8 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
-  run_dir="${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  run_dir="${DIP_ROOT}/runs/${rid}"
   [ "$(stat -c %a "${run_dir}")" = "700" ]
   [ "$(stat -c %a "${run_dir}/env")" = "600" ]
   grep -qE '^GH_REPO=test-org/test-repo \(source=yaml\)$' "${run_dir}/config_resolution.txt"
@@ -283,7 +302,7 @@ YAML
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
   # Atomic publish: .current_rid is NOT written on failure paths.
-  run_dir="$(ls -d "${XDG_CACHE_HOME}/dip/dev_loop/runs/"*/ | head -1)"
+  run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   grep -qi "newline" "${run_dir%/}/setup_error.txt"
 }
 
@@ -296,8 +315,8 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-ok" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
-  ( set -a; . "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"; set +a
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  ( set -a; . "${DIP_ROOT}/runs/${rid}/env"; set +a
     [ "${BASE_BRANCH}" = '$(rm -rf $HOME)' ] )
 }
 
@@ -309,13 +328,13 @@ base_branch: main
 YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
-  run_dir="${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  run_dir="${DIP_ROOT}/runs/${rid}"
   # If .current_rid exists, env must exist and be a regular file.
   [ -f "${run_dir}/env" ]
   [ ! -L "${run_dir}/env" ]
   # No orphan tmp files.
-  ! [ -e "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid.tmp" ]
+  ! [ -e "${DIP_ROOT}/.current_rid.tmp" ]
   ! [ -e "${run_dir}/env.tmp" ]
 }
 
@@ -327,7 +346,7 @@ base_branch: main
 YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
 
   # Read the canonical allow-list from setup_run.sh's comment block.
   # The block is delimited by "Allow-list" header until the next `-----` line.
@@ -337,7 +356,7 @@ YAML
   [ -n "${allow}" ]
 
   # Every key emitted to env must be in the allow-list.
-  emitted=$(awk -F= '/^[A-Z]/ {print $1}' "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env" | sort -u)
+  emitted=$(awk -F= '/^[A-Z]/ {print $1}' "${DIP_ROOT}/runs/${rid}/env" | sort -u)
   for key in ${emitted}; do
     printf '%s\n' "${allow}" | grep -qx "${key}" \
       || { printf 'env emitted forbidden key: %s\n' "${key}" >&2; return 1; }
