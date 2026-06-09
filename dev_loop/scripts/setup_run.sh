@@ -114,13 +114,19 @@ date -u +%Y-%m-%dT%H:%M:%SZ > "${run_dir}/started_at.txt"
 
 # Verify prerequisite tooling.
 missing=""
-for cmd in gh jq git tracker; do
+for cmd in gh jq git tracker yq; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     missing="${missing}${missing:+ }${cmd}"
   fi
 done
 if [ -n "${missing}" ]; then
-  emit_failure "missing required commands: ${missing}"
+  emit_failure "missing required commands: ${missing} (install yq from https://github.com/mikefarah/yq/releases)"
+fi
+
+# Probe yq variant. The Python kislyuk/yq and the Go mikefarah/yq diverge in
+# syntax; we require mikefarah v4+. The --version output contains the URL.
+if ! yq --version 2>&1 | grep -qF 'github.com/mikefarah/yq'; then
+  emit_failure "yq must be mikefarah/yq v4+; got: $(yq --version 2>&1) — install from https://github.com/mikefarah/yq/releases"
 fi
 
 # Discover tracker's per-invocation artifact dir NOW (at pipeline start) so

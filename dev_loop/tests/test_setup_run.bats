@@ -121,11 +121,7 @@ teardown() {
 @test "missing tools route to setup-failed" {
   # Stage a PATH that contains the POSIX utilities setup_run.sh needs for its
   # own work (mkdir, cat, date, printf, ls, find, awk, kill, etc.) but
-  # deliberately omits the dev_loop-required commands (gh, jq, git, tracker).
-  # This is deterministic regardless of where the host installs each tool —
-  # the prior `PATH=/usr/bin:/bin` was brittle: those four are commonly in
-  # /usr/bin on Linux, so the test only "worked" when at least one happened
-  # to be absent.
+  # deliberately omits the dev_loop-required commands (gh, jq, git, tracker, yq).
   sysbin="${TMPDIR}/sysbin-only"
   mkdir -p "${sysbin}"
   for cmd in mkdir cat date printf ls find awk kill chmod rm cp mv tr \
@@ -145,4 +141,23 @@ teardown() {
   [ -n "${rid}" ]
   grep -q "missing required commands" \
     "${XDG_CACHE_HOME}/dip/2389-research-pipelines/runs/${rid}/setup_error.txt"
+}
+
+@test "wrong-variant yq (kislyuk) routes to setup-failed" {
+  # Stage a yq shim that mimics kislyuk/yq's --version output (no "mikefarah" string).
+  shim="${TMPDIR}/shim"
+  mkdir -p "${shim}"
+  cat > "${shim}/yq" <<'YQ'
+#!/bin/sh
+case $1 in
+  --version) printf 'yq 3.4.3\n'; exit 0 ;;
+  *) exit 1 ;;
+esac
+YQ
+  chmod +x "${shim}/yq"
+  PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  grep -q "mikefarah" "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
 }
