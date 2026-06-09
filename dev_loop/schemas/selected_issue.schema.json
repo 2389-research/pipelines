@@ -24,7 +24,7 @@
     },
     "url": {
       "type": "string",
-      "pattern": "^https://github\\.com/2389-research/pipelines/issues/[0-9]+$"
+      "pattern": "^https://github\\.com/[^/]+/[^/]+/issues/[0-9]+$"
     },
     "labels": {
       "type": "array",
