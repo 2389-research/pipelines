@@ -65,7 +65,7 @@ if git rev-parse --verify "refs/heads/${branch}" >/dev/null 2>&1; then
     > "${RUN_DIR}/worktree_error.txt" 2>&1 \
     || emit_failure "git worktree add (existing branch) failed: $(cat "${RUN_DIR}/worktree_error.txt")"
 else
-  git worktree add -b "${branch}" "${worktree_path}" main \
+  git worktree add -b "${branch}" "${worktree_path}" "${BASE_BRANCH:-main}" \
     > "${RUN_DIR}/worktree_error.txt" 2>&1 \
     || emit_failure "git worktree add (new branch) failed: $(cat "${RUN_DIR}/worktree_error.txt")"
 fi

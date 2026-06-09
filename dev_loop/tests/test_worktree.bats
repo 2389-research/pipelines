@@ -107,3 +107,31 @@ teardown() {
   # Lock is released so the next setup_run can claim it.
   [ ! -d "${DIP_ROOT}/.dev_loop.lock" ]
 }
+
+@test "BASE_BRANCH from env drives create_worktree (no main branch)" {
+  cd "${WORKDIR}"
+  git init -q -b develop "${WORKDIR}/upstream"
+  cd "${WORKDIR}/upstream"
+  git config user.email t@t
+  git config user.name t
+  printf 'seed\n' > README.md
+  git add README.md
+  git commit -q -m seed
+  cd "${WORKDIR}"
+  git clone -q "${WORKDIR}/upstream" "${WORKDIR}/work"
+  cd "${WORKDIR}/work"
+  rid="rid-$$"
+  stage_run "${rid}"
+  # Override BASE_BRANCH in the env file to drive create_worktree off develop.
+  sed -i "s/^BASE_BRANCH=.*/BASE_BRANCH='develop'/" "${DIP_ROOT}/runs/${rid}/env"
+  printf 'feat/test-branch' > "${DIP_ROOT}/runs/${rid}/branch_name.txt"
+  printf '999' > "${DIP_ROOT}/runs/${rid}/selected_issue_number.txt"
+  SCRIPT="${BATS_TEST_DIRNAME}/../scripts/create_worktree.sh"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-ok" ]
+  worktree_path="$(cat "${DIP_ROOT}/runs/${rid}/worktree.path")"
+  ( cd "${worktree_path}"
+    [ "$(git rev-parse --abbrev-ref HEAD)" = "feat/test-branch" ]
+    git rev-parse develop >/dev/null 2>&1 )
+}
