@@ -69,7 +69,19 @@ case "${outcome}" in
     printf 'synthesized-approved'
     ;;
   changes_requested)
-    printf 'synthesized-changes_requested'
+    # Synthesizer's contract: changes_requested REQUIRES non-empty feedback so
+    # the next iter's Implementer has something to act on. If the synthesizer
+    # broke contract (empty feedback array or missing key), fall back to
+    # synthesized-abandoned with a clear breadcrumb — looping with no feedback
+    # would loop forever.
+    fb_len=$(jq -r '(.feedback // []) | length' "${RUN_DIR}/synthesis.json")
+    if [ "${fb_len}" = "0" ]; then
+      printf 'synthesizer broke contract: outcome=changes_requested but feedback is empty/missing\n' \
+        >> "${RUN_DIR}/persist_synthesis_error.txt"
+      printf 'synthesized-abandoned'
+    else
+      printf 'synthesized-changes_requested'
+    fi
     ;;
   abandoned)
     printf 'synthesized-abandoned'

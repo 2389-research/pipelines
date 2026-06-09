@@ -35,6 +35,14 @@ gemini-3.1-pro-preview-customtools
 models=$(grep -oE '^[[:space:]]*model:[[:space:]]*[A-Za-z0-9._-]+' "${DIP}" \
          | sed 's/.*model:[[:space:]]*//' | sort -u)
 
+# Fail closed if the regex extracts nothing (e.g. .dip restructured to inline
+# models or comment them out): printing "OK: 0 unique model id(s)" would
+# silently hide that the gate stopped enforcing anything.
+if [ -z "${models}" ]; then
+  printf 'FAIL: extracted zero model ids from %s — gate not enforcing anything\n' "${DIP}" >&2
+  exit 1
+fi
+
 rc=0
 for m in ${models}; do
   hit=0
