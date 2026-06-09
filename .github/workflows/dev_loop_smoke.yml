@@ -154,7 +154,7 @@ jobs:
       - name: bats unit tests
         run: bats dev_loop/tests/*.bats
 
-      - name: marker coverage (regex <-> literal bijection)
+      - name: marker coverage (regex <-> literal mutual reachability)
         run: ./dev_loop/tests/test_marker_coverage.sh
 
       - name: branch model-ID allowlist

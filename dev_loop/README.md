@@ -105,7 +105,7 @@ tracker dev_loop/dev_loop.dip
 - `yq` (see callout below).
 - `git`.
 
-> **⚠ yq variant matters**
+> **yq variant matters**
 >
 > dev_loop requires `mikefarah/yq` v4+ (Go). Ubuntu/Debian's `apt install yq`
 > ships the Python `kislyuk/yq` which uses a different query syntax and will
@@ -151,8 +151,15 @@ resolution via `runs/<rid>/config_resolution.txt`.
 |---|---|---|---|
 | `GH_REPO` | `repo` | — (setup-failed if absent) | Target GitHub repo as `owner/name`. |
 | `DEV_LOOP_BASE_BRANCH` | `base_branch` | autodetect via `gh repo view` | Branch to base PRs from. |
-| `DEV_LOOP_STATE_ROOT` | `runtime_state_root` | `${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop` | Per-run state dir. |
+| `DEV_LOOP_STATE_ROOT` | `runtime_state_root`†  | `${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop` | Per-run state dir. |
 | `DEV_LOOP_ALLOW_NO_CI` | `allow_no_ci` | `false` | Merge when no CI is configured. |
+
+†  YAML `runtime_state_root` is honored by `setup_run.sh`'s own resolution and
+recorded in `config_resolution.txt` as `source=yaml`, BUT downstream scripts'
+bootstrap preambles only honor the `DEV_LOOP_STATE_ROOT` env var or the
+built-in default — they don't re-read YAML. For end-to-end consistency when
+overriding the state dir, set the `DEV_LOOP_STATE_ROOT` env var instead. (See
+the follow-up issue for sentinel-based unification of this knob.)
 
 The YAML carries three additional keys that are NOT wired in v1:
 `priority_label_order` (the jq priority function does its own normalize-and-rank
