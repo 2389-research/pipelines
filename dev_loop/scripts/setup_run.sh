@@ -37,6 +37,10 @@ run_dir="${DIP_ROOT}/runs/${rid}"
 emit_failure() {
   mkdir -p "${run_dir}" 2>/dev/null || true
   printf '%s\n' "$1" > "${run_dir}/setup_error.txt" 2>/dev/null || true
+  # Publish .current_rid so downstream cleanup/ratchet can find this run_dir.
+  # Atomic via mv -Tf to keep the partial-state invariant.
+  printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid.tmp" 2>/dev/null || true
+  mv -Tf "${DIP_ROOT}/.current_rid.tmp" "${DIP_ROOT}/.current_rid" 2>/dev/null || true
   printf 'setup-failed'
   exit 0
 }

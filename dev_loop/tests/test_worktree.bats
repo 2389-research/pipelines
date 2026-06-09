@@ -96,8 +96,14 @@ teardown() {
   [ "${output}" = "worktree-cleaned" ]
 }
 
-@test "cleanup_worktree drops the .current_rid sentinel" {
+@test "cleanup_worktree retains .current_rid (ratchet_log runs after cleanup)" {
+  # Contract: cleanup_worktree releases the concurrency lock but leaves
+  # .current_rid in place. ratchet_log runs AFTER cleanup in dev_loop.dip
+  # and needs .current_rid to resolve its run_dir. The next setup_run
+  # atomically overwrites .current_rid.
   run sh -c "$(cat "${CLEANUP}")"
   [ "${status}" -eq 0 ]
-  [ ! -f "${DIP_ROOT}/.current_rid" ]
+  [ -f "${DIP_ROOT}/.current_rid" ]
+  # Lock is released so the next setup_run can claim it.
+  [ ! -d "${DIP_ROOT}/.dev_loop.lock" ]
 }

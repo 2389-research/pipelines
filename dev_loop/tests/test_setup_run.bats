@@ -38,7 +38,7 @@ YAML
   [ "${status}" -eq 0 ]
   rid_a="$(cat "${DIP_ROOT}/.current_rid")"
   # Mimic the pipeline reaching CleanupWorktree (releases the concurrency
-  # lock + .current_rid). Then a second invocation starts fresh.
+  # lock). .current_rid persists; the next setup_run overwrites it atomically.
   CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
   sh -c "$(cat "${CLEANUP}")" > /dev/null
   sleep 1
@@ -132,7 +132,7 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  # Atomic publish: .current_rid is NOT written on failure paths.
+  # Failure paths publish .current_rid so downstream cleanup/ratchet can find run_dir.
   run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   grep -q "no tracker run dir" "${run_dir%/}/setup_error.txt"
 }
@@ -157,7 +157,7 @@ YAML
       PATH="${sysbin}" /bin/sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  # Atomic publish: .current_rid is NOT written on failure paths.
+  # Failure paths publish .current_rid so downstream cleanup/ratchet can find run_dir.
   run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   grep -q "missing required commands" "${run_dir%/}/setup_error.txt"
 }
@@ -177,8 +177,7 @@ YQ
   PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  # Atomic publish: .current_rid is NOT written on failure paths. Locate the
-  # run_dir via the single subdir under runs/ instead.
+  # Failure paths publish .current_rid so downstream cleanup/ratchet can find run_dir.
   run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   grep -q "mikefarah" "${run_dir%/}/setup_error.txt"
 }
@@ -218,7 +217,7 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  # Atomic publish: .current_rid is NOT written on failure paths.
+  # Failure paths publish .current_rid so downstream cleanup/ratchet can find run_dir.
   run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   err="${run_dir%/}/setup_error.txt"
   grep -q "no repo configured" "${err}"
@@ -301,7 +300,7 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  # Atomic publish: .current_rid is NOT written on failure paths.
+  # Failure paths publish .current_rid so downstream cleanup/ratchet can find run_dir.
   run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
   grep -qi "newline" "${run_dir%/}/setup_error.txt"
 }
@@ -361,4 +360,18 @@ YAML
     printf '%s\n' "${allow}" | grep -qx "${key}" \
       || { printf 'env emitted forbidden key: %s\n' "${key}" >&2; return 1; }
   done
+}
+
+@test "setup-failed publishes .current_rid so cleanup/ratchet can find run_dir" {
+  # No YAML, no env → "no repo configured" path.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  # .current_rid must be published even on failure.
+  [ -f "${DIP_ROOT}/.current_rid" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  [ -n "${rid}" ]
+  # setup_error.txt is at the published run_dir.
+  [ -f "${DIP_ROOT}/runs/${rid}/setup_error.txt" ]
+  grep -q "no repo configured" "${DIP_ROOT}/runs/${rid}/setup_error.txt"
 }
