@@ -6,12 +6,23 @@
 # Never fails the pipeline; ratchet_log records the final disposition.
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
-rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-RUN_DIR=""
-if [ -n "${rid}" ]; then
+# ---begin-bootstrap-reference---
+STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
+  RUN_DIR="${DEV_LOOP_RUN_DIR}"
+else
+  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
+  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
   RUN_DIR="${DIP_ROOT}/runs/${rid}"
 fi
+[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
+[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. "${RUN_DIR}/env"
+set +a
+# ---end-bootstrap-reference---
 
 symlink="$(pwd)/.dev_loop_worktree"
 # Only unlink when it IS the symlink we created. If a user has a real
@@ -20,13 +31,11 @@ symlink="$(pwd)/.dev_loop_worktree"
 if [ -L "${symlink}" ]; then
   rm -f "${symlink}" 2>/dev/null || true
 elif [ -e "${symlink}" ]; then
-  if [ -n "${RUN_DIR}" ]; then
-    printf 'refused to clean .dev_loop_worktree (not a symlink)\n' \
-      >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
-  fi
+  printf 'refused to clean .dev_loop_worktree (not a symlink)\n' \
+    >> "${RUN_DIR}/cleanup_log.txt" 2>/dev/null || true
 fi
 
-if [ -n "${RUN_DIR}" ] && [ -f "${RUN_DIR}/worktree.path" ]; then
+if [ -f "${RUN_DIR}/worktree.path" ]; then
   worktree_path=$(cat "${RUN_DIR}/worktree.path")
   # Canonicalize both paths before the prefix check. A naive `case` against
   # the lexical string lets traversal segments like

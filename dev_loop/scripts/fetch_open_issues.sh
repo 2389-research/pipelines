@@ -7,14 +7,23 @@
 #   $RUN_DIR/issues_count.txt   — integer count of fetched issues
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
-rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-if [ -z "${rid}" ]; then
-  printf 'fetch-failed'
-  exit 0
+# ---begin-bootstrap-reference---
+STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
+  RUN_DIR="${DEV_LOOP_RUN_DIR}"
+else
+  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
+  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
 fi
-RUN_DIR="${DIP_ROOT}/runs/${rid}"
-mkdir -p "${RUN_DIR}"
+[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
+[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. "${RUN_DIR}/env"
+set +a
+# ---end-bootstrap-reference---
 
 emit_failure() {
   printf '%s\n' "$1" > "${RUN_DIR}/fetch_error.txt" 2>/dev/null || true
@@ -23,15 +32,6 @@ emit_failure() {
 }
 
 trap 'if [ $? -ne 0 ]; then printf "fetch-failed"; exit 0; fi' EXIT
-
-# Re-export env so gh stays repo-locked regardless of how this is invoked.
-if [ -f "${RUN_DIR}/env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "${RUN_DIR}/env"
-  set +a
-fi
-export GH_REPO="${GH_REPO:-2389-research/pipelines}"
 
 gh issue list \
   --limit 200 \

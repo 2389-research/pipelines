@@ -12,14 +12,23 @@
 # routing target is CleanupWorktree, which does not need it).
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
-rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-if [ -z "${rid}" ]; then
-  printf 'iter-exhausted'
-  exit 0
+# ---begin-bootstrap-reference---
+STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
+  RUN_DIR="${DEV_LOOP_RUN_DIR}"
+else
+  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
+  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
 fi
-RUN_DIR="${DIP_ROOT}/runs/${rid}"
-mkdir -p "${RUN_DIR}"
+[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
+[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. "${RUN_DIR}/env"
+set +a
+# ---end-bootstrap-reference---
 
 if [ ! -f "${RUN_DIR}/iter.txt" ] || [ ! -f "${RUN_DIR}/max_iters.txt" ]; then
   printf 'iter-exhausted'

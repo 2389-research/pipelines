@@ -17,11 +17,23 @@
 # iter-exhausted otherwise.
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
-rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-if [ -z "${rid}" ]; then exit 1; fi
-RUN_DIR="${DIP_ROOT}/runs/${rid}"
-mkdir -p "${RUN_DIR}"
+# ---begin-bootstrap-reference---
+STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
+  RUN_DIR="${DEV_LOOP_RUN_DIR}"
+else
+  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
+  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
+fi
+[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
+[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. "${RUN_DIR}/env"
+set +a
+# ---end-bootstrap-reference---
 
 # `max_iters` is one of the values that v1 duplicates across this script,
 # config/dev_loop.config.yaml, and `defaults max_restarts:` in dev_loop.dip.

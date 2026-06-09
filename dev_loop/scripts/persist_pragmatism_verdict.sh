@@ -3,41 +3,35 @@
 # Emits ctx.outcome=success on persist-ok, fail on persist-failed (sh -c exit).
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
-rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-if [ -z "${rid}" ]; then exit 1; fi
-RUN_DIR="${DIP_ROOT}/runs/${rid}"
-mkdir -p "${RUN_DIR}"
-
-# Resolve tracker's active artifact dir. Hard contract:
-#   1. If the per-run env file exists, setup_run.sh ran and was responsible
-#      for pinning TRACKER_RUN_DIR there. If TRACKER_RUN_DIR is then missing
-#      or invalid, something corrupted the env file — falling back to ls -dt
-#      mtime would defeat the concurrency-isolation guarantee and silently
-#      route to whichever run finished most recently. Fail closed.
-#   2. If the env file does not exist (operator invoked us before setup, or
-#      this is a bats fixture without one), use the ls -dt heuristic as a
-#      best-effort discovery.
-TRACKER_ROOT="$(pwd)/.tracker/runs"
-if [ -f "${RUN_DIR}/env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "${RUN_DIR}/env"
-  set +a
-  if [ -z "${TRACKER_RUN_DIR:-}" ] || [ ! -d "${TRACKER_RUN_DIR}" ]; then
-    tracker_run_dir=""
-  else
-    tracker_run_dir="${TRACKER_RUN_DIR%/}/"
-  fi
+# ---begin-bootstrap-reference---
+STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
+  RUN_DIR="${DEV_LOOP_RUN_DIR}"
 else
-  # shellcheck disable=SC2012
-  tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
+  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
+  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
 fi
-if [ -z "${tracker_run_dir}" ]; then
+[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
+[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. "${RUN_DIR}/env"
+set +a
+# ---end-bootstrap-reference---
+
+# Resolve tracker's active artifact dir. setup_run.sh pins TRACKER_RUN_DIR in
+# the env file; if it's missing or invalid, fail closed rather than falling
+# back to ls -dt mtime (which would silently route to whichever run finished
+# most recently, defeating concurrency isolation).
+TRACKER_ROOT="$(pwd)/.tracker/runs"
+if [ -z "${TRACKER_RUN_DIR:-}" ] || [ ! -d "${TRACKER_RUN_DIR}" ]; then
   printf 'no tracker run dir under %s\n' "${TRACKER_ROOT}" \
     > "${RUN_DIR}/persist_pragmatism_error.txt"
   exit 1
 fi
+tracker_run_dir="${TRACKER_RUN_DIR%/}/"
 
 response="${tracker_run_dir}SquadPragmatism/response.md"
 target="${RUN_DIR}/verdict_pragmatism.json"

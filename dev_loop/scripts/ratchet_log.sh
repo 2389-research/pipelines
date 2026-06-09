@@ -6,27 +6,30 @@
 #   Columns: rid<TAB>iso_timestamp<TAB>issue_number<TAB>branch<TAB>outcome<TAB>iters_used<TAB>notes
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
-mkdir -p "${DIP_ROOT}"
+# ---begin-bootstrap-reference---
+STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
+  RUN_DIR="${DEV_LOOP_RUN_DIR}"
+else
+  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
+  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
+  RUN_DIR="${DIP_ROOT}/runs/${rid}"
+fi
+[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
+[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. "${RUN_DIR}/env"
+set +a
+# ---end-bootstrap-reference---
+
 RATCHET="${DIP_ROOT}/ratchet.tsv"
 if [ ! -f "${RATCHET}" ]; then
   printf 'rid\tts\tissue\tbranch\toutcome\titers_used\tnotes\n' > "${RATCHET}"
 fi
 
-rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-if [ -z "${rid}" ]; then
-  # cleanup_worktree drops .current_rid; look for the most-recent run dir.
-  # shellcheck disable=SC2012
-  recent_dir=$(ls -dt "${DIP_ROOT}/runs"/*/ 2>/dev/null | head -1)
-  if [ -n "${recent_dir}" ]; then
-    rid=$(basename "${recent_dir}")
-  fi
-fi
-if [ -z "${rid}" ]; then
-  printf 'ratcheted'
-  exit 0
-fi
-RUN_DIR="${DIP_ROOT}/runs/${rid}"
+rid=$(basename "${RUN_DIR}")
 
 issue=$(cat "${RUN_DIR}/selected_issue_number.txt" 2>/dev/null || printf 'unknown')
 branch=$(cat "${RUN_DIR}/branch_name.txt" 2>/dev/null || printf 'unknown')
