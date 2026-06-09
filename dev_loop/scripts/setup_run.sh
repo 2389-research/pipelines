@@ -16,7 +16,7 @@
 #   $DIP_ROOT/runs/<rid>/setup_error.txt — populated only on setup-failed
 set -eu
 
-DIP_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/2389-research-pipelines"
+DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}"
 mkdir -p "${DIP_ROOT}/runs"
 
 # Resume detection: if a prior run still has a worktree, signal the operator
@@ -151,13 +151,60 @@ if [ -z "${tracker_run_dir}" ] || [ ! -d "${tracker_run_dir}" ]; then
   emit_failure "no tracker run dir found under ${TRACKER_ROOT}; is this being invoked through tracker?"
 fi
 
-# GH_REPO lock + per-run identity — downstream `gh` invocations and persist
-# scripts source this env file.
+# --- YAML config resolver -------------------------------------------------
+# Allow-list (canonical home for both setup_run's emit and test_helpers.bash's
+# unset list — keep these two in sync):
+#   GH_REPO BASE_BRANCH DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR TRACKER_RUN_DIR
+#   ALLOW_NO_CI
+# --------------------------------------------------------------------------
+CFG="dev_loop/config/dev_loop.config.yaml"
+yaml_repo=""
+yaml_base_branch=""
+yaml_allow_no_ci=""
+if [ -f "${CFG}" ]; then
+  if ! yaml_repo=$(yq -r '.repo // ""' "${CFG}" 2>"${run_dir}/setup_error.txt"); then
+    emit_failure "yq parse failed; see setup_error.txt"
+  fi
+  yaml_base_branch=$(yq -r '.base_branch // ""' "${CFG}")
+  yaml_allow_no_ci=$(yq -r '.allow_no_ci // ""' "${CFG}")
+fi
+
+# Reject newline/CR in any scalar (structural hygiene per spec §3.5).
+# NUL isn't checked here: POSIX `printf` can't emit a NUL byte so the case
+# pattern would degenerate to `*""*` and match every string (including the
+# empty string). yq's text output stream can't carry NUL through anyway —
+# it would have to be escaped — so the practical attack surface is LF/CR.
+NL="$(printf '\n_')"; NL="${NL%_}"
+CR="$(printf '\r_')"; CR="${CR%_}"
+reject_special() {
+  case $1 in
+    *"${NL}"*|*"${CR}"*)
+      emit_failure "config value contains newline/CR (key=$2)" ;;
+  esac
+}
+reject_special "${yaml_repo}" repo
+reject_special "${yaml_base_branch}" base_branch
+reject_special "${yaml_allow_no_ci}" allow_no_ci
+
+# Resolve with precedence env > YAML > default. Track source for the log.
+if [ -n "${GH_REPO:-}" ]; then
+  resolved_repo="${GH_REPO}"; src_repo=env
+elif [ -n "${yaml_repo}" ]; then
+  resolved_repo="${yaml_repo}"; src_repo=yaml
+else
+  emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
+fi
+
+# Per-run env file (resolver continues in Tasks 1.3-1.5; this is the v1 GH_REPO).
 {
-  printf 'GH_REPO=2389-research/pipelines\n'
+  printf "GH_REPO='%s'\n" "${resolved_repo}"
   printf 'DEV_LOOP_RUN_ID=%s\n' "${rid}"
   printf 'DEV_LOOP_RUN_DIR=%s\n' "${run_dir}"
   printf 'TRACKER_RUN_DIR=%s\n' "${tracker_run_dir}"
 } > "${run_dir}/env"
+
+# Per-run config resolution log (full format pinned in Task 1.5).
+printf 'GH_REPO=%s (source=%s)\n' "${resolved_repo}" "${src_repo}" \
+  > "${run_dir}/config_resolution.txt"
 
 printf 'setup-ok'

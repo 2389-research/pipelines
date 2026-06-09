@@ -161,3 +161,45 @@ YQ
   rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
   grep -q "mikefarah" "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
 }
+
+@test "YAML repo loads when no env override" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+base_branch: main
+YAML
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  grep -q "^GH_REPO='test-org/test-repo'$" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+  grep -qF "GH_REPO=test-org/test-repo (source=yaml)" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/config_resolution.txt"
+}
+
+@test "env GH_REPO beats YAML" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: yaml-org/yaml-repo
+base_branch: main
+YAML
+  GH_REPO=env-org/env-repo run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  grep -q "^GH_REPO='env-org/env-repo'$" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
+  grep -qF "GH_REPO=env-org/env-repo (source=env)" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/config_resolution.txt"
+}
+
+@test "no repo configured (no env, no YAML) routes to setup-failed" {
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  err="${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
+  grep -q "no repo configured" "${err}"
+  grep -q "GH_REPO" "${err}"
+  grep -q "dev_loop.config.yaml" "${err}"
+}
