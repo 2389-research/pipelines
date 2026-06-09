@@ -30,10 +30,15 @@ SetupRun → FetchOpenIssues → PreFilter
 
 ## Quick start — run against your repo
 
+> **Step 0:** make sure Prerequisites below are installed first — especially
+> the right `yq`. Pasting steps 1–6 will fail with `setup-failed (missing
+> required commands)` otherwise.
+
 ### Option A — edit YAML (persistent)
 
 ```sh
-# 1. From your target repo's root:
+# 1. From your target repo's ROOT (NOT a subdirectory — see "What dev_loop
+#    does NOT do" below for why):
 cd ~/code/acme/widget-service
 
 # 2. Drop dev_loop/ into the repo root. The dev_loop/ tree ships from the
@@ -44,22 +49,33 @@ git clone --depth=1 "https://github.com/${DEV_LOOP_OWNER}/${DEV_LOOP_REPO}.git" 
 cp -r /tmp/dl-src/dev_loop ./dev_loop
 rm -rf /tmp/dl-src
 
-# 3. Edit dev_loop/config/repo_conventions.md for your project's commit/test
-#    /idiom conventions. The 5-persona squad reviewers read this as project
-#    context; if absent or unedited, they fall back to generic guidance.
+# 3. REPLACE dev_loop/config/repo_conventions.md with your project's facts
+#    (commit style, test commands, forbidden patterns, idioms). The shipped
+#    file documents the upstream dev_loop repo's conventions — leaving it
+#    in place will steer the 5-persona squad reviewers against the wrong
+#    rules, because they read this file via `ctx.last_response` as project
+#    context.
 
 # 4. Edit dev_loop/config/dev_loop.config.yaml:
 #    repo: acme/widget-service
-#    base_branch: main         # or omit to auto-detect via gh
+#    base_branch: main         # or omit to auto-detect via gh (works for
+#                              # main, master, develop, etc.)
 #    allow_no_ci: false
 
-# 5. Run from the target repo root:
+# 5. Run from the target repo root. This is the actual workflow run and may
+#    take a while (multiple LLM calls per iteration):
 tracker dev_loop/dev_loop.dip
 
 # 6. After setup-ok, verify the resolved config (one line per knob with
 #    source attribution: env, yaml, default, autodetect):
-cat ${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/runs/$(cat ${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.current_rid)/config_resolution.txt
+RID=$(cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.current_rid")
+cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/runs/${RID}/config_resolution.txt"
 ```
+
+> **Silent override warning:** env vars beat YAML without complaint. If
+> `config_resolution.txt` shows `(source=env)` on a knob you only set in
+> YAML, an earlier `export GH_REPO=...` (or other `DEV_LOOP_*`) is still
+> in your shell. Check `env | grep -E 'GH_REPO|DEV_LOOP_'`.
 
 ### Option B — environment variables (per-run override)
 
@@ -189,6 +205,12 @@ accessible, base-branch autodetect failure, no repo configured.
 
 ## What dev_loop does NOT do
 
+- **Run from a repo subdirectory.** Paths are resolved from `$(pwd)`
+  (`.tracker/runs`, `dev_loop/config/*`, `.dev_loop_worktree`); running from
+  anywhere except the target repo root silently writes state to the wrong
+  place. cd to the repo root first.
+- **Run on macOS or Windows.** `writable_paths` enforcement uses Linux
+  Landlock + openat2; tracker refuses to start otherwise.
 - **Branch-protection bypass.** If your branch protection requires reviews,
   status checks, or signed commits, dev_loop respects them — and may emit
   `merge-blocked` if it can't merge.
