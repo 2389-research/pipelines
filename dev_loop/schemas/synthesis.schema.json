@@ -21,7 +21,7 @@
     "summary": {
       "type": "string",
       "minLength": 50,
-      "description": "Markdown body. Posted as a PR comment when outcome=changes_requested or appended to the merge commit footer when outcome=approved."
+      "description": "Markdown body. Persisted to runs/<rid>/synthesis.json and posted as a PR comment by post_squad_comment.sh when outcome=changes_requested. Not appended to merge commits (merge_pr.sh runs `gh pr merge --squash` with no body interpolation)."
     },
     "reasoning": {
       "type": "string",

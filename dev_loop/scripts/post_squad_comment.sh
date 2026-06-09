@@ -30,9 +30,15 @@ fi
 
 pr_num=$(cat "${RUN_DIR}/pr_number.txt")
 body_file="${RUN_DIR}/squad_comment.md"
+# `jq -r '.summary'` runs under `set -e`. If synthesis.json is malformed/
+# missing the field, jq exits non-zero and would kill the script before the
+# `comment-posted` marker — breaking the script-header contract. Guard with
+# `|| true` and a fallback string so we always reach the marker.
+summary=$(jq -r '.summary // ""' "${RUN_DIR}/synthesis.json" 2>/dev/null || true)
+[ -n "${summary}" ] || summary='(synthesis.summary missing or unreadable)'
 {
   printf '## dev_loop squad review\n\n'
-  jq -r '.summary' "${RUN_DIR}/synthesis.json"
+  printf '%s\n' "${summary}"
   printf '\n\n<sub>auto-posted by dev_loop; iter=%s</sub>\n' \
     "$(cat "${RUN_DIR}/iter.txt" 2>/dev/null || printf '?')"
 } > "${body_file}"
