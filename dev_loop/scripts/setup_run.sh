@@ -50,7 +50,11 @@ emit_failure() {
 # trap itself, suppressing the setup-failed marker and leaving the pipeline
 # with no routable outcome. The rc alone is enough breadcrumb.
 # shellcheck disable=SC2154  # rc is assigned inside the single-quoted trap body
-trap 'rc=$?; if [ "${rc}" -ne 0 ]; then
+trap 'rc=$?
+      # Unlink any orphan .tmp files from a partial run; harmless when none exist.
+      rm -f "${DIP_ROOT}/.current_rid.tmp" 2>/dev/null || true
+      [ -n "${run_dir:-}" ] && rm -f "${run_dir}/env.tmp" 2>/dev/null || true
+      if [ "${rc}" -ne 0 ]; then
         mkdir -p "${run_dir}" 2>/dev/null || true
         printf "unexpected non-zero exit (rc=%s)\n" "${rc}" \
           > "${run_dir}/setup_error.txt" 2>/dev/null || true
@@ -135,7 +139,6 @@ printf '%s' "${rid}" > "${LOCK_DIR}/rid"
 printf '%s' "${PPID}" > "${LOCK_DIR}/holder_pid"
 
 mkdir -p "${run_dir}"
-printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
 printf '%s\n' "${rid}" > "${run_dir}/rid.txt"
 date -u +%Y-%m-%dT%H:%M:%SZ > "${run_dir}/started_at.txt"
 
@@ -278,5 +281,13 @@ ALLOW_NO_CI=${resolved_allow_no_ci} (source=${src_allow})
 DIP_ROOT=${DIP_ROOT} (source=${DEV_LOOP_STATE_ROOT:+env}${DEV_LOOP_STATE_ROOT:-default})
 EOF
 chmod 600 "${run_dir}/config_resolution.txt"
+
+# Publish .current_rid atomically AFTER env + config_resolution are in place.
+# Order matters: downstream scripts that source $RUN_DIR/env via the bootstrap
+# preamble must never see a published rid pointing at an incomplete RUN_DIR.
+printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid.tmp"
+if ! mv -Tf "${DIP_ROOT}/.current_rid.tmp" "${DIP_ROOT}/.current_rid"; then
+  emit_failure "atomic publish of .current_rid failed (mv -Tf returned $?)"
+fi
 
 printf 'setup-ok'

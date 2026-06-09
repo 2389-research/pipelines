@@ -158,8 +158,10 @@ YQ
   PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
-  grep -q "mikefarah" "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
+  # Atomic publish: .current_rid is NOT written on failure paths. Locate the
+  # run_dir via the single subdir under runs/ instead.
+  run_dir="$(ls -d "${XDG_CACHE_HOME}/dip/dev_loop/runs/"*/ | head -1)"
+  grep -q "mikefarah" "${run_dir%/}/setup_error.txt"
 }
 
 @test "YAML repo loads when no env override" {
@@ -197,8 +199,9 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
-  err="${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
+  # Atomic publish: .current_rid is NOT written on failure paths.
+  run_dir="$(ls -d "${XDG_CACHE_HOME}/dip/dev_loop/runs/"*/ | head -1)"
+  err="${run_dir%/}/setup_error.txt"
   grep -q "no repo configured" "${err}"
   grep -q "GH_REPO" "${err}"
   grep -q "dev_loop.config.yaml" "${err}"
@@ -279,9 +282,9 @@ YAML
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   [ "${output}" = "setup-failed" ]
-  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
-  grep -qi "newline" \
-    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
+  # Atomic publish: .current_rid is NOT written on failure paths.
+  run_dir="$(ls -d "${XDG_CACHE_HOME}/dip/dev_loop/runs/"*/ | head -1)"
+  grep -qi "newline" "${run_dir%/}/setup_error.txt"
 }
 
 @test "env file single-quotes values containing \$(...) and backticks" {
@@ -296,4 +299,22 @@ YAML
   rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
   ( set -a; . "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"; set +a
     [ "${BASE_BRANCH}" = '$(rm -rf $HOME)' ] )
+}
+
+@test ".current_rid points at a complete env file (atomic publish)" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+base_branch: main
+YAML
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  run_dir="${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}"
+  # If .current_rid exists, env must exist and be a regular file.
+  [ -f "${run_dir}/env" ]
+  [ ! -L "${run_dir}/env" ]
+  # No orphan tmp files.
+  ! [ -e "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid.tmp" ]
+  ! [ -e "${run_dir}/env.tmp" ]
 }
