@@ -45,7 +45,9 @@ fi
 cd "${worktree_path}"
 
 # Collect changed .dip files since BASE_BRANCH (sourced from env via bootstrap).
-changed_dips=$(git diff --name-only --diff-filter=AM "${BASE_BRANCH}...HEAD" -- '*.dip' 2>/dev/null || true)
+# Include renames (R) so a rename+modified .dip is still gated; without R,
+# `--diff-filter=AM` would skip the renamed path entirely.
+changed_dips=$(git diff --name-only --diff-filter=AMR "${BASE_BRANCH}...HEAD" -- '*.dip' 2>/dev/null || true)
 
 : > "${RUN_DIR}/gates_log.txt"
 

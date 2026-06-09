@@ -44,10 +44,17 @@ if [ ! -f "${RUN_DIR}/issues.json" ]; then
 fi
 
 # Filter knobs: read directly from YAML (no env round-trip) per spec §4.6.
+# Capture yq stderr to filter_error.txt on parse failure — without this, the
+# generic EXIT trap path emits filter-failed with no breadcrumb (other
+# filter-failed paths in this script all write filter_error.txt).
 CFG="dev_loop/config/dev_loop.config.yaml"
 if [ -f "${CFG}" ]; then
-  EXCLUDED_LABELS=$(yq -o=json '.issue_filter.excluded_labels // ["survey","question","tracking","blocked"]' "${CFG}")
-  EXCLUDED_TITLE_RE=$(yq -r '.issue_filter.excluded_title_regex // "(dev_loop|dippin meta|tracker meta)"' "${CFG}")
+  if ! EXCLUDED_LABELS=$(yq -o=json '.issue_filter.excluded_labels // ["survey","question","tracking","blocked"]' "${CFG}" 2>"${RUN_DIR}/filter_error.txt"); then
+    emit_failure "yq parse of issue_filter.excluded_labels failed; see filter_error.txt"
+  fi
+  if ! EXCLUDED_TITLE_RE=$(yq -r '.issue_filter.excluded_title_regex // "(dev_loop|dippin meta|tracker meta)"' "${CFG}" 2>"${RUN_DIR}/filter_error.txt"); then
+    emit_failure "yq parse of issue_filter.excluded_title_regex failed; see filter_error.txt"
+  fi
 else
   EXCLUDED_LABELS='["survey","question","tracking","blocked"]'
   EXCLUDED_TITLE_RE='(dev_loop|dippin meta|tracker meta)'

@@ -327,8 +327,12 @@ chmod 600 "${run_dir}/config_resolution.txt"
 # Order matters: downstream scripts that source $RUN_DIR/env via the bootstrap
 # preamble must never see a published rid pointing at an incomplete RUN_DIR.
 printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid.tmp"
-if ! mv -Tf "${DIP_ROOT}/.current_rid.tmp" "${DIP_ROOT}/.current_rid"; then
-  emit_failure "atomic publish of .current_rid failed (mv -Tf returned $?)"
+# Capture mv's exit code BEFORE the `if !` evaluates — inside `then`, `$?`
+# would be 0 (the negated condition's truth value), not mv's real status.
+mv_rc=0
+mv -Tf "${DIP_ROOT}/.current_rid.tmp" "${DIP_ROOT}/.current_rid" || mv_rc=$?
+if [ "${mv_rc}" -ne 0 ]; then
+  emit_failure "atomic publish of .current_rid failed (mv -Tf returned ${mv_rc})"
 fi
 
 printf 'setup-ok'
