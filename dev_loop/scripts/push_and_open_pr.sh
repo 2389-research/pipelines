@@ -60,7 +60,7 @@ existing_pr=$(gh pr list --head "${branch}" --state open --json number,url \
 if [ -z "${existing_pr}" ] || [ "${existing_pr}" = "null" ]; then
   pr_body_file="${RUN_DIR}/pr_body.txt"
   [ -f "${pr_body_file}" ] || pr_body_file=/dev/null
-  gh pr create --base main --head "${branch}" \
+  gh pr create --base "${BASE_BRANCH}" --head "${branch}" \
     --title "${pr_title}" \
     --body-file "${pr_body_file}" \
     > "${RUN_DIR}/push_error.txt" 2>&1 \
@@ -69,9 +69,9 @@ fi
 
 pr_view=$(gh pr view "${branch}" --json number,url,headRefOid 2>/dev/null) \
   || emit_failure "gh pr view failed for branch ${branch}"
-echo "${pr_view}" | jq -r '.number'       > "${RUN_DIR}/pr_number.txt"
-echo "${pr_view}" | jq -r '.url'          > "${RUN_DIR}/pr_url.txt"
-echo "${pr_view}" | jq -r '.headRefOid'   > "${RUN_DIR}/pr_head_sha.txt"
+printf '%s\n' "${pr_view}" | jq -r '.number'       > "${RUN_DIR}/pr_number.txt"
+printf '%s\n' "${pr_view}" | jq -r '.url'          > "${RUN_DIR}/pr_url.txt"
+printf '%s\n' "${pr_view}" | jq -r '.headRefOid'   > "${RUN_DIR}/pr_head_sha.txt"
 
 : > "${RUN_DIR}/push_error.txt"
 printf 'pr-ready'
