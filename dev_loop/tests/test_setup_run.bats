@@ -362,6 +362,20 @@ YAML
   done
 }
 
+@test "malformed YAML routes to setup-failed with yq parse error" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  # Syntactically invalid YAML — unclosed flow sequence.
+  printf 'repo: [unclosed\n' > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  [ -f "${DIP_ROOT}/runs/${rid}/setup_error.txt" ]
+  # The error must point at the YAML somewhere (either yq's stderr or our
+  # wrapping message that says "yq parse failed; see setup_error.txt").
+  grep -qiE 'yq|parse|yaml' "${DIP_ROOT}/runs/${rid}/setup_error.txt"
+}
+
 @test "setup-failed publishes .current_rid so cleanup/ratchet can find run_dir" {
   # No YAML, no env → "no repo configured" path.
   run sh -c "$(cat "${SCRIPT}")"

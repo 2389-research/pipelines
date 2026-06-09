@@ -129,6 +129,11 @@ jobs:
           AJV='ajv validate --strict=false'
           $AJV -s dev_loop/schemas/selected_issue.schema.json \
                -d dev_loop/tests/fixtures/selected_issue_sample.json
+          # Positive coverage for the generalized URL regex (^[^/]+/[^/]+):
+          # selected_issue must accept owner/name patterns beyond the upstream
+          # 2389-research/pipelines repo.
+          $AJV -s dev_loop/schemas/selected_issue.schema.json \
+               -d dev_loop/tests/fixtures/selected_issue_generic_url.json
           $AJV -s dev_loop/schemas/plan.schema.json \
                -d dev_loop/tests/fixtures/plan_sample.json
           for f in dev_loop/tests/fixtures/verdict_pass.json \
