@@ -125,8 +125,9 @@ fi
 
 # Probe yq variant. The Python kislyuk/yq and the Go mikefarah/yq diverge in
 # syntax; we require mikefarah v4+. The --version output contains the URL.
-if ! yq --version 2>&1 | grep -qF 'github.com/mikefarah/yq'; then
-  emit_failure "yq must be mikefarah/yq v4+; got: $(yq --version 2>&1) — install from https://github.com/mikefarah/yq/releases"
+yq_ver=$(yq --version 2>&1)
+if ! printf '%s' "${yq_ver}" | grep -qF 'github.com/mikefarah/yq'; then
+  emit_failure "yq must be mikefarah/yq v4+; got: ${yq_ver} — install from https://github.com/mikefarah/yq/releases"
 fi
 
 # Discover tracker's per-invocation artifact dir NOW (at pipeline start) so
