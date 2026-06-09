@@ -15,6 +15,7 @@
 #   $DIP_ROOT/runs/<rid>/env             — KEY=VALUE pairs downstream scripts source
 #   $DIP_ROOT/runs/<rid>/setup_error.txt — populated only on setup-failed
 set -eu
+umask 077
 
 DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}"
 mkdir -p "${DIP_ROOT}/runs"
@@ -56,6 +57,32 @@ trap 'rc=$?; if [ "${rc}" -ne 0 ]; then
         printf "setup-failed"
         exit 0
       fi' EXIT
+
+# Newline / carriage-return sentinels used by both sh_single_quote (below)
+# and reject_special (further down) to keep structural-hygiene checks aligned.
+# NUL isn't covered: POSIX `printf` can't emit a NUL byte so the case pattern
+# would degenerate to `*""*` (matches everything, incl. empty string).
+NL="$(printf '\n_')"; NL="${NL%_}"
+CR="$(printf '\r_')"; CR="${CR%_}"
+
+# Shell-safe single-quote escape for env-file values. The '\''-trick is POSIX
+# and works under dash. Refuses values containing newline / CR — upstream
+# reject_special already catches these on YAML scalars, but emit_env defends
+# in depth for env-precedence and autodetect values.
+sh_single_quote() {
+  case $1 in
+    *"${NL}"*|*"${CR}"*) return 1 ;;
+  esac
+  printf "'%s'\n" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# emit_env KEY VALUE — writes `KEY='shell-escaped-value'\n` to fd 3 (opened
+# by the atomic env.tmp block below). Fails closed via emit_failure if the
+# value would smuggle a newline / CR.
+emit_env() {
+  esc=$(sh_single_quote "$2") || emit_failure "env value contains newline/CR (key=$1)"
+  printf '%s=%s\n' "$1" "${esc}" >&3
+}
 
 # Concurrency lock — atomic mkdir is the POSIX-portable pattern. Without
 # this, a second `tracker dev_loop/dev_loop.dip` started in the same workdir
@@ -162,24 +189,23 @@ yaml_repo=""
 yaml_base_branch=""
 yaml_allow_no_ci=""
 if [ -f "${CFG}" ]; then
-  # TODO(Task 1.5): the env-write reconstruction must stop emit_failure from
-  # clobbering yq's stderr breadcrumb that lands in setup_error.txt here.
   if ! yaml_repo=$(yq -r '.repo // ""' "${CFG}" 2>"${run_dir}/setup_error.txt"); then
     emit_failure "yq parse failed; see setup_error.txt"
   fi
-  # base_branch and allow_no_ci are resolved + validated here; emission to the
-  # env file lands in Task 1.5 (full atomic write + allow-list).
+  # base_branch and allow_no_ci are resolved + validated here.
   yaml_base_branch=$(yq -r '.base_branch // ""' "${CFG}")
-  yaml_allow_no_ci=$(yq -r '.allow_no_ci // ""' "${CFG}")
+  # allow_no_ci is a boolean in YAML; `// ""` would collapse a literal `false`
+  # to the default (jq treats false as a fallback trigger). Emit the raw value
+  # and normalize the absent sentinel "null" to empty here.
+  yaml_allow_no_ci=$(yq -r '.allow_no_ci' "${CFG}")
+  if [ "${yaml_allow_no_ci}" = "null" ]; then
+    yaml_allow_no_ci=""
+  fi
 fi
 
 # Reject newline/CR in any scalar (structural hygiene per spec §3.5).
-# NUL isn't checked here: POSIX `printf` can't emit a NUL byte so the case
-# pattern would degenerate to `*""*` and match every string (including the
-# empty string). yq's text output stream can't carry NUL through anyway —
-# it would have to be escaped — so the practical attack surface is LF/CR.
-NL="$(printf '\n_')"; NL="${NL%_}"
-CR="$(printf '\r_')"; CR="${CR%_}"
+# NL / CR sentinels are defined near the top of the script alongside
+# sh_single_quote — same alphabet, two enforcement points.
 reject_special() {
   case $1 in
     *"${NL}"*|*"${CR}"*)
@@ -224,21 +250,33 @@ else
   resolved_allow_no_ci='false'; src_allow='default'
 fi
 
-# Per-run env file (resolver continues in Tasks 1.4-1.5; this is the v1 stop-gap).
-{
-  printf "GH_REPO='%s'\n" "${resolved_repo}"
-  printf "BASE_BRANCH='%s'\n" "${resolved_base}"
-  printf "ALLOW_NO_CI='%s'\n" "${resolved_allow_no_ci}"
-  printf 'DEV_LOOP_RUN_ID=%s\n' "${rid}"
-  printf 'DEV_LOOP_RUN_DIR=%s\n' "${run_dir}"
-  printf 'TRACKER_RUN_DIR=%s\n' "${tracker_run_dir}"
-} > "${run_dir}/env"
+# Build env file atomically: write to env.tmp inside RUN_DIR, then mv -f to
+# env. umask 077 (set at the top of the script) ensures env.tmp inherits
+# mode 600 by default; the explicit chmod is belt-and-suspenders in case a
+# downstream change to umask slips in.
+env_tmp="${run_dir}/env.tmp"
+exec 3>"${env_tmp}"
+emit_env GH_REPO          "${resolved_repo}"
+emit_env BASE_BRANCH      "${resolved_base}"
+emit_env ALLOW_NO_CI      "${resolved_allow_no_ci}"
+emit_env DEV_LOOP_RUN_ID  "${rid}"
+emit_env DEV_LOOP_RUN_DIR "${run_dir}"
+emit_env TRACKER_RUN_DIR  "${tracker_run_dir}"
+exec 3>&-
+chmod 600 "${env_tmp}"
+# Reject a pre-existing symlink at the destination (operator's UID is trusted
+# per spec §3.5; this guards against an accidental operator symlink left
+# behind by a botched cleanup).
+[ ! -L "${run_dir}/env" ] || emit_failure "${run_dir}/env is a symlink; refusing"
+mv -f "${env_tmp}" "${run_dir}/env"
 
-# Per-run config resolution log (full format pinned in Task 1.5).
-{
-  printf 'GH_REPO=%s (source=%s)\n' "${resolved_repo}" "${src_repo}"
-  printf 'BASE_BRANCH=%s (source=%s)\n' "${resolved_base}" "${src_base}"
-  printf 'ALLOW_NO_CI=%s (source=%s)\n' "${resolved_allow_no_ci}" "${src_allow}"
-} > "${run_dir}/config_resolution.txt"
+# Per-run config resolution log — operator-readable line per knob.
+cat > "${run_dir}/config_resolution.txt" <<EOF
+GH_REPO=${resolved_repo} (source=${src_repo})
+BASE_BRANCH=${resolved_base} (source=${src_base})
+ALLOW_NO_CI=${resolved_allow_no_ci} (source=${src_allow})
+DIP_ROOT=${DIP_ROOT} (source=${DEV_LOOP_STATE_ROOT:+env}${DEV_LOOP_STATE_ROOT:-default})
+EOF
+chmod 600 "${run_dir}/config_resolution.txt"
 
 printf 'setup-ok'

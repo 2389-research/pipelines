@@ -250,3 +250,50 @@ YAML
   grep -q "^BASE_BRANCH='feature/foo'$" \
     "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"
 }
+
+@test "atomic env write: env file mode 600, RUN_DIR mode 700, config_resolution.txt format" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+base_branch: main
+allow_no_ci: false
+YAML
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  run_dir="${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}"
+  [ "$(stat -c %a "${run_dir}")" = "700" ]
+  [ "$(stat -c %a "${run_dir}/env")" = "600" ]
+  grep -qE '^GH_REPO=test-org/test-repo \(source=yaml\)$' "${run_dir}/config_resolution.txt"
+  grep -qE '^BASE_BRANCH=main \(source=yaml\)$' "${run_dir}/config_resolution.txt"
+  grep -qE '^ALLOW_NO_CI=false \(source=yaml\)$' "${run_dir}/config_resolution.txt"
+}
+
+@test "env file rejects YAML values containing newlines" {
+  # YAML's double-quoted scalar `"foo\nbar"` decodes to a literal newline —
+  # use the printf-literal `\\n` so YAML (not printf) does the escape.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  printf 'repo: "test/test"\nbase_branch: "foo\\nbar"\n' \
+    > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  grep -qi "newline" \
+    "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/setup_error.txt"
+}
+
+@test "env file single-quotes values containing \$(...) and backticks" {
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: 'test/test'
+base_branch: '$(rm -rf $HOME)'
+YAML
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  rid="$(cat "${XDG_CACHE_HOME}/dip/dev_loop/.current_rid")"
+  ( set -a; . "${XDG_CACHE_HOME}/dip/dev_loop/runs/${rid}/env"; set +a
+    [ "${BASE_BRANCH}" = '$(rm -rf $HOME)' ] )
+}
