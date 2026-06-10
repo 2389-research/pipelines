@@ -83,6 +83,34 @@ YAML
   [ "${rid_after}" = "${rid_a}" ]
 }
 
+@test "lock-held branch stays setup-lock-held even when run_dir mkdir fails" {
+  # Defense-in-depth for #51: an unwritable runs/ dir at the moment a
+  # second invocation hits the lock-contention branch must NOT trip the
+  # EXIT trap (which would emit `setup-failed` and re-route through the
+  # destructive CleanupWorktree). The mkdir + setup_error.txt redirect
+  # are deliberately best-effort so the marker emission survives.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
+  # First setup_run claims the lock cleanly.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  LOCK_DIR="${DIP_ROOT}/.dev_loop.lock"
+  printf '%s' "$$" > "${LOCK_DIR}/holder_pid"
+  # Make runs/ read-only so the second invocation's lock-held branch can't
+  # mkdir its own run_dir. Pre-fix, set -e would have tripped on the
+  # unprotected mkdir and the trap would have emitted setup-failed.
+  chmod 555 "${DIP_ROOT}/runs"
+  run sh -c "$(cat "${SCRIPT}")"
+  # Restore before teardown so rm -rf can clean up.
+  chmod 755 "${DIP_ROOT}/runs"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-lock-held" ]
+}
+
 @test "prior worktree triggers setup-resume-required" {
   mkdir -p "${WORKDIR}/dev_loop/config"
   cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
@@ -487,6 +515,30 @@ GH
   # (the bootstrap contract — cleanup/ratchet rely on this).
   ( set -a; . "${run_dir}/env"; set +a
     [ "${DEV_LOOP_RUN_DIR}" = "${run_dir}" ] )
+}
+
+@test "emergency env file sources cleanly when DIP_ROOT contains spaces" {
+  # The emergency-env writer can't call sh_single_quote (PR #54's re-entrance
+  # gap), but it must still emit a sourceable env file when DEV_LOOP_STATE_ROOT
+  # — and hence the derived run_dir — contains a space. Unquoted KEY=value
+  # under `set -a; . env; set +a` would split the value at whitespace and try
+  # to run the tail as commands, breaking every downstream bootstrap.
+  spaced_root="${TMPDIR}/with spaces/state"
+  mkdir -p "${spaced_root}/runs"
+  # No YAML, no GH_REPO → emit_failure's "no repo configured" path.
+  DEV_LOOP_STATE_ROOT="${spaced_root}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${spaced_root}/.current_rid")"
+  run_dir="${spaced_root}/runs/${rid}"
+  [ -f "${run_dir}/env" ]
+  # The round-trip is the proof: source the file and confirm DEV_LOOP_RUN_DIR
+  # equals the spaced run_dir verbatim. Pre-fix this returned only the prefix
+  # up to the first space.
+  ( set -a; . "${run_dir}/env"; set +a
+    [ "${DEV_LOOP_RUN_DIR}" = "${run_dir}" ] \
+      || { printf 'roundtrip mismatch: got=%s expected=%s\n' \
+             "${DEV_LOOP_RUN_DIR}" "${run_dir}" >&2; return 1; } )
 }
 
 @test "EXIT-trap-driven setup-failed writes \$run_dir/env" {

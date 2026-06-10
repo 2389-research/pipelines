@@ -71,9 +71,12 @@ run_dir="${DIP_ROOT}/runs/${rid}"
 # the routing marker than die inside the failure path. Deliberately does NOT
 # call sh_single_quote/emit_env: that would re-enter emit_failure on a NL/CR
 # trip and turn the `setup-failed` marker into env-file bytes inside a
-# brace-group redirect (PR #54's gap). rid + run_dir are zero-arg-known shell
-# identifiers (date + $$ + DIP_ROOT path); GH_REPO / BASE_BRANCH /
-# TRACKER_RUN_DIR are emitted as empty literals.
+# brace-group redirect (PR #54's gap). rid is a date + $$ literal (always
+# safe); run_dir is `$DIP_ROOT/runs/$rid` and DIP_ROOT can be an operator-
+# provided path (env / YAML), so the values are single-quoted to survive
+# spaces under `set -a; . env; set +a`. Single-quote-in-DIP_ROOT remains
+# pathological and out of scope here — upstream reject_special already
+# blocks NL/CR, the only chars that would smuggle a marker into the writer.
 write_emergency_env() {
   [ -n "${run_dir:-}" ] || return 0
   mkdir -p "${run_dir}" 2>/dev/null || true
@@ -81,8 +84,8 @@ write_emergency_env() {
     printf "GH_REPO=''\n"
     printf "BASE_BRANCH=''\n"
     printf "ALLOW_NO_CI='false'\n"
-    printf 'DEV_LOOP_RUN_ID=%s\n' "${rid}"
-    printf 'DEV_LOOP_RUN_DIR=%s\n' "${run_dir}"
+    printf "DEV_LOOP_RUN_ID='%s'\n" "${rid}"
+    printf "DEV_LOOP_RUN_DIR='%s'\n" "${run_dir}"
     printf "TRACKER_RUN_DIR=''\n"
   } > "${run_dir}/env" 2>/dev/null || true
   chmod 600 "${run_dir}/env" 2>/dev/null || true
@@ -196,12 +199,25 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
     # Intentionally does NOT publish .current_rid: doing so would clobber
     # the holder's published rid → next invocation's setup_run would resolve
     # RUN_DIR to THIS run's stub, not the holder's real run_dir.
+    #
+    # The mkdir + setup_error.txt write are best-effort: under `set -e` a
+    # failure here (disk full / runs/ unwritable) would trip the EXIT trap
+    # and emit `setup-failed` instead, re-routing into CleanupWorktree and
+    # reintroducing the very destructive behavior this branch closes. Keep
+    # the marker emission alive even when the breadcrumb writes can't land.
     holder=$(cat "${LOCK_DIR}/rid" 2>/dev/null || printf '<unknown>')
-    mkdir -p "${run_dir}"
-    {
-      printf 'another dev_loop run is active (rid=%s)\n' "${holder}"
-      printf 'release the lock if it is stale: rm -rf %s\n' "${LOCK_DIR}"
-    } > "${run_dir}/setup_error.txt"
+    mkdir -p "${run_dir}" 2>/dev/null || true
+    # Guard the redirect with a directory existence check: dash prints
+    # "cannot create ...: Directory nonexistent" to the shell's own stderr
+    # (not the brace-group's 2> target) when a redirect's parent dir is
+    # missing, polluting tracker's captured stream. The breadcrumb is
+    # best-effort anyway — skip it cleanly if mkdir didn't land.
+    if [ -d "${run_dir}" ]; then
+      {
+        printf 'another dev_loop run is active (rid=%s)\n' "${holder}"
+        printf 'release the lock if it is stale: rm -rf %s\n' "${LOCK_DIR}"
+      } > "${run_dir}/setup_error.txt" 2>/dev/null || true
+    fi
     printf 'setup-lock-held'
     exit 0
   fi
