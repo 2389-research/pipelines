@@ -29,7 +29,15 @@ set +a
 # missing env / env-is-symlink) signals state corruption so deep that emitting
 # persist-failed would just defer the failure to CleanupWorktree's own
 # bootstrap, which would re-trip the same error.
-trap 'if [ $? -ne 0 ]; then printf "persist-failed"; exit 0; fi' EXIT
+# shellcheck disable=SC2154  # rc is assigned inside the single-quoted trap body
+trap 'rc=$?
+      if [ "${rc}" -ne 0 ]; then
+        [ -s "${RUN_DIR}/persist_yagni_error.txt" ] \
+          || printf "unexpected non-zero exit (rc=%s)\n" "${rc}" \
+             > "${RUN_DIR}/persist_yagni_error.txt" 2>/dev/null || true
+        printf "persist-failed"
+        exit 0
+      fi' EXIT
 
 # Resolve tracker's active artifact dir. setup_run.sh pins TRACKER_RUN_DIR in
 # the env file; if it's missing or invalid, fail closed rather than falling

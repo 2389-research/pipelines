@@ -150,6 +150,31 @@ EOF
   [ -s "${RUN_DIR}/persist_pragmatism_error.txt" ]
 }
 
+@test "trap writes fallback sidecar on unexpected exit (#48 review)" {
+  # When the script exits non-zero AFTER the success path (e.g., `mv` failing
+  # under set -e between jq success and the success printf), the trap fires
+  # but no exit-1-path sidecar was written -- ratchet_log would then record
+  # outcome=unknown instead of persist-failed. The trap must write a fallback
+  # breadcrumb so the ratchet can find it. Mirrors setup_run.sh's EXIT trap.
+  stage_response SquadPragmatism verdict_pass.json
+  # Stage a fake `mv` that always fails. The atomic-write step
+  # (`mv "${target}.tmp" "${target}"`) trips set -e -> trap fires AFTER jq
+  # succeeded -- exactly the unexpected-failure window.
+  fake_bin="${TMPDIR}/fake_bin"
+  mkdir -p "${fake_bin}"
+  cat > "${fake_bin}/mv" <<'SH'
+#!/bin/sh
+exit 1
+SH
+  chmod +x "${fake_bin}/mv"
+  export PATH="${fake_bin}:${PATH}"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  [ -s "${RUN_DIR}/persist_pragmatism_error.txt" ]
+  grep -q "unexpected non-zero exit" "${RUN_DIR}/persist_pragmatism_error.txt"
+}
+
 @test "missing rid sentinel exits non-zero (bootstrap preamble unchanged)" {
   # The bootstrap-preamble exit-1s are deliberately preserved: by the time a
   # persist script runs, setup_run.sh has had its chance to write the

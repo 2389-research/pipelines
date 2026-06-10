@@ -78,6 +78,23 @@ teardown() {
   grep -q "persist-failed" "${RATCHET}"
 }
 
+@test "synthesis sidecar alone does NOT misclassify as persist-failed (#48 review)" {
+  # persist_synthesis.sh writes persist_synthesis_error.txt at every failure
+  # site but emits ctx.tool_marker=synthesized-abandoned, NOT persist-failed.
+  # The .dip routes synthesized-abandoned via the synth_abandoned cleanup
+  # edge with that intent. The ratchet's persist_*_error.txt detection must
+  # NOT swallow synthesis-abandoned runs into outcome=persist-failed; that
+  # mismatches the marker the workflow actually emitted.
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  printf 'fix/42-x' > "${RUN_DIR}/branch_name.txt"
+  printf 'response missing\n' > "${RUN_DIR}/persist_synthesis_error.txt"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "ratcheted" ]
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  ! grep -q "persist-failed" "${RATCHET}"
+}
+
 @test "setup-failed wins when both setup_error.txt and persist_*_error.txt exist" {
   # Defense in depth: a setup failure is more upstream than a persist failure,
   # so the ratchet's outcome label should resolve to setup-failed when both
