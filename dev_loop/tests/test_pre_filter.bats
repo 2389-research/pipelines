@@ -89,7 +89,7 @@ JSON
   # Survivor count must be unchanged from the "three survivors" case — strip is non-destructive.
   count="$(cat "${RUN_DIR}/filter_count.txt")"
   [ "${count}" = "3" ]
-  # Zero survivors may carry a body field after the strip.
+  # No surviving issue may carry a body field after the strip.
   with_body="$(jq '[.[] | select(has("body"))] | length' "${RUN_DIR}/filtered_issues.json")"
   [ "${with_body}" = "0" ]
 }

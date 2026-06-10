@@ -240,11 +240,15 @@ accessible, base-branch autodetect failure, no repo configured.
   malicious convention edit could steer the Implementer or reviewers. This is
   a separate threat from accidental secret-leak (which is item 1).
 - **`pre_filter_issues` strips the GitHub issue `body` field before feeding
-  the filtered list into `SelectNextIssue` via `${ctx.last_response}`.** This
-  bounds the prompt-injection surface to title/labels/author (the first is
-  GitHub-length-capped, the other two come from authenticated identity /
-  org-controlled taxonomies). The raw body still lands on disk at
-  `$RUN_DIR/issues.json` for forensics, but never reaches an agent prompt.
+  the filtered list into `SelectNextIssue` via `${ctx.last_response}`.** The
+  surviving payload is `number`, `title`, `url`, `labels`, `author`,
+  `createdAt`. Of those, only `title`, `labels`, and `author` are
+  contributor-influenced and so define the prompt-injection surface — and
+  each is constrained (title is GitHub-length-capped; labels and author come
+  from authenticated identity / org-controlled taxonomies). `number`, `url`,
+  and `createdAt` are structural GitHub-issued metadata, not free-form text.
+  The raw body still lands on disk at `$RUN_DIR/issues.json` for forensics,
+  but never reaches an agent prompt.
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.
