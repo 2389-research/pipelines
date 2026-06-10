@@ -86,6 +86,9 @@ jq --argjson excluded "${EXCLUDED_LABELS}" \
     and ((.title // "") | test($title_re; "i") | not)
   ))
   | sort_by(priority_rank, .number)
+  # Drop free-form body (issue #50 prompt-injection close): SelectNextIssue
+  # consumes this list via ${ctx.last_response}; raw body still on disk for forensics.
+  | map(del(.body))
 ' "${RUN_DIR}/issues.json" > "${RUN_DIR}/filtered_issues.json.tmp" \
   || emit_failure "jq filter failed"
 

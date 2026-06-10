@@ -239,6 +239,12 @@ accessible, base-branch autodetect failure, no repo configured.
   `${ctx.last_response}` is a known cross-node prompt-injection vector; a
   malicious convention edit could steer the Implementer or reviewers. This is
   a separate threat from accidental secret-leak (which is item 1).
+- **`pre_filter_issues` strips the GitHub issue `body` field before feeding
+  the filtered list into `SelectNextIssue` via `${ctx.last_response}`.** This
+  bounds the prompt-injection surface to title/labels/author (the first is
+  GitHub-length-capped, the other two come from authenticated identity /
+  org-controlled taxonomies). The raw body still lands on disk at
+  `$RUN_DIR/issues.json` for forensics, but never reaches an agent prompt.
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.
