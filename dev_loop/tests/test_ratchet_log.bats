@@ -63,6 +63,35 @@ teardown() {
   awk -F '\t' 'NR>1 && NF != 7 {fail=1} END {exit fail}' "${RATCHET}"
 }
 
+@test "setup-failed → cleanup_worktree → ratchet_log completes (#52 end-to-end)" {
+  # End-to-end proof that the full failure-routing chain in dev_loop.dip
+  # progresses: setup-failed → CleanupWorktree → RatchetLog → Exit. Each
+  # downstream's bootstrap preamble requires $RUN_DIR/env; emit_failure
+  # must have written it.
+  SETUP="${BATS_TEST_DIRNAME}/../scripts/setup_run.sh"
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  # Wipe the stage_run-staged rid/env so we observe ONLY what setup_run's
+  # failure path produces.
+  rm -rf "${DIP_ROOT}/runs" "${DIP_ROOT}/.current_rid"
+  mkdir -p "${DIP_ROOT}/runs"
+  # No GH_REPO env, no YAML → "no repo configured" emit_failure path.
+  run sh -c "$(cat "${SETUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  # Follow setup-failed → CleanupWorktree edge.
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+  # Follow CleanupWorktree → RatchetLog edge.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "ratcheted" ]
+  # The ratchet must record a row for this failed run with outcome=setup-failed.
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  [ -f "${RATCHET}" ]
+  grep -q "setup-failed" "${RATCHET}"
+}
+
 @test "missing .current_rid exits non-zero (canonical bootstrap contract)" {
   # Today's pipeline contract: cleanup_worktree intentionally KEEPS
   # .current_rid so ratchet_log can find run_dir (see test_worktree.bats

@@ -1,6 +1,6 @@
 #!/bin/sh
 # setup_run.sh — initialize the per-run state directory and verify prereqs.
-# Emits: setup-ok | setup-resume-required | setup-failed
+# Emits: setup-ok | setup-resume-required | setup-failed | setup-lock-held
 #
 # Runs under dash (tracker invokes via `sh -c <content>` — the shebang is
 # advisory). POSIX `sh` style (no bash arrays, no `trap ERR`, no `[[ ]]`),
@@ -62,9 +62,39 @@ fi
 rid="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_dir="${DIP_ROOT}/runs/${rid}"
 
+# write_emergency_env — emit a minimal $run_dir/env file on the setup-failure
+# path so downstream CleanupWorktree + RatchetLog can complete their own
+# bootstrap (every downstream's preamble hard-requires $RUN_DIR/env). The 6
+# keys mirror the allow-list constant in the comment block below emit_env;
+# absent values stay empty so the bootstrap source still succeeds. Best-effort
+# — every step is `|| true`'d; if the run_dir is unwritable we'd rather emit
+# the routing marker than die inside the failure path. Deliberately does NOT
+# call sh_single_quote/emit_env: that would re-enter emit_failure on a NL/CR
+# trip and turn the `setup-failed` marker into env-file bytes inside a
+# brace-group redirect (PR #54's gap). rid is a date + $$ literal (always
+# safe); run_dir is `$DIP_ROOT/runs/$rid` and DIP_ROOT can be an operator-
+# provided path (env / YAML), so the values are single-quoted to survive
+# spaces under `set -a; . env; set +a`. Single-quote-in-DIP_ROOT remains
+# pathological and out of scope here — upstream reject_special already
+# blocks NL/CR, the only chars that would smuggle a marker into the writer.
+write_emergency_env() {
+  [ -n "${run_dir:-}" ] || return 0
+  mkdir -p "${run_dir}" 2>/dev/null || true
+  {
+    printf "GH_REPO=''\n"
+    printf "BASE_BRANCH=''\n"
+    printf "ALLOW_NO_CI='false'\n"
+    printf "DEV_LOOP_RUN_ID='%s'\n" "${rid}"
+    printf "DEV_LOOP_RUN_DIR='%s'\n" "${run_dir}"
+    printf "TRACKER_RUN_DIR=''\n"
+  } > "${run_dir}/env" 2>/dev/null || true
+  chmod 600 "${run_dir}/env" 2>/dev/null || true
+}
+
 emit_failure() {
   mkdir -p "${run_dir}" 2>/dev/null || true
   printf '%s\n' "$1" > "${run_dir}/setup_error.txt" 2>/dev/null || true
+  write_emergency_env
   # Publish .current_rid so downstream cleanup/ratchet can find this run_dir.
   # Atomic via mv -Tf to keep the partial-state invariant.
   printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid.tmp" 2>/dev/null || true
@@ -90,6 +120,9 @@ trap 'rc=$?
         mkdir -p "${run_dir}" 2>/dev/null || true
         printf "unexpected non-zero exit (rc=%s)\n" "${rc}" \
           > "${run_dir}/setup_error.txt" 2>/dev/null || true
+        # Write the emergency env so CleanupWorktree + RatchetLog can bootstrap
+        # even when the trap (not emit_failure) is the marker emitter.
+        write_emergency_env
         # Publish .current_rid so downstream cleanup/ratchet can find run_dir
         # even when the trap (not emit_failure) is the marker emitter.
         printf "%s" "${rid}" > "${DIP_ROOT}/.current_rid.tmp" 2>/dev/null || true
@@ -157,13 +190,35 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
     rm -rf "${LOCK_DIR}" 2>/dev/null || true
     mkdir "${LOCK_DIR}"
   else
+    # Lock held by a live tracker run. Emit `setup-lock-held` (NOT
+    # `setup-failed`) so the dip can route this invocation straight to Exit
+    # without traversing CleanupWorktree — the .dev_loop_worktree symlink in
+    # cwd belongs to the live holder, and CleanupWorktree's unconditional
+    # `rm` would corrupt the holder's working tree (issue #51).
+    #
+    # Intentionally does NOT publish .current_rid: doing so would clobber
+    # the holder's published rid → next invocation's setup_run would resolve
+    # RUN_DIR to THIS run's stub, not the holder's real run_dir.
+    #
+    # The mkdir + setup_error.txt write are best-effort: under `set -e` a
+    # failure here (disk full / runs/ unwritable) would trip the EXIT trap
+    # and emit `setup-failed` instead, re-routing into CleanupWorktree and
+    # reintroducing the very destructive behavior this branch closes. Keep
+    # the marker emission alive even when the breadcrumb writes can't land.
     holder=$(cat "${LOCK_DIR}/rid" 2>/dev/null || printf '<unknown>')
-    mkdir -p "${run_dir}"
-    {
-      printf 'another dev_loop run is active (rid=%s)\n' "${holder}"
-      printf 'release the lock if it is stale: rm -rf %s\n' "${LOCK_DIR}"
-    } > "${run_dir}/setup_error.txt"
-    printf 'setup-failed'
+    mkdir -p "${run_dir}" 2>/dev/null || true
+    # Guard the redirect with a directory existence check: dash prints
+    # "cannot create ...: Directory nonexistent" to the shell's own stderr
+    # (not the brace-group's 2> target) when a redirect's parent dir is
+    # missing, polluting tracker's captured stream. The breadcrumb is
+    # best-effort anyway — skip it cleanly if mkdir didn't land.
+    if [ -d "${run_dir}" ]; then
+      {
+        printf 'another dev_loop run is active (rid=%s)\n' "${holder}"
+        printf 'release the lock if it is stale: rm -rf %s\n' "${LOCK_DIR}"
+      } > "${run_dir}/setup_error.txt" 2>/dev/null || true
+    fi
+    printf 'setup-lock-held'
     exit 0
   fi
 fi

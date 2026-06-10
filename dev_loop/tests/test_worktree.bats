@@ -108,6 +108,26 @@ teardown() {
   [ ! -d "${DIP_ROOT}/.dev_loop.lock" ]
 }
 
+@test "setup-failed → cleanup_worktree completes (#52 end-to-end)" {
+  # End-to-end proof that the setup-failed → CleanupWorktree edge in
+  # dev_loop.dip now actually progresses: cleanup_worktree's bootstrap
+  # preamble (sources $RUN_DIR/env) must succeed even though setup_run
+  # failed before any "normal" env file was written.
+  SETUP="${BATS_TEST_DIRNAME}/../scripts/setup_run.sh"
+  # Wipe the stage_run-staged rid/env so we observe ONLY what setup_run's
+  # failure path produces.
+  rm -rf "${DIP_ROOT}/runs" "${DIP_ROOT}/.current_rid"
+  mkdir -p "${DIP_ROOT}/runs"
+  # No GH_REPO env, no YAML → "no repo configured" emit_failure path.
+  run sh -c "$(cat "${SETUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  # Now follow the dip edge: setup-failed routes into CleanupWorktree.
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+}
+
 @test "BASE_BRANCH from env drives create_worktree (no main branch)" {
   cd "${WORKDIR}"
   git init -q -b develop "${WORKDIR}/upstream"

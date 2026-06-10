@@ -49,7 +49,7 @@ YAML
   [ "${rid_a}" != "${rid_b}" ]
 }
 
-@test "concurrent setup_run (lock held) rejects the second invocation" {
+@test "concurrent setup_run (lock held) emits setup-lock-held (non-destructive route)" {
   # First setup_run claims the lock and exits successfully; the lock dir
   # remains because cleanup_worktree has not run yet (this is the very
   # early-phase window the lock exists to protect).
@@ -71,13 +71,44 @@ YAML
   # alive for the duration of this test.
   printf '%s' "$$" > "${LOCK_DIR}/holder_pid"
 
-  # A second setup_run starting in this window must fail closed and leave
-  # rid_a as the active rid so the first run can keep going.
+  # A second setup_run starting in this window must emit `setup-lock-held` —
+  # NOT `setup-failed`. The dip routes setup-lock-held straight to Exit (no
+  # CleanupWorktree), because there's no worktree to clean for THIS invocation
+  # and the .dev_loop_worktree symlink in cwd belongs to the OTHER live run.
+  # .current_rid must stay pinned at rid_a so the first run keeps its RUN_DIR.
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "setup-failed" ]
+  [ "${output}" = "setup-lock-held" ]
   rid_after="$(cat "${DIP_ROOT}/.current_rid")"
   [ "${rid_after}" = "${rid_a}" ]
+}
+
+@test "lock-held branch stays setup-lock-held even when run_dir mkdir fails" {
+  # Defense-in-depth for #51: an unwritable runs/ dir at the moment a
+  # second invocation hits the lock-contention branch must NOT trip the
+  # EXIT trap (which would emit `setup-failed` and re-route through the
+  # destructive CleanupWorktree). The mkdir + setup_error.txt redirect
+  # are deliberately best-effort so the marker emission survives.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: fixture-org/fixture-repo
+base_branch: main
+YAML
+  # First setup_run claims the lock cleanly.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  LOCK_DIR="${DIP_ROOT}/.dev_loop.lock"
+  printf '%s' "$$" > "${LOCK_DIR}/holder_pid"
+  # Make runs/ read-only so the second invocation's lock-held branch can't
+  # mkdir its own run_dir. Pre-fix, set -e would have tripped on the
+  # unprotected mkdir and the trap would have emitted setup-failed.
+  chmod 555 "${DIP_ROOT}/runs"
+  run sh -c "$(cat "${SCRIPT}")"
+  # Restore before teardown so rm -rf can clean up.
+  chmod 755 "${DIP_ROOT}/runs"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-lock-held" ]
 }
 
 @test "prior worktree triggers setup-resume-required" {
@@ -459,4 +490,100 @@ GH
   # setup_error.txt is at the published run_dir.
   [ -f "${DIP_ROOT}/runs/${rid}/setup_error.txt" ]
   grep -q "no repo configured" "${DIP_ROOT}/runs/${rid}/setup_error.txt"
+}
+
+@test "setup-failed emit_failure writes \$run_dir/env (mode 600, only allow-listed keys)" {
+  # No YAML, no env → "no repo configured" emit_failure path.
+  # Every downstream script's bootstrap hard-requires $RUN_DIR/env to exist.
+  # Without it, CleanupWorktree fails its own bootstrap before it can run,
+  # and the pipeline halts on cleanup instead of routing through to RatchetLog.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  run_dir="${DIP_ROOT}/runs/${rid}"
+  [ -f "${run_dir}/env" ]
+  [ ! -L "${run_dir}/env" ]
+  [ "$(stat -c %a "${run_dir}/env")" = "600" ]
+  # Each of the 6 allow-listed keys must be present (empty values OK for the
+  # strings the failure path can't resolve).
+  for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR TRACKER_RUN_DIR; do
+    grep -q "^${key}=" "${run_dir}/env" \
+      || { printf 'missing key %s in emergency env\n' "${key}" >&2; return 1; }
+  done
+  # Sourcing must succeed and DEV_LOOP_RUN_DIR must round-trip to run_dir
+  # (the bootstrap contract — cleanup/ratchet rely on this).
+  ( set -a; . "${run_dir}/env"; set +a
+    [ "${DEV_LOOP_RUN_DIR}" = "${run_dir}" ] )
+}
+
+@test "emergency env file sources cleanly when DIP_ROOT contains spaces" {
+  # The emergency-env writer can't call sh_single_quote (PR #54's re-entrance
+  # gap), but it must still emit a sourceable env file when DEV_LOOP_STATE_ROOT
+  # — and hence the derived run_dir — contains a space. Unquoted KEY=value
+  # under `set -a; . env; set +a` would split the value at whitespace and try
+  # to run the tail as commands, breaking every downstream bootstrap.
+  spaced_root="${TMPDIR}/with spaces/state"
+  mkdir -p "${spaced_root}/runs"
+  # No YAML, no GH_REPO → emit_failure's "no repo configured" path.
+  DEV_LOOP_STATE_ROOT="${spaced_root}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${spaced_root}/.current_rid")"
+  run_dir="${spaced_root}/runs/${rid}"
+  [ -f "${run_dir}/env" ]
+  # The round-trip is the proof: source the file and confirm DEV_LOOP_RUN_DIR
+  # equals the spaced run_dir verbatim. Pre-fix this returned only the prefix
+  # up to the first space.
+  ( set -a; . "${run_dir}/env"; set +a
+    [ "${DEV_LOOP_RUN_DIR}" = "${run_dir}" ] \
+      || { printf 'roundtrip mismatch: got=%s expected=%s\n' \
+             "${DEV_LOOP_RUN_DIR}" "${run_dir}" >&2; return 1; } )
+}
+
+@test "EXIT-trap-driven setup-failed writes \$run_dir/env" {
+  # Force an unexpected non-zero exit AFTER rid/run_dir are set: a yq shim
+  # that satisfies the variant probe + the explicit emit_failure-wrapped
+  # `.repo` query, then fails on the unwrapped `.base_branch` assignment
+  # (set -e propagates → EXIT trap fires).
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<'YAML'
+repo: test-org/test-repo
+YAML
+  shim="${TMPDIR}/shim"
+  mkdir -p "${shim}"
+  cat > "${shim}/yq" <<'YQ'
+#!/bin/sh
+case "$1" in
+  --version) printf 'yq (https://github.com/mikefarah/yq/) version v4.40.0\n'; exit 0 ;;
+  -r)
+    case "$2" in
+      .runtime_state_root*) printf '\n'; exit 0 ;;
+      .repo*)              printf 'test-org/test-repo\n'; exit 0 ;;
+      *)                   exit 99 ;;
+    esac ;;
+esac
+exit 99
+YQ
+  chmod +x "${shim}/yq"
+  ln -sf "$(command -v jq)" "${shim}/jq" 2>/dev/null || true
+  ln -sf "$(command -v git)" "${shim}/git" 2>/dev/null || true
+  ln -sf "$(command -v gh)" "${shim}/gh" 2>/dev/null || true
+  ln -sf "$(command -v tracker)" "${shim}/tracker" 2>/dev/null || true
+  ln -sf "$(command -v timeout)" "${shim}/timeout" 2>/dev/null || true
+  PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  run_dir="${DIP_ROOT}/runs/${rid}"
+  # The trap-written marker in setup_error.txt distinguishes it from emit_failure.
+  grep -q "unexpected non-zero exit" "${run_dir}/setup_error.txt"
+  # The trap must also have written the emergency env so CleanupWorktree's
+  # bootstrap can source it. Same 6 keys + same mode as the emit_failure path.
+  [ -f "${run_dir}/env" ]
+  [ "$(stat -c %a "${run_dir}/env")" = "600" ]
+  for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR TRACKER_RUN_DIR; do
+    grep -q "^${key}=" "${run_dir}/env" \
+      || { printf 'missing key %s in trap-written env\n' "${key}" >&2; return 1; }
+  done
 }
