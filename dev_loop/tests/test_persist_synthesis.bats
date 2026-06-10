@@ -51,6 +51,17 @@ stage() {
   [ -f "${RUN_DIR}/persist_synthesis_error.txt" ]
 }
 
+@test "missing TRACKER_RUN_DIR also trips the trap (synthesized-abandoned)" {
+  # Issue #48 parity: every post-bootstrap exit-1 site in persist_synthesis.sh
+  # must trip the EXIT trap and emit synthesized-abandoned. Wipe the entire
+  # .tracker tree so TRACKER_RUN_DIR (set by stage_run) points at a now-gone
+  # directory.
+  rm -rf "${WORKDIR}/.tracker"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "synthesized-abandoned" ]
+}
+
 @test "missing rid sentinel exits non-zero" {
   # The canonical bootstrap fails closed before the trap installs that would
   # otherwise emit synthesized-abandoned. Missing rid means setup_run did not

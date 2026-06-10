@@ -49,6 +49,12 @@ elif [ -f "${RUN_DIR}/pr_head_sha_drift.txt" ]; then
   outcome='sha-drifted'
 elif [ -f "${RUN_DIR}/setup_error.txt" ]; then
   outcome='setup-failed'
+elif ls "${RUN_DIR}"/persist_*_error.txt >/dev/null 2>&1; then
+  # Any persist_<flavor>_error.txt means a persist node tripped its post-
+  # bootstrap failure path (issue #48). Order matters: setup-failed wins
+  # when both files exist (setup is more upstream). Sidecar NAMES already
+  # encode WHICH persist node failed — the ratchet outcome stays generic.
+  outcome='persist-failed'
 fi
 
 notes=""

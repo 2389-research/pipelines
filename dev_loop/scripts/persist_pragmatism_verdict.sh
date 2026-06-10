@@ -21,6 +21,16 @@ set -a
 set +a
 # ---end-bootstrap-reference---
 
+# Post-bootstrap failure trap (issue #48). Every exit-1 site below already
+# writes an actionable line to $RUN_DIR/persist_pragmatism_error.txt; the trap
+# converts the non-zero exit into ctx.tool_marker=persist-failed so the .dip
+# can route through CleanupWorktree + RatchetLog rather than halt mid-flight.
+# Installed AFTER the bootstrap preamble: a bootstrap exit-1 (no .current_rid /
+# missing env / env-is-symlink) signals state corruption so deep that emitting
+# persist-failed would just defer the failure to CleanupWorktree's own
+# bootstrap, which would re-trip the same error.
+trap 'if [ $? -ne 0 ]; then printf "persist-failed"; exit 0; fi' EXIT
+
 # Resolve tracker's active artifact dir. setup_run.sh pins TRACKER_RUN_DIR in
 # the env file; if it's missing or invalid, fail closed rather than falling
 # back to ls -dt mtime (which would silently route to whichever run finished

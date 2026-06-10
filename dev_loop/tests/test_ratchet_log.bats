@@ -63,6 +63,63 @@ teardown() {
   awk -F '\t' 'NR>1 && NF != 7 {fail=1} END {exit fail}' "${RATCHET}"
 }
 
+@test "persist_*_error.txt → outcome=persist-failed in ratchet (#48)" {
+  # When any persist_*.sh script trips its post-bootstrap failure path it
+  # writes $RUN_DIR/persist_<flavor>_error.txt and emits ctx.tool_marker=
+  # persist-failed (routed to CleanupWorktree -> RatchetLog by the .dip).
+  # The ratchet must surface the failure class so post-mortems can find it.
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  printf 'fix/42-x' > "${RUN_DIR}/branch_name.txt"
+  printf 'response missing at /tmp/x\n' > "${RUN_DIR}/persist_pragmatism_error.txt"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "ratcheted" ]
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  grep -q "persist-failed" "${RATCHET}"
+}
+
+@test "setup-failed wins when both setup_error.txt and persist_*_error.txt exist" {
+  # Defense in depth: a setup failure is more upstream than a persist failure,
+  # so the ratchet's outcome label should resolve to setup-failed when both
+  # files are present. (Shouldn't happen in practice — setup_run's own failure
+  # path halts before any persist node fires — but order matters in the
+  # elif-chain.)
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  printf 'setup hit a brick wall\n' > "${RUN_DIR}/setup_error.txt"
+  printf 'response missing\n'       > "${RUN_DIR}/persist_blocker_error.txt"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  grep -q "setup-failed" "${RATCHET}"
+  ! grep -q "persist-failed" "${RATCHET}"
+}
+
+@test "persist-failed → cleanup_worktree → ratchet_log completes (#48 end-to-end)" {
+  # End-to-end proof for #48: a missing tracker artifact during a persist
+  # node must trip the EXIT trap (emit persist-failed, exit 0) so the .dip
+  # can route through CleanupWorktree -> RatchetLog -> Exit. Without the
+  # trap the persist script would exit 1 and halt the pipeline mid-flight.
+  PERSIST="${BATS_TEST_DIRNAME}/../scripts/persist_pragmatism_verdict.sh"
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  # Wipe .tracker so TRACKER_RUN_DIR (set by stage_run) points at a now-gone
+  # dir — the script's first post-bootstrap check fails -> trap fires.
+  rm -rf "${WORKDIR}/.tracker"
+  run sh -c "$(cat "${PERSIST}")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  [ -f "${RUN_DIR}/persist_pragmatism_error.txt" ]
+  # Follow persist-failed -> CleanupWorktree edge.
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+  # Follow CleanupWorktree -> RatchetLog edge.
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "ratcheted" ]
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  grep -q "persist-failed" "${RATCHET}"
+}
+
 @test "setup-failed → cleanup_worktree → ratchet_log completes (#52 end-to-end)" {
   # End-to-end proof that the full failure-routing chain in dev_loop.dip
   # progresses: setup-failed → CleanupWorktree → RatchetLog → Exit. Each

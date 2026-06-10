@@ -86,6 +86,15 @@ synthesized-approved
 synthesized-changes_requested
 synthesized-abandoned
 
+# --- persist_*.sh (shared failure marker, issue #48) ---
+# Every post-bootstrap failure path in the seven non-synthesis persist scripts
+# (selected_issue, plan, pragmatism/yagni/testability/holistic/blocker verdict)
+# emits this marker via an EXIT trap. Routes through CleanupWorktree +
+# RatchetLog so the pipeline can't be halted by a missing tracker artifact.
+# persist_synthesis.sh uses synthesized-abandoned for the same shape — it
+# predates this marker and stays on its existing scheme.
+persist-failed
+
 # --- cleanup_worktree.sh ---
 worktree-cleaned
 
