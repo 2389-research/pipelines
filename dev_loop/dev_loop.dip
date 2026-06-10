@@ -27,19 +27,19 @@ workflow DevLoop
   tool SetupRun
     label: "Setup Run"
     timeout: 30s
-    marker_grep: '^(setup-ok|setup-resume-required|setup-failed)$'
+    marker_grep: "^(setup-ok|setup-resume-required|setup-failed)$"
     command_file: scripts/setup_run.sh
 
   tool FetchOpenIssues
     label: "Fetch Open Issues"
     timeout: 60s
-    marker_grep: '^(fetched-ok|fetch-failed)$'
+    marker_grep: "^(fetched-ok|fetch-failed)$"
     command_file: scripts/fetch_open_issues.sh
 
   tool PreFilter
     label: "Pre-Filter Issues"
     timeout: 15s
-    marker_grep: '^(filter-ok|filter-empty|filter-failed)$'
+    marker_grep: "^(filter-ok|filter-empty|filter-failed)$"
     command_file: scripts/pre_filter_issues.sh
 
   agent SelectNextIssue
@@ -132,13 +132,13 @@ workflow DevLoop
   tool CreateWorktree
     label: "Create Worktree"
     timeout: 60s
-    marker_grep: '^(worktree-ok|worktree-failed)$'
+    marker_grep: "^(worktree-ok|worktree-failed)$"
     command_file: scripts/create_worktree.sh
 
   tool InitIterCounter
     label: "Init Iter Counter"
     timeout: 5s
-    marker_grep: '^iter-init-ok$'
+    marker_grep: "^iter-init-ok$"
     command_file: scripts/init_iter_counter.sh
 
   # ── PHASE 2: implement + squad-review iteration ────────────────────────────
@@ -159,13 +159,13 @@ workflow DevLoop
   tool PushAndOpenPR
     label: "Push + Open PR"
     timeout: 120s
-    marker_grep: '^(pr-ready|pr-push-failed)$'
+    marker_grep: "^(pr-ready|pr-push-failed)$"
     command_file: scripts/push_and_open_pr.sh
 
   tool FetchPRContext
     label: "Fetch PR Context"
     timeout: 60s
-    marker_grep: '^(pr-context-ok|pr-closed|pr-merged-externally)$'
+    marker_grep: "^(pr-context-ok|pr-closed|pr-merged-externally)$"
     command_file: scripts/fetch_pr_context.sh
 
   parallel SquadFanout -> SquadPragmatism, SquadYagni, SquadTestability, SquadHolistic, SquadBlocker
@@ -491,43 +491,43 @@ workflow DevLoop
     label: "Persist Synthesis"
     timeout: 10s
     fallback_target: CleanupWorktree
-    marker_grep: '^synthesized-(approved|changes_requested|abandoned)$'
+    marker_grep: "^synthesized-(approved|changes_requested|abandoned)$"
     command_file: scripts/persist_synthesis.sh
 
   tool RecheckPRSHA
     label: "Recheck PR HEAD SHA"
     timeout: 15s
-    marker_grep: '^(sha-same|sha-drifted)$'
+    marker_grep: "^(sha-same|sha-drifted)$"
     command_file: scripts/recheck_pr_sha.sh
 
   tool LocalGates
     label: "Local Gates"
     timeout: 180s
-    marker_grep: '^(gates-pass|gates-fail)$'
+    marker_grep: "^(gates-pass|gates-fail)$"
     command_file: scripts/local_gates.sh
 
   tool PollCI
     label: "Poll CI"
     timeout: 1200s
-    marker_grep: '^(ci-success|ci-failed|ci-timeout|ci-no-checks)$'
+    marker_grep: "^(ci-success|ci-failed|ci-timeout|ci-no-checks)$"
     command_file: scripts/poll_ci.sh
 
   tool MergePR
     label: "Merge PR"
     timeout: 60s
-    marker_grep: '^(merge-ok|merge-blocked)$'
+    marker_grep: "^(merge-ok|merge-blocked)$"
     command_file: scripts/merge_pr.sh
 
   tool PostSquadComment
     label: "Post Squad Comment"
     timeout: 30s
-    marker_grep: '^comment-posted$'
+    marker_grep: "^comment-posted$"
     command_file: scripts/post_squad_comment.sh
 
   tool IncIterCounter
     label: "Increment Iter Counter"
     timeout: 5s
-    marker_grep: '^(iter-next|iter-exhausted)$'
+    marker_grep: "^(iter-next|iter-exhausted)$"
     command_file: scripts/inc_iter_counter.sh
 
   # ── PHASE 3: cleanup + ratchet ─────────────────────────────────────────────
@@ -535,13 +535,13 @@ workflow DevLoop
   tool CleanupWorktree
     label: "Cleanup Worktree"
     timeout: 30s
-    marker_grep: '^worktree-cleaned$'
+    marker_grep: "^worktree-cleaned$"
     command_file: scripts/cleanup_worktree.sh
 
   tool RatchetLog
     label: "Ratchet Log"
     timeout: 10s
-    marker_grep: '^ratcheted$'
+    marker_grep: "^ratcheted$"
     command_file: scripts/ratchet_log.sh
 
   tool Exit

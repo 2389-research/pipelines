@@ -116,12 +116,14 @@ sh_single_quote() {
   printf "'%s'\n" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-# emit_env KEY VALUE — writes `KEY='shell-escaped-value'\n` to fd 3 (opened
-# by the atomic env.tmp block below). Fails closed via emit_failure if the
-# value would smuggle a newline / CR.
+# emit_env KEY VALUE — writes `KEY='shell-escaped-value'\n` to stdout for the
+# enclosing brace-group redirect (` { ... } > "${env_tmp}"`, below) to atomic-
+# write into env.tmp. Fails closed via emit_failure if the value would smuggle
+# a newline / CR. The brace-group form replaces an earlier numbered-fd redirect
+# pattern; tracker's packed-.dipx denylist refuses that construct (tracker#333).
 emit_env() {
   esc=$(sh_single_quote "$2") || emit_failure "env value contains newline/CR (key=$1)"
-  printf '%s=%s\n' "$1" "${esc}" >&3
+  printf '%s=%s\n' "$1" "${esc}"
 }
 
 # Concurrency lock — atomic mkdir is the POSIX-portable pattern. Without
@@ -293,20 +295,37 @@ elif [ -n "${yaml_allow_no_ci}" ]; then
 else
   resolved_allow_no_ci='false'; src_allow='default'
 fi
+# Validate every value that emit_env will write, so emit_failure inside the
+# brace-group redirect below is unreachable. If it ever fired there, its
+# `printf setup-failed` would land in env.tmp instead of tracker's stdout,
+# swallowing the failure marker.
+#
+# Coverage: yaml_repo / yaml_base_branch / yaml_allow_no_ci checked upstream
+# at YAML-parse time; resolved_base also checked after autodetect. The
+# remaining cases (env-precedence GH_REPO / ALLOW_NO_CI; synthesized rid /
+# run_dir / tracker_run_dir) are caught here. rid is built from a fixed date
+# format + $$ so the check is dead-code defense-in-depth, but keeping it
+# preserves the "all emit_env inputs validated" invariant the test suite
+# implicitly relies on.
+reject_special "${resolved_repo}" GH_REPO
+reject_special "${resolved_allow_no_ci}" ALLOW_NO_CI
+reject_special "${rid}" DEV_LOOP_RUN_ID
+reject_special "${run_dir}" DEV_LOOP_RUN_DIR
+reject_special "${tracker_run_dir}" TRACKER_RUN_DIR
 
 # Build env file atomically: write to env.tmp inside RUN_DIR, then mv -f to
 # env. umask 077 (set at the top of the script) ensures env.tmp inherits
 # mode 600 by default; the explicit chmod is belt-and-suspenders in case a
 # downstream change to umask slips in.
 env_tmp="${run_dir}/env.tmp"
-exec 3>"${env_tmp}"
-emit_env GH_REPO          "${resolved_repo}"
-emit_env BASE_BRANCH      "${resolved_base}"
-emit_env ALLOW_NO_CI      "${resolved_allow_no_ci}"
-emit_env DEV_LOOP_RUN_ID  "${rid}"
-emit_env DEV_LOOP_RUN_DIR "${run_dir}"
-emit_env TRACKER_RUN_DIR  "${tracker_run_dir}"
-exec 3>&-
+{
+  emit_env GH_REPO          "${resolved_repo}"
+  emit_env BASE_BRANCH      "${resolved_base}"
+  emit_env ALLOW_NO_CI      "${resolved_allow_no_ci}"
+  emit_env DEV_LOOP_RUN_ID  "${rid}"
+  emit_env DEV_LOOP_RUN_DIR "${run_dir}"
+  emit_env TRACKER_RUN_DIR  "${tracker_run_dir}"
+} > "${env_tmp}"
 chmod 600 "${env_tmp}"
 # Reject a pre-existing symlink at the destination (operator's UID is trusted
 # per spec §3.5; this guards against an accidental operator symlink left
