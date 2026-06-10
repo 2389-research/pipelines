@@ -15,9 +15,15 @@
 # the corresponding marker_grep on the routing node.
 
 # --- setup_run.sh ---
+# setup-lock-held is distinct from setup-failed: it signals that ANOTHER
+# tracker invocation holds the .dev_loop.lock and is still alive. The dip
+# routes it straight to Exit (NOT through CleanupWorktree), because the
+# .dev_loop_worktree symlink in cwd belongs to the live holder — running
+# cleanup here would destructively unlink the other run's worktree.
 setup-ok
 setup-resume-required
 setup-failed
+setup-lock-held
 
 # --- fetch_open_issues.sh ---
 # Emits fetched-ok when N>=0 issues were fetched (count goes to runs/<rid>/issues_count.txt).

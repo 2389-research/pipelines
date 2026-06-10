@@ -27,7 +27,7 @@ workflow DevLoop
   tool SetupRun
     label: "Setup Run"
     timeout: 30s
-    marker_grep: "^(setup-ok|setup-resume-required|setup-failed)$"
+    marker_grep: "^(setup-ok|setup-resume-required|setup-failed|setup-lock-held)$"
     command_file: scripts/setup_run.sh
 
   tool FetchOpenIssues
@@ -558,6 +558,10 @@ workflow DevLoop
     SetupRun              -> FetchOpenIssues          when ctx.tool_marker = setup-ok
     SetupRun              -> Exit                     when ctx.tool_marker = setup-resume-required   label: resume_required
     SetupRun              -> CleanupWorktree          when ctx.tool_marker = setup-failed             label: setup_failed
+    # setup-lock-held bypasses CleanupWorktree: the .dev_loop_worktree symlink
+    # in cwd belongs to the live lock holder, so cleaning here would corrupt
+    # the OTHER active run's working tree (issue #51).
+    SetupRun              -> Exit                     when ctx.tool_marker = setup-lock-held          label: lock_held
     FetchOpenIssues       -> PreFilter                when ctx.tool_marker = fetched-ok
     FetchOpenIssues       -> CleanupWorktree          when ctx.tool_marker = fetch-failed             label: fetch_failed
     PreFilter             -> SelectNextIssue          when ctx.tool_marker = filter-ok
