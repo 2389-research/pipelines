@@ -8,8 +8,8 @@
 @test "every marker_grep in dev_loop.dip uses double-quoted form" {
   DIP="${BATS_TEST_DIRNAME}/../dev_loop.dip"
   [ -f "${DIP}" ]
-  # Any `marker_grep: '...'` (single-quoted) would be packed corrupt by
-  # dippin pack (single quotes embedded literally into the .dipx scalar).
+  # Any `marker_grep: '...'` (single-quoted) would be corrupted when packed
+  # by dippin (single quotes embedded literally into the .dipx scalar).
   ! grep -nE "^[[:space:]]*marker_grep: '" "${DIP}"
   # And the expected double-quoted form covers every marker_grep line.
   total=$(grep -cE "^[[:space:]]*marker_grep:" "${DIP}")

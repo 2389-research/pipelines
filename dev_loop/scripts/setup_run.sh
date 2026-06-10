@@ -295,13 +295,23 @@ elif [ -n "${yaml_allow_no_ci}" ]; then
 else
   resolved_allow_no_ci='false'; src_allow='default'
 fi
-# Cover env-precedence paths for GH_REPO and ALLOW_NO_CI (yaml paths are
-# already validated above). Required so emit_env inside the brace-group
-# redirect below can't reach emit_failure — its `printf setup-failed` would
-# otherwise land in env.tmp instead of tracker's stdout, swallowing the
-# failure marker.
+# Validate every value that emit_env will write, so emit_failure inside the
+# brace-group redirect below is unreachable. If it ever fired there, its
+# `printf setup-failed` would land in env.tmp instead of tracker's stdout,
+# swallowing the failure marker.
+#
+# Coverage: yaml_repo / yaml_base_branch / yaml_allow_no_ci checked upstream
+# at YAML-parse time; resolved_base also checked after autodetect. The
+# remaining cases (env-precedence GH_REPO / ALLOW_NO_CI; synthesized rid /
+# run_dir / tracker_run_dir) are caught here. rid is built from a fixed date
+# format + $$ so the check is dead-code defense-in-depth, but keeping it
+# preserves the "all emit_env inputs validated" invariant the test suite
+# implicitly relies on.
 reject_special "${resolved_repo}" GH_REPO
 reject_special "${resolved_allow_no_ci}" ALLOW_NO_CI
+reject_special "${rid}" DEV_LOOP_RUN_ID
+reject_special "${run_dir}" DEV_LOOP_RUN_DIR
+reject_special "${tracker_run_dir}" TRACKER_RUN_DIR
 
 # Build env file atomically: write to env.tmp inside RUN_DIR, then mv -f to
 # env. umask 077 (set at the top of the script) ensures env.tmp inherits
