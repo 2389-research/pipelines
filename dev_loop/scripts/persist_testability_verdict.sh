@@ -1,6 +1,6 @@
 #!/bin/sh
 # persist_testability_verdict.sh — capture SquadTestability's JSON verdict to disk.
-# Emits ctx.outcome=success on persist-ok, fail on persist-failed (sh -c exit).
+# Emits: persisted-testability | persist-failed (issue #48).
 set -eu
 
 # ---begin-bootstrap-reference---

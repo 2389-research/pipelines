@@ -1,6 +1,7 @@
 #!/bin/sh
 # persist_selected_issue.sh — capture SelectNextIssue's JSON output to disk.
-# Writes $RUN_DIR/selected_issue.json. ctx.outcome routes the .dip; no marker.
+# Writes $RUN_DIR/selected_issue.json + sidecar selected_issue_number.txt.
+# Emits: persisted-selected | persist-failed (issue #48).
 set -eu
 
 # ---begin-bootstrap-reference---

@@ -1,6 +1,6 @@
 #!/bin/sh
 # persist_yagni_verdict.sh — capture SquadYagni's JSON verdict to disk.
-# Emits ctx.outcome=success on persist-ok, fail on persist-failed (sh -c exit).
+# Emits: persisted-yagni | persist-failed (issue #48).
 set -eu
 
 # ---begin-bootstrap-reference---

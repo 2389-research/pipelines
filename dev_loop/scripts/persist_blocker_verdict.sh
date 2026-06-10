@@ -1,6 +1,6 @@
 #!/bin/sh
 # persist_blocker_verdict.sh — capture SquadBlocker's JSON verdict to disk.
-# Emits ctx.outcome=success on persist-ok, fail on persist-failed (sh -c exit).
+# Emits: persisted-blocker | persist-failed (issue #48).
 set -eu
 
 # ---begin-bootstrap-reference---
