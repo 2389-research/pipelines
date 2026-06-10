@@ -15,8 +15,10 @@ if [ ! -f "${DIP}" ] || [ ! -f "${MARKERS}" ]; then
   exit 2
 fi
 
-# Extract each marker_grep regex (the single-quoted body) from the .dip.
-regexes=$(grep -oE "marker_grep: '[^']+'" "${DIP}" | sed "s/marker_grep: '//;s/'$//" | sort -u)
+# Extract each marker_grep regex (the double-quoted body) from the .dip.
+# Double-quoted is required by dippin-lang#114 — pack corrupts single-quoted
+# scalars by embedding literal quotes into the packed .dipx value.
+regexes=$(grep -oE 'marker_grep: "[^"]+"' "${DIP}" | sed 's/marker_grep: "//;s/"$//' | sort -u)
 
 # Extract literal markers (skip comments / blanks).
 literals=$(sed -e 's/#.*$//' "${MARKERS}" | grep -vE '^[[:space:]]*$' | sort -u)
