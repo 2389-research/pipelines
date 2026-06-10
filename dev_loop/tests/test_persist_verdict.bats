@@ -86,11 +86,12 @@ EOF
   [ "${persona}" = "pragmatism" ]
 }
 
-@test "env file present with missing/invalid TRACKER_RUN_DIR fails closed" {
+@test "env file present with missing/invalid TRACKER_RUN_DIR emits persist-failed" {
   # The contract: when setup_run.sh has written an env file, we MUST honor
   # TRACKER_RUN_DIR from it. If it's missing or points at a non-existent dir,
-  # fail closed rather than fall back to mtime (which would route to whichever
-  # .tracker/runs/ dir is newest — defeating concurrency isolation).
+  # emit `persist-failed` (issue #48) so the .dip routes through
+  # CleanupWorktree + RatchetLog rather than halting the pipeline. We do NOT
+  # fall back to mtime — that would defeat concurrency isolation.
   stage_response SquadPragmatism verdict_pass.json
   # Rewrite env without TRACKER_RUN_DIR.
   cat > "${RUN_DIR}/env" <<EOF
@@ -99,7 +100,9 @@ BASE_BRANCH='main'
 EOF
   chmod 600 "${RUN_DIR}/env"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
-  [ "${status}" -ne 0 ]
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  grep -q "no tracker run dir" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {
@@ -117,21 +120,68 @@ EOF
   printf '%s\n' "${output}" | grep -q -- "BLOCK"
 }
 
-@test "missing response.md exits non-zero with error file" {
+@test "missing response.md emits persist-failed (status 0) with error file" {
+  # Post-bootstrap exit-1 sites now route through ctx.tool_marker=persist-failed
+  # (issue #48) so the .dip can cleanup + ratchet rather than halt mid-flight.
   # No stage_response call -> response.md missing.
   mkdir -p "${TRACKER_RUN_DIR}/SquadPragmatism"   # keep tracker_run_dir resolvable
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
-  [ "${status}" -ne 0 ]
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
   grep -q "response missing" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
-@test "missing tracker run dir exits non-zero" {
+@test "missing tracker run dir emits persist-failed (status 0)" {
   rm -rf "${WORKDIR}/.tracker"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
-  [ "${status}" -ne 0 ]
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
 }
 
-@test "missing rid sentinel exits non-zero" {
+@test "malformed response.md emits persist-failed with jq stderr in sidecar" {
+  # jq's parse failure on the response is a post-bootstrap failure; emit
+  # persist-failed so the .dip routes to CleanupWorktree.
+  mkdir -p "${TRACKER_RUN_DIR}/SquadPragmatism"
+  printf 'this is not valid JSON {{{\n' > "${TRACKER_RUN_DIR}/SquadPragmatism/response.md"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  # The sidecar must contain jq's stderr (a parse-error breadcrumb).
+  [ -s "${RUN_DIR}/persist_pragmatism_error.txt" ]
+}
+
+@test "trap writes fallback sidecar on unexpected exit (#48 review)" {
+  # When the script exits non-zero AFTER the success path (e.g., `mv` failing
+  # under set -e between jq success and the success printf), the trap fires
+  # but no exit-1-path sidecar was written -- ratchet_log would then record
+  # outcome=unknown instead of persist-failed. The trap must write a fallback
+  # breadcrumb so the ratchet can find it. Mirrors setup_run.sh's EXIT trap.
+  stage_response SquadPragmatism verdict_pass.json
+  # Stage a fake `mv` that always fails. The atomic-write step
+  # (`mv "${target}.tmp" "${target}"`) trips set -e -> trap fires AFTER jq
+  # succeeded -- exactly the unexpected-failure window.
+  fake_bin="${TMPDIR}/fake_bin"
+  mkdir -p "${fake_bin}"
+  cat > "${fake_bin}/mv" <<'SH'
+#!/bin/sh
+exit 1
+SH
+  chmod +x "${fake_bin}/mv"
+  export PATH="${fake_bin}:${PATH}"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  [ -s "${RUN_DIR}/persist_pragmatism_error.txt" ]
+  grep -q "unexpected non-zero exit" "${RUN_DIR}/persist_pragmatism_error.txt"
+}
+
+@test "missing rid sentinel exits non-zero (bootstrap preamble unchanged)" {
+  # The bootstrap-preamble exit-1s are deliberately preserved: by the time a
+  # persist script runs, setup_run.sh has had its chance to write the
+  # emergency env. If env is genuinely missing now, the run state is so
+  # corrupted that emitting persist-failed would just defer the failure to
+  # CleanupWorktree's own bootstrap (which would re-trip the same missing-env
+  # error). test_bootstrap_identical.sh also enforces byte-identical preamble.
   rm "${DIP_ROOT}/.current_rid"
   stage_response SquadPragmatism verdict_pass.json
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"

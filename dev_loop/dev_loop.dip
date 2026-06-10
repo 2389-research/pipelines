@@ -77,6 +77,7 @@ workflow DevLoop
     label: "Persist Selected Issue"
     timeout: 10s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-selected|persist-failed)$"
     command_file: scripts/persist_selected_issue.sh
 
   agent PlanMinimalPRs
@@ -127,6 +128,7 @@ workflow DevLoop
     label: "Persist Plan"
     timeout: 10s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-plan|persist-failed)$"
     command_file: scripts/persist_plan.sh
 
   tool CreateWorktree
@@ -219,6 +221,7 @@ workflow DevLoop
     label: "Persist Pragmatism Verdict"
     timeout: 5s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-pragmatism|persist-failed)$"
     command_file: scripts/persist_pragmatism_verdict.sh
 
   agent SquadYagni
@@ -270,6 +273,7 @@ workflow DevLoop
     label: "Persist YAGNI Verdict"
     timeout: 5s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-yagni|persist-failed)$"
     command_file: scripts/persist_yagni_verdict.sh
 
   agent SquadTestability
@@ -323,6 +327,7 @@ workflow DevLoop
     label: "Persist Testability Verdict"
     timeout: 5s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-testability|persist-failed)$"
     command_file: scripts/persist_testability_verdict.sh
 
   agent SquadHolistic
@@ -374,6 +379,7 @@ workflow DevLoop
     label: "Persist Holistic Verdict"
     timeout: 5s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-holistic|persist-failed)$"
     command_file: scripts/persist_holistic_verdict.sh
 
   agent SquadBlocker
@@ -429,6 +435,7 @@ workflow DevLoop
     label: "Persist Blocker Verdict"
     timeout: 5s
     fallback_target: CleanupWorktree
+    marker_grep: "^(persisted-blocker|persist-failed)$"
     command_file: scripts/persist_blocker_verdict.sh
 
   # fan_in source set must match the parallel target set (dippin DIP007).
@@ -569,10 +576,12 @@ workflow DevLoop
     PreFilter             -> CleanupWorktree          when ctx.tool_marker = filter-failed            label: filter_failed
     SelectNextIssue       -> PersistSelectedIssue     when ctx.outcome = success
     SelectNextIssue       -> CleanupWorktree          when ctx.outcome = fail   label: select_failed
-    PersistSelectedIssue  -> PlanMinimalPRs
+    PersistSelectedIssue  -> PlanMinimalPRs            when ctx.tool_marker = persisted-selected
+    PersistSelectedIssue  -> CleanupWorktree           when ctx.tool_marker = persist-failed   label: persist_selected_failed
     PlanMinimalPRs        -> PersistPlan              when ctx.outcome = success
     PlanMinimalPRs        -> CleanupWorktree          when ctx.outcome = fail   label: plan_failed
-    PersistPlan           -> CreateWorktree
+    PersistPlan           -> CreateWorktree            when ctx.tool_marker = persisted-plan
+    PersistPlan           -> CleanupWorktree           when ctx.tool_marker = persist-failed   label: persist_plan_failed
     CreateWorktree        -> InitIterCounter          when ctx.tool_marker = worktree-ok
     CreateWorktree        -> CleanupWorktree          when ctx.tool_marker = worktree-failed          label: worktree_failed
     InitIterCounter       -> Implementer              when ctx.tool_marker = iter-init-ok
@@ -600,11 +609,16 @@ workflow DevLoop
     SquadHolistic         -> CleanupWorktree            when ctx.outcome = fail   label: squad_holistic_failed
     SquadBlocker          -> PersistBlockerVerdict      when ctx.outcome = success
     SquadBlocker          -> CleanupWorktree            when ctx.outcome = fail   label: squad_blocker_failed
-    PersistPragmatismVerdict   -> SquadJoin
-    PersistYagniVerdict        -> SquadJoin
-    PersistTestabilityVerdict  -> SquadJoin
-    PersistHolisticVerdict     -> SquadJoin
-    PersistBlockerVerdict      -> SquadJoin
+    PersistPragmatismVerdict   -> SquadJoin           when ctx.tool_marker = persisted-pragmatism
+    PersistPragmatismVerdict   -> CleanupWorktree     when ctx.tool_marker = persist-failed   label: persist_pragmatism_failed
+    PersistYagniVerdict        -> SquadJoin           when ctx.tool_marker = persisted-yagni
+    PersistYagniVerdict        -> CleanupWorktree     when ctx.tool_marker = persist-failed   label: persist_yagni_failed
+    PersistTestabilityVerdict  -> SquadJoin           when ctx.tool_marker = persisted-testability
+    PersistTestabilityVerdict  -> CleanupWorktree     when ctx.tool_marker = persist-failed   label: persist_testability_failed
+    PersistHolisticVerdict     -> SquadJoin           when ctx.tool_marker = persisted-holistic
+    PersistHolisticVerdict     -> CleanupWorktree     when ctx.tool_marker = persist-failed   label: persist_holistic_failed
+    PersistBlockerVerdict      -> SquadJoin           when ctx.tool_marker = persisted-blocker
+    PersistBlockerVerdict      -> CleanupWorktree     when ctx.tool_marker = persist-failed   label: persist_blocker_failed
 
     SquadJoin             -> SquadSynthesizer
     SquadSynthesizer      -> PersistSynthesis           when ctx.outcome = success

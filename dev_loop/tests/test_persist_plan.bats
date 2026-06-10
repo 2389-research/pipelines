@@ -28,11 +28,12 @@ teardown() {
   [ "${branch}" = "fix/42-writable-paths-anchor" ]
 }
 
-@test "plan with null/missing branch_name fails closed (no 'null' sidecar)" {
+@test "plan with null/missing branch_name emits persist-failed (no 'null' sidecar)" {
   # Stage a plan response that has every required Plan field EXCEPT a real
   # branch_name (null). Without validation, jq -r would write the literal
   # string "null" into branch_name.txt and create_worktree would try to
-  # `git worktree add -b null`. Validation must catch it.
+  # `git worktree add -b null`. Issue #48: validation now emits persist-failed
+  # so the .dip routes through CleanupWorktree + RatchetLog.
   cat > "${TRACKER_RUN_DIR}/PlanMinimalPRs/response.md" <<'JSON'
 {
   "issue_number": 42,
@@ -45,14 +46,25 @@ teardown() {
 }
 JSON
   run sh -c "$(cat "${SCRIPT}")"
-  [ "${status}" -ne 0 ]
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
   grep -q "branch_name is missing" "${RUN_DIR}/persist_plan_error.txt"
   [ ! -f "${RUN_DIR}/branch_name.txt" ]
 }
 
-@test "missing response.md exits non-zero" {
+@test "missing response.md emits persist-failed" {
   rm -f "${TRACKER_RUN_DIR}/PlanMinimalPRs/response.md"
   run sh -c "$(cat "${SCRIPT}")"
-  [ "${status}" -ne 0 ]
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
   grep -q "response missing" "${RUN_DIR}/persist_plan_error.txt"
+}
+
+@test "malformed response.md emits persist-failed" {
+  printf 'not json at all\n' > "${TRACKER_RUN_DIR}/PlanMinimalPRs/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  [ -s "${RUN_DIR}/persist_plan_error.txt" ]
+  [ ! -f "${RUN_DIR}/branch_name.txt" ]
 }

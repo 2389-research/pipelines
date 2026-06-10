@@ -27,9 +27,43 @@ teardown() {
   [ "${num}" = "42" ]
 }
 
-@test "missing response.md exits non-zero with error file" {
+@test "missing response.md emits persist-failed (status 0) with error file" {
+  # Issue #48: post-bootstrap failures emit ctx.tool_marker=persist-failed
+  # so the .dip routes through CleanupWorktree + RatchetLog.
   rm -f "${TRACKER_RUN_DIR}/SelectNextIssue/response.md"
   run sh -c "$(cat "${SCRIPT}")"
-  [ "${status}" -ne 0 ]
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
   grep -q "response missing" "${RUN_DIR}/persist_selected_error.txt"
+}
+
+@test "malformed response.md emits persist-failed" {
+  # jq parse failure on the response is a post-bootstrap failure.
+  printf 'not valid json {{{\n' > "${TRACKER_RUN_DIR}/SelectNextIssue/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  [ -s "${RUN_DIR}/persist_selected_error.txt" ]
+}
+
+@test "non-numeric issue_number emits persist-failed" {
+  # The validator in persist_selected_issue rejects non-positive-integer
+  # issue_number so create_worktree + push_and_open_pr never interpolate the
+  # literal string "null" into branch names. Convert from exit 1 to
+  # persist-failed (issue #48).
+  cat > "${TRACKER_RUN_DIR}/SelectNextIssue/response.md" <<'JSON'
+{
+  "issue_number": "not-a-number",
+  "title": "x",
+  "url": "https://example.test/x",
+  "author": "anon",
+  "created_at": "2026-01-01T00:00:00Z",
+  "selection_rationale": "long enough rationale string"
+}
+JSON
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  grep -q "issue_number" "${RUN_DIR}/persist_selected_error.txt"
+  [ ! -f "${RUN_DIR}/selected_issue_number.txt" ]
 }

@@ -49,6 +49,25 @@ elif [ -f "${RUN_DIR}/pr_head_sha_drift.txt" ]; then
   outcome='sha-drifted'
 elif [ -f "${RUN_DIR}/setup_error.txt" ]; then
   outcome='setup-failed'
+elif [ -f "${RUN_DIR}/persist_selected_error.txt" ] \
+  || [ -f "${RUN_DIR}/persist_plan_error.txt" ] \
+  || [ -f "${RUN_DIR}/persist_pragmatism_error.txt" ] \
+  || [ -f "${RUN_DIR}/persist_yagni_error.txt" ] \
+  || [ -f "${RUN_DIR}/persist_testability_error.txt" ] \
+  || [ -f "${RUN_DIR}/persist_holistic_error.txt" ] \
+  || [ -f "${RUN_DIR}/persist_blocker_error.txt" ]; then
+  # Any of the seven non-synthesis persist_<flavor>_error.txt sidecars means
+  # the matching persist node tripped its post-bootstrap failure path
+  # (issue #48). Order matters: setup-failed wins when both files exist
+  # (setup is more upstream). Sidecar NAMES already encode WHICH persist
+  # node failed — the ratchet outcome stays generic.
+  #
+  # persist_synthesis_error.txt is DELIBERATELY EXCLUDED. persist_synthesis.sh
+  # uses the synthesized-abandoned marker (predates this scheme) and the
+  # workflow routes it via the synth_abandoned cleanup edge with that intent.
+  # Lumping it into outcome=persist-failed would mismatch the marker the
+  # workflow actually emitted.
+  outcome='persist-failed'
 fi
 
 notes=""
