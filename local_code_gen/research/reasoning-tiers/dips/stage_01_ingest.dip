@@ -1,0 +1,125 @@
+# ABOUTME: Stage 1 of the decomposed spec-to-sprints pipeline — INGEST.
+#          Standalone microservice stage: finds the spec file and runs analyze_spec.
+#          INPUT  (on disk): a spec file in the working dir (spec.md/SPEC.md/…/first *.md).
+#          OUTPUT (on disk): .ai/spec_analysis.md  (the handoff unit for stage_02_tournament).
+#          Run in isolation to test/iterate the analysis step without paying for the
+#          tournament + architect downstream. reasoning_effort on analyze_spec is the
+#          knob under test. Extracted verbatim from spec_to_sprints.dip (nodes + prompt).
+workflow IngestStage
+  goal: "Find the spec file in the working dir and produce .ai/spec_analysis.md — the structured analysis consumed by the decomposition tournament stage."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'ingest-stage-begin'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'ingest-stage-complete'
+
+  tool find_spec
+    label: "Find Spec File"
+    timeout: 30s
+    command:
+      set -eu
+      for f in spec.md SPEC.md design.md design-doc.md specification.md requirements.md prompt_plan.md; do
+        if [ -f "$f" ]; then
+          printf '%s' "$f"
+          exit 0
+        fi
+      done
+      first=$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' -not -path './docs/plans/*' -not -path './docs/superpowers/*' -not -path './.ai/*' | sort | head -1)
+      if [ -n "$first" ]; then
+        printf '%s' "$first"
+        exit 0
+      fi
+      printf 'no_spec_found'
+
+  agent no_spec_exit
+    label: "No Spec Found"
+    prompt:
+      No spec file was found in the working directory. The pipeline cannot proceed without a spec.
+
+      Searched for: spec.md, SPEC.md, design.md, design-doc.md, specification.md, requirements.md, prompt_plan.md, and any .md file within 2 directory levels.
+
+      To use this pipeline, place a spec file in the working directory and re-run.
+
+  agent analyze_spec
+    label: "Analyze Spec"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    writes: spec_analysis
+    goal_gate: true
+    retry_target: analyze_spec
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read the spec file found by the previous step and produce a structured analysis for sprint decomposition.
+
+      ## Process
+      1. Read the spec file thoroughly
+      2. Write .ai/spec_analysis.md with ALL of the following sections:
+
+      ### Project Summary
+      Name, purpose, one-paragraph description.
+
+      ### Tech Stack
+      Language, framework, database, test framework, linter, package manager — extracted from the spec or inferred from its requirements.
+
+      ### Functional Requirements (numbered)
+      Every discrete functional requirement extracted from the spec, numbered FR1-FRn. Each entry:
+      - ID (e.g., FR1)
+      - Spec section reference (e.g., "Section 5, FR1")
+      - One-line description
+      - Acceptance criteria if specified
+
+      ### Architectural Layers / Components (numbered)
+      For each component or layer the spec defines:
+      - Name
+      - Description (1 line)
+      - Dependencies (which other components it needs)
+
+      ### Dependency Graph
+      Which components can be built in parallel, which must be sequential, and why.
+
+      ### Complexity Assessment
+      For each component: low / medium / high complexity with one-line justification.
+
+      ### Rollout Phases
+      If the spec defines phases (v0, v1, v2), list what belongs in each. If not, note "no phases defined."
+
+      ### Open Questions
+      Ambiguities, unresolved decisions, or contradictions found in the spec.
+
+      ## Output
+      Write the analysis to .ai/spec_analysis.md. Create the .ai directory if it does not exist.
+
+      ## Critical Rules
+      - Only extract requirements explicitly stated in the spec. Do not invent, infer, or add requirements.
+      - If the spec is ambiguous, note the ambiguity in Open Questions rather than guessing.
+      - Every FR must have a direct spec section reference.
+
+      ## Success Criteria
+      - .ai/spec_analysis.md exists with ALL sections filled in
+      - Every functional requirement is numbered
+      - Every component dependency is mapped
+
+
+  edges
+    Start -> find_spec
+    find_spec -> analyze_spec  when ctx.tool_stdout != no_spec_found  label: spec_found
+    find_spec -> no_spec_exit  when ctx.tool_stdout = no_spec_found  label: no_spec
+    no_spec_exit -> Exit
+    analyze_spec -> Exit

@@ -1,0 +1,87 @@
+# ABOUTME: Stage 3 of the decomposed spec-to-sprints pipeline — PLAN GATE (human review).
+#          Standalone microservice stage: present the sprint plan, take an approve/revise
+#          decision, optionally apply feedback. INPUT (on disk): .ai/sprint_plan.md (from
+#          stage_02_tournament). OUTPUT (on disk): approved/revised .ai/sprint_plan.md
+#          (handoff unit for the architect stage). Extracted verbatim from spec_to_sprints.dip.
+#          NOTE: the approval_gate is a human node with two labeled edges ([A] Revise / [S]
+#          Approve). Under `--auto-approve` tracker selects the FIRST edge (Revise) and loops
+#          apply_feedback->approval_gate to the restart cap — so run this stage INTERACTIVELY
+#          (pick [S]), or drive only the approve path. See spec_to_sprints_alllow.dip for a
+#          single-path (approve-only) headless variant of this gate.
+workflow PlanGateStage
+  goal: "Present .ai/sprint_plan.md for human approval; on revise, apply feedback and re-present; on approve, finalize .ai/sprint_plan.md for the architect stage."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      printf 'plan-gate-stage-begin'
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'plan-gate-stage-complete'
+
+  agent present_plan
+    label: "Present Sprint Plan"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reads: sprint_plan
+    reasoning_effort: medium
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/sprint_plan.md and present a concise review summary for human approval:
+
+      1. Total sprint count
+      2. Sprint titles listed in order with dependencies noted
+      3. Requirement coverage: any FRs not covered?
+      4. Risk flags: any sprints that seem too large, too vague, or have unclear validation?
+
+      Keep the summary scannable. The human needs to decide: approve as-is, or request changes.
+
+  human approval_gate
+    label: "Approve Sprint Plan"
+
+  agent apply_feedback
+    label: "Apply Feedback"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: sprint_plan
+    writes: sprint_plan
+    prompt:
+      You are working in `run.working_dir`.
+
+      The human has provided feedback on the sprint plan. Read .ai/sprint_plan.md, incorporate the feedback, and rewrite .ai/sprint_plan.md with the changes applied.
+
+      Preserve the same format. Update sprint numbers if sprints are added, removed, or reordered. Ensure dependency references remain consistent after renumbering.
+
+  tool skip_approval
+    label: "Skip Approval"
+    timeout: 5s
+    command:
+      set -eu
+      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      count="unknown"
+      if [ -f .ai/sprint_plan.md ]; then
+        count=$(grep -c '^### Sprint' .ai/sprint_plan.md || true)
+      fi
+      printf 'approved\t%s\t%s\tauto-skipped\n' "$count" "$now"
+
+
+  edges
+    Start -> present_plan
+    present_plan -> approval_gate
+    approval_gate -> apply_feedback  label: "[A] Revise plan"
+    approval_gate -> skip_approval  label: "[S] Approve / Skip"
+    apply_feedback -> approval_gate  restart: true
+    skip_approval -> Exit
