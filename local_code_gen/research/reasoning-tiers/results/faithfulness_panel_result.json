@@ -1,108 +1,18 @@
 {
-  "summary": "Judge panel scoring each NIFB sprint-plan config (high/medium/low/hybrid) for faithfulness to the source spec",
-  "agentCount": 13,
-  "logs": [
-    "Panel aggregate: high=7.7/10 (missed:14 invented:10)  medium=8/10 (missed:14 invented:6)  low=7.7/10 (missed:17 invented:7)  hybrid=8/10 (missed:14 invented:9)"
+  "_note": "Curated aggregate of the faithfulness judge panel (3 lenses per config: completeness / scope_discipline / holistic, each scoring the config's sprint_plan.md against the NIFB source spec as ground truth, 0-10). high/medium/low/hybrid were scored in one panel run; medlow in a follow-up run with the identical lenses/rubric. fr_count is the FR count of that run's spec_analysis==sprint_plan (the tournament is FR-set-preserving). n=1 generation per config — see ../README.md 'Caveats'.",
+  "spec": "NIFB (2026-03-06 Galaxy Digital transcript + Email 1)",
+  "aggregate": {
+    "high":   { "config": "analyze=high, tournament=high",     "mean_faithfulness": 7.7, "per_lens": [7, 8, 8], "fr_count": 22, "n_missed_flags": 14, "n_invented_flags": 10 },
+    "medium": { "config": "analyze=medium, tournament=medium", "mean_faithfulness": 8.0, "per_lens": [8, 8, 8], "fr_count": 35, "n_missed_flags": 14, "n_invented_flags": 6 },
+    "low":    { "config": "analyze=low, tournament=low",       "mean_faithfulness": 7.7, "per_lens": [7, 8, 8], "fr_count": 34, "n_missed_flags": 17, "n_invented_flags": 7 },
+    "hybrid": { "config": "analyze=high, tournament=low",      "mean_faithfulness": 8.0, "per_lens": [8, 8, 8], "fr_count": 27, "n_missed_flags": 14, "n_invented_flags": 9 },
+    "medlow": { "config": "analyze=medium, tournament=low",    "mean_faithfulness": 8.0, "per_lens": [8, 8, 8], "fr_count": 19, "n_missed_flags": 17, "n_invented_flags": 2 }
+  },
+  "ranking": ["medium (8.0)", "hybrid (8.0)", "medlow (8.0)", "high (7.7)", "low (7.7)"],
+  "verdict_fr_count_vs_faithfulness": "No correlation. medium (~35 FRs in this run) and hybrid (~27) tied at the top with low-FR configs; high (22) and low (34) tied at the bottom. Faithfulness is driven by error TYPE (high over-specifies/invents SLAs+stack; low under-specifies/flattens the conversational UX), not FR count.",
+  "universal_blind_spots": [
+    "Login modernization (Google/Apple SSO, phone-code OTP, biometric/badge sign-in) — missed or deferred-to-non-goal by EVERY config",
+    "In-flow donor/company recognition during the signup/check-in conversation (the spec's marquee 'magical moment') — absent or reduced to a post-hoc batch match in EVERY config"
   ],
-  "result": {
-    "aggregate": {
-      "high": {
-        "mean_faithfulness": 7.7,
-        "per_lens": [
-          7,
-          8,
-          8
-        ],
-        "n_missed_flags": 14,
-        "n_invented_flags": 10,
-        "lenses": {
-          "completeness": {
-            "faithfulness": 7,
-            "notes": "Plan covers the bulk of real system requirements (registration, discovery, waivers, pathways, QR check-in, assignment engine, run-of-show, post-shift, RE sync/matching/exceptions) with good DoD specificity. Main gaps are emphasized friction-reducers (SSO/phone-code login), the in-flow donor/VIP recognition vision, the anonymized-test-artifact generation, video-format confirmations, and the handwritten-style digital card."
-          },
-          "scope_discipline": {
-            "faithfulness": 8,
-            "notes": "The plan is strongly faithful: nearly every sprint traces to a concrete spec requirement, and it correctly avoids casting the spec's process/research action-items (PII-free spreadsheet, Mammoth meta-test, admin recording) as product features. Deductions are for a handful of invented quality gates (Lighthouse score, <2s SLAs, override audit trail) and for punting two genuinely-stated requirements (social/SSO login; company/high-value-donor recognition in-flow) to non-goals."
-          },
-          "holistic": {
-            "faithfulness": 8,
-            "notes": "The plan faithfully captures the large majority of real requirements (minimal signup, browse-before-auth, conversational/concierge discovery, digital waiver, orientation tracking, SMS journey, four+ pathways, QR group check-in with on-site name capture, station/constraint auto-assignment with override, run-of-show, post-shift impact/Serving Hope, RE NXT sync with email/phone matching and <90% exception report) with good traceability. It loses a point for deferring/dropping the explicitly-discussed SSO/phone-code signin and the in-flow donor/company recognition magic moment, plus retaining the physical card; and it invents several concrete numeric targets (fixtures, perf, accessibility) and a tech stack not grounded in the spec."
-          }
-        }
-      },
-      "medium": {
-        "mean_faithfulness": 8,
-        "per_lens": [
-          8,
-          8,
-          8
-        ],
-        "n_missed_flags": 14,
-        "n_invented_flags": 6,
-        "lenses": {
-          "completeness": {
-            "faithfulness": 8,
-            "notes": "The plan covers the large majority of real software requirements thoroughly (browsing, minimal signup, pathways, waiver/orientation, SMS, QR, matching, planning, run-of-show, end-of-shift, RE NXT sync with 90% threshold + exception report, PII-free artifacts, E2E validation). Main completeness gaps are social/third-party + phone-code login (explicitly deferred despite being a core ask), in-flow/at-check-in donor recognition (reduced to a static badge), company-level recognition, video-confirmation vs long email, handwritten-style impact card, robust social sharing, and face/badge sign-in."
-          },
-          "scope_discipline": {
-            "faithfulness": 8,
-            "notes": "Nearly every functional sprint (003-014) traces cleanly to concrete asks in the transcript/emails, and finer splits (pathways into 005/006, RE NXT consolidated) are legitimate decomposition, not invention. The main scope-discipline violation is Sprint 015, which promotes the spec's research/validation workstream and PII-free-artifact action-items into shipped product features."
-          },
-          "holistic": {
-            "faithfulness": 8,
-            "notes": "The plan is largely faithful: nearly every FR traces to a concrete spec requirement and the granularity is well-justified. The main faithfulness gap is dropping authentication-modernization requirements (social/phone-code login, biometric/badge sign-in) that the spec actively endorses, by reclassifying them as non-goals without any covering FR. A few minor invented mechanisms (PII scanner) are reasonable but not requested."
-          }
-        }
-      },
-      "low": {
-        "mean_faithfulness": 7.7,
-        "per_lens": [
-          7,
-          8,
-          8
-        ],
-        "n_missed_flags": 17,
-        "n_invented_flags": 7,
-        "lenses": {
-          "completeness": {
-            "faithfulness": 7,
-            "notes": "The plan covers most concrete software requirements well (waivers, QR check-in, station/assignment planning, RE NXT matching with 90% threshold + exception report, end-to-end simulation, SMS journey). The biggest faithfulness gap on the completeness lens is downgrading the spec's central conversational/AI-agent concierge UX into a static preference quiz, plus several smaller omissions (company recognition, Apple/social sharing, handwritten-card look, returning-user de-cluttering)."
-          },
-          "scope_discipline": {
-            "faithfulness": 8,
-            "notes": "The plan is largely faithful and most sprints trace cleanly to real wants; the main scope-discipline issues are FR34 (prototype-as-provocation process miscast as a feature in Sprint 001) and the FR-coverage-matrix bookkeeping in Sprint 014. More notable on the other side are several genuinely-requested features from Email 1/2 (biometric/badge sign-in, native app, proactive shift-gap-fill SMS) that the plan silently drops, which I list as missed requirements rather than invented scope."
-          },
-          "holistic": {
-            "faithfulness": 8,
-            "notes": "The plan tracks the spec faithfully across the large majority of requirements with sound granularity, and every FR is traceable to a real need. Fidelity loss concentrates in flattening the explicitly conversational/concierge experience into a static quiz, partially shorting the phone-OTP login, omitting company/relationship recognition, and miscasting one process note (FR34) as a feature."
-          }
-        }
-      },
-      "hybrid": {
-        "mean_faithfulness": 8,
-        "per_lens": [
-          8,
-          8,
-          8
-        ],
-        "n_missed_flags": 14,
-        "n_invented_flags": 9,
-        "lenses": {
-          "completeness": {
-            "faithfulness": 8,
-            "notes": "The plan is broadly faithful and covers most real requirements with testable DoD. The main completeness gaps are about the donor-recognition experience being decoupled from the signup/check-in moments (the spec's emphasized 'magical' use case), omitted face/badge/fingerprint sign-in, proactive open-shift texting, and a per-week (not just per-day) run-of-show pull."
-          },
-          "scope_discipline": {
-            "faithfulness": 8,
-            "notes": "Nearly all 25 functional FRs trace cleanly to concrete asks in the transcript/emails, and finer splits (e.g., booking carved out of discovery) are legitimate. The two scope-discipline issues are the PII-scan tooling and the FR-traceability/validation-report artifacts, both of which are action-items/process-notes from the Mammoth meta-conversation recast as portal features."
-          },
-          "holistic": {
-            "faithfulness": 8,
-            "notes": "Strongly faithful: 27 granular FRs nearly all trace to genuine spec items (minimal signup, conversational discovery, SMS journey, digital waiver, QR check-in, five pathways, station auto-assignment with override, run-of-show, end-of-shift engagement, RE NXT sync with <90% exception report and no-replace scope, PII-free validation harness with perfectly-planned-shift test). Main faithfulness gaps are the wholly-missing biometric/badge sign-in (an explicit Email 1 ask) and the under-represented real-time staff flagging of high-value donor/company arrivals, plus a couple of invented SLAs/fallbacks."
-          }
-        }
-      }
-    },
-    "synthesis": "Ranking the four configs by faithfulness:\n\n| Rank | Config | Mean | Per-lens (comp/scope/holistic) | FR count signal |\n|------|--------|------|-------------------------------|-----------------|\n| T-1 | medium | 8.0 | 8 / 8 / 8 | ~15 FRs |\n| T-1 | hybrid | 8.0 | 8 / 8 / 8 | ~27 FRs |\n| T-3 | high | 7.7 | 7 / 8 / 8 | high-granularity |\n| T-3 | low | 7.7 | 7 / 8 / 8 | up to FR34 |\n\nmedium and hybrid tie at the top (8.0, no lens below 8). high and low tie at 7.7, both losing their point on the completeness lens (7).\n\n---\n\nCONSENSUS findings per config (missed flagged by >=2 lenses or unambiguously real; invented flagged by >=2 lenses or clearly process-miscast):\n\nhigh (7.7)\n- Consensus missed: (a) Social/SSO + phone-code login, explicitly punted to a Sprint 002 non-goal \u2014 flagged by all 3 lenses; (b) in-flow donor AND company/VIP recognition wired into the signup/check-in conversation \u2014 all 3 lenses; (c) physical-card retention + handwritten-look digital card \u2014 scope + holistic.\n- Consensus invented: (a) invented performance/quality SLAs \u2014 \"Lighthouse >=90\", \"<2s page load\", \"<2s assignment for 200 vols\" \u2014 scope + holistic; (b) assignment-override audit trail (who/when) \u2014 scope + holistic; (c) tech-stack mandate (Next.js/Prisma/NextAuth/Twilio) and fixture concretizations (50-vol taxonomy) \u2014 holistic.\n\nmedium (8.0)\n- Consensus missed: (a) social/federated + phone-code login marked non-goal \u2014 all 3 lenses; (b) biometric/badge/face-recognition sign-in for regulars \u2014 all 3 lenses; (c) in-flow/at-check-in donor recognition reduced to a static badge, plus company-level recognition omitted \u2014 completeness + holistic.\n- Consensus invented: Sprint 015 promoting the PII-free-artifact generation and the Mammoth E2E/validation meta-test into shipped product features \u2014 scope + holistic (PII scanner specifically).\n\nlow (7.7)\n- Consensus missed: (a) the central conversational/AI-agent concierge UX downgraded to a static preference quiz \u2014 completeness + holistic, the marquee gap; (b) company/relationship-mapping recognition \u2014 completeness + holistic; (c) Apple sign-in dropped + phone-OTP left stubbed \u2014 completeness + holistic; (d) biometric/badge sign-in + native app + proactive shift-gap-fill SMS \u2014 scope lens.\n- Consensus invented: FR34 \"prototype-as-provocation\" process note reified into a buildable Sprint 001 scope item + DoD \u2014 flagged by all 3 lenses (the cleanest unanimous miscast in the panel); FR-coverage-matrix bookkeeping (scope).\n\nhybrid (8.0)\n- Consensus missed: (a) biometric/badge/fingerprint sign-in for regulars, wholly omitted \u2014 all 3 lenses; (b) real-time staff flagging of high-value donor/company at signup/check-in (FR23 only surfaces it on the profile API) \u2014 all 3 lenses; (c) proactive open-shift broadcast texting \u2014 completeness.\n- Consensus invented: the Mammoth meta-test machinery recast as portal scope \u2014 PII-scan tooling (scripts/pii_scan.ts + DoD gate) and the FR-traceability/validation-report docs \u2014 scope + holistic; invented <2s plan-generation SLA (holistic).\n\n---\n\nVERDICT on the central question \u2014 did higher FR count correlate with worse faithfulness?\n\nNo. There is no monotonic relationship between FR count/granularity and faithfulness. The highest-granularity config (high, with invented fixtures/SLAs/stack) and the lowest (low, FR34 collapsing the concierge UX into a quiz) tied at the BOTTOM (7.7), while medium (~15 FRs) and hybrid (~27 FRs) \u2014 at opposite ends of the count spectrum \u2014 tied at the TOP (8.0). Faithfulness was driven by error type, not count: high lost points to over-specification (invented SLAs, audit trails, tech stack), low lost points to under-specification (flattening the conversational vision, dropping login modernization), and both top configs simply made fewer of either error. Notably, every config independently missed the same two requirements \u2014 login modernization (SSO/phone-code/biometric) and in-flow donor/company recognition \u2014 which is a spec-extraction blind spot common to all reasoning levels, not a function of FR count. More FRs did NOT mean more invention (hybrid scored 8 with 27 FRs); fewer FRs did NOT mean cleaner scope (low's 17 missed flags is the panel high).\n\n---\n\nRECOMMENDATION for analyze_spec config:\n\nUse medium reasoning. The tournament is reasoning-insensitive, so the determinant is cost-adjusted faithfulness, and medium ties for the best mean (8.0, no lens below 8) while carrying the fewest invented/miscast flags of any config (6 vs hybrid's 9, high's 10, low's 7). It avoids both failure poles \u2014 high's invented SLAs/stack/audit-trails and low's collapse of the conversational concierge UX into a quiz \u2014 and its one real scope slip (Sprint 015 promoting the PII-free/Mammoth meta-test workstream into product features) is a single localized, easily-pinned defect rather than a diffuse pattern. Since extra reasoning buys no faithfulness here (hybrid spends more to land on the same 8.0 while inventing more), medium is the cheapest config that sits on the faithfulness frontier; reserve hybrid only if downstream needs the finer FR granularity for its own sake."
-  }
+  "recommendation": "analyze_spec=medium + tournament=low (config 'medlow'): on the faithfulness frontier (8.0) at lowest cost; tournament is reasoning-insensitive so 'low' there is free. The remaining gap is the analyze_spec PROMPT (the two universal blind spots above), not a reasoning level."
 }

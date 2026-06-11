@@ -4,12 +4,17 @@ Compares an ALL-LOW run's contract.md + sprint specs against the v3 default base
 NIFB spec, full spec_to_sprints dip via tracker). An Opus judge scores the candidate contract
 against the reference on the load-bearing dimensions, then spot-checks sprint-spec completeness.
 Usage: python nifb_compare.py <candidate_run_dir> [reference_run_dir]
+Paths are configurable (no machine paths baked in):
+  argv[1]/argv[2]                  candidate / reference run dirs (each containing .ai/)
+  $REASONING_EXPERIMENTS_DIR       base dir for the default run-dir names (default: ./experiments)
+  $REASONING_OUT                   output JSON path (default: ./nifb_compare_result.json)
 """
 import os, sys, json, glob, anthropic
 
-PR = "/Users/michaelsugimura/Documents/GitHub/pipelines/experiments"
+PR = os.environ.get("REASONING_EXPERIMENTS_DIR") or os.path.join(os.getcwd(), "experiments")
 CAND_DIR = sys.argv[1] if len(sys.argv) > 1 else f"{PR}/nifb_full_run_alllow"
 REF_DIR  = sys.argv[2] if len(sys.argv) > 2 else f"{PR}/nifb_full_run_v3"
+OUT = os.environ.get("REASONING_OUT") or os.path.join(os.getcwd(), "nifb_compare_result.json")
 A = anthropic.Anthropic()
 
 def read(p): return open(p).read() if os.path.exists(p) else ""
@@ -32,10 +37,12 @@ def sprint_stats(d):
                 frs=set(_re.findall(r'FR\d+', t))))
     else:
         jl = read(f"{d}/.ai/sprint_descriptions.jsonl")
-        for line in jl.splitlines():
+        for n, line in enumerate(jl.splitlines(), 1):
             if not line.strip(): continue
             try: rec = json.loads(line)
-            except Exception: continue
+            except Exception as ex:
+                print(f"[warn] {d}/.ai/sprint_descriptions.jsonl line {n}: skipping malformed JSON ({ex})", file=sys.stderr)
+                continue
             t = rec.get("description","")
             out.append(dict(name=rec.get("path","?"), lines=t.count("\\n"),
                 has_newfiles="New Files" in t or "New files" in t,
@@ -102,7 +109,8 @@ if __name__ == "__main__":
         for k in ["pattern_decision","section_completeness","symbol_pinning","defect_closure","cross_module_tests","concreteness"]:
             print(f"   {k:22s} {v[k]['score']}/5  {v[k]['why']}")
         print(f"   TOP_RISK: {v['top_risk']}")
+    os.makedirs(os.path.dirname(os.path.abspath(OUT)), exist_ok=True)
     json.dump(dict(candidate=CAND_DIR, reference=REF_DIR, judge=v,
                    cand_sprints=agg(cs), ref_sprints=agg(rs)),
-              open(os.path.expanduser("~/reasoning_test/nifb_compare_result.json"),"w"), indent=2)
-    print("\nCOMPARE DONE")
+              open(OUT, "w"), indent=2)
+    print(f"\nCOMPARE DONE → {OUT}")

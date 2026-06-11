@@ -29,6 +29,8 @@ Two ideas made this measurable where the monolithic pipeline did not:
    | `upto_architect_hybrid.dip` | high   | low |
    | `upto_architect_medlow.dip` | **medium** | **low** ← recommended |
 
+   > **The dips are verbatim extracts of the production `spec_to_sprints.dip`**, changed only in `reasoning_effort` and truncated at `merge_decomposition`. They therefore *inherit* production characteristics by design — the model slugs (`gpt-5.4`, `gpt-5.2`, `claude-opus-4-6`, `gemini-3-flash-preview`), the decompose `fallback_target: decompose_join` behavior, and the tournament's plan format (which predates the architect's §7 cross-module-test contract). These are intentional for a faithfulness study and are not "fixed" here; they're properties of the pipeline under test, not of this directory.
+
 3. **Faithfulness judged by a panel, against the spec as ground truth.** A single LLM judge proved unreliable here (±4-point swings; it even anchored on one plan's FR count and mislabeled real requirements as "phantom"). The reliable instrument is `harness/faithfulness_panel.workflow.js`: **3 independent lenses** — *completeness* (real requirements missing?), *scope-discipline* (items that don't trace to the spec / action-items miscast as features?), and *holistic* — each reads the **source spec** and scores the plan 0–10. Scores are averaged across lenses to cancel single-judge noise.
 
 All runs are on the **NIFB** spec (a messy meeting transcript + emails — a hard, implicit spec). Each `upto_*` run needs only `TRACKER_NOTES_WRITER_MODEL` set (the decompose/merge offload tool); it deliberately does **not** set the dispatch env vars.

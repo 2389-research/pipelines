@@ -1,7 +1,14 @@
-import os, json, anthropic
-B="/Users/michaelsugimura/Documents/GitHub/pipelines/experiments"
-hi=open(f"{B}/nifb_upto_high/.ai/sprint_plan.md").read()
-lo=open(f"{B}/nifb_upto_low/.ai/sprint_plan.md").read()
+"""Pairwise blind judge of two sprint plans.
+Paths are configurable (no machine paths baked in):
+  argv[1]/argv[2]              plan A / plan B sprint_plan.md (default: high vs low under $REASONING_EXPERIMENTS_DIR)
+  $REASONING_EXPERIMENTS_DIR   base dir for the defaults (default: ./experiments)
+"""
+import os, sys, json, anthropic
+B = os.environ.get("REASONING_EXPERIMENTS_DIR") or os.path.join(os.getcwd(), "experiments")
+PLAN_A = sys.argv[1] if len(sys.argv) > 1 else f"{B}/nifb_upto_high/.ai/sprint_plan.md"
+PLAN_B = sys.argv[2] if len(sys.argv) > 2 else f"{B}/nifb_upto_low/.ai/sprint_plan.md"
+hi=open(PLAN_A).read()
+lo=open(PLAN_B).read()
 A=anthropic.Anthropic()
 RUB="""Two sprint plans (A and B) were produced from the SAME spec by the SAME pipeline, differing ONLY in reasoning_effort (one high, one low) — you are NOT told which is which. Judge them as decomposition artifacts that an architect will consume. Score each 0-5 on:
 1. FR_COVERAGE — every functional requirement covered by some sprint, none orphaned.
@@ -17,7 +24,7 @@ with A.messages.stream(model="claude-opus-4-6",max_tokens=3000,messages=[{"role"
     r=s.get_final_message()
 t="".join(b.text for b in r.content if getattr(b,"type","")=="text")
 i,e=t.find("{"),t.rfind("}")
-print("(A=HIGH, B=LOW)\n")
+print(f"(A={PLAN_A}\n B={PLAN_B})\n")
 try:
     v=json.loads(t[i:e+1]); print(json.dumps(v,indent=2))
 except: print(t)
