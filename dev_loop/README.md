@@ -239,16 +239,21 @@ accessible, base-branch autodetect failure, no repo configured.
   `${ctx.last_response}` is a known cross-node prompt-injection vector; a
   malicious convention edit could steer the Implementer or reviewers. This is
   a separate threat from accidental secret-leak (which is item 1).
-- **`pre_filter_issues` strips the GitHub issue `body` field before feeding
-  the filtered list into `SelectNextIssue` via `${ctx.last_response}`.** The
-  surviving payload is `number`, `title`, `url`, `labels`, `author`,
-  `createdAt`. Of those, only `title`, `labels`, and `author` are
-  contributor-influenced and so define the prompt-injection surface — and
-  each is constrained (title is GitHub-length-capped; labels and author come
-  from authenticated identity / org-controlled taxonomies). `number`, `url`,
-  and `createdAt` are structural GitHub-issued metadata, not free-form text.
-  The raw body still lands on disk at `$RUN_DIR/issues.json` for forensics,
-  but never reaches an agent prompt.
+- **`pre_filter_issues` applies two defenses before feeding the filtered list
+  into `SelectNextIssue` via `${ctx.last_response}`.** (1) It drops the
+  GitHub issue `body` field entirely — body is the only unbounded
+  free-form contributor field in the gh CLI shape, and SelectNextIssue's
+  ranking rules don't need it. The surviving payload is `number`, `title`,
+  `url`, `labels`, `author`, `createdAt` (of which `number`, `url`, and
+  `createdAt` are structural GitHub-issued metadata; `title`, `labels`,
+  and `author` are contributor-influenced). (2) It XML-escapes `<`, `>`,
+  and `&` in every string value of the emitted JSON payload before
+  embedding it in the `<filtered_issues>` block, so an attacker-crafted
+  `title` (or any other string) containing `</filtered_issues>` cannot
+  break out of the block and inject prose into the agent's prompt. The
+  disk-side `filtered_issues.json` and `$RUN_DIR/issues.json` both keep
+  the raw, unescaped form for forensics; only the stdout channel — the
+  one that lands in agent prompts — is sanitized.
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.

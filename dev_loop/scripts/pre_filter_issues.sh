@@ -106,7 +106,12 @@ fi
 # Anthropic/Gemini prompt guidance both recommend XML tags over text fences
 # for parser reliability with long-context structured inputs.
 printf 'filter-ok'
-issues_text=$(cat "${RUN_DIR}/filtered_issues.json")
+# XML-escape <, >, & in every string value before embedding the JSON in the
+# XML block (issue #50 follow-up): without this, an attacker title containing
+# </filtered_issues> can break out of the block and inject prose into
+# SelectNextIssue's prompt. Escape & first so we don't double-escape the
+# substitutions for < and >. Disk-side filtered_issues.json keeps raw form.
+issues_text=$(jq '(.. | strings) |= (gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;"))' "${RUN_DIR}/filtered_issues.json")
 cat <<DATA
 
 <filtered_issues>
