@@ -257,15 +257,22 @@ fi
 # Discover the dip executor's per-invocation artifact dir NOW (at pipeline
 # start) so downstream persist scripts can address it explicitly rather
 # than via ls -dt mtime — which would clash with any concurrent run in the
-# same workdir. This is the ONLY block in dev_loop/ that knows the
-# executor's on-disk convention. To port dev_loop to a different dip
-# executor:
+# same workdir. This is the ONLY DISCOVERY block in dev_loop/; downstream
+# persist scripts read the result via `${DIP_ARTIFACT_DIR}` from the
+# per-run env file. (The persist scripts still print the literal
+# `.tracker/runs` path in error breadcrumbs when DIP_ARTIFACT_DIR is
+# unset — those are not authoritative; the executor's layout is owned
+# here. Centralizing the breadcrumb path is tracked as #45.)
+#
+# To port dev_loop to a different dip executor:
 #   1. Replace this discovery with whatever locates that executor's
 #      per-run artifact dir (env var, sentinel file, etc.).
 #   2. Add its CLI name to the prereq command list above (and drop
 #      `tracker` if no longer needed).
 #   3. Update the emit_env DIP_ARTIFACT_DIR call below if the variable
 #      name carries over.
+#   4. Update the breadcrumb path string in persist_*.sh (see #45).
+#
 # Today's executor is tracker, which creates <workdir>/.tracker/runs/<runID>/
 # when it starts, so by the time SetupRun executes the dir already exists
 # and is the newest under .tracker/runs.

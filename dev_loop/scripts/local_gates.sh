@@ -6,8 +6,12 @@
 #   1. dippin check on every *.dip touched in the diff (clean required)
 #   2. (optional) the repo's local_test_command from config — currently a no-op
 #
-# Note: language-level (dippin check) only. Executor-level validators belong
-# in `config/dev_loop.config.yaml`'s local_test_command (issue #44).
+# Note: language-level (dippin check) only — no executor-level validator
+# runs here (#44). The `local_test_command` key in
+# `dev_loop/config/dev_loop.config.yaml` is reserved for a future hook that
+# would let operators chain `tracker validate` (or another executor's
+# validator) into this gate; today the loader is a no-op stub, so adding it
+# to YAML has no effect. Wiring that hook is its own PR.
 set -eu
 
 # ---begin-bootstrap-reference---

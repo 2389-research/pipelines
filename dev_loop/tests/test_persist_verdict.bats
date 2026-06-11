@@ -7,7 +7,7 @@ setup() {
   load 'test_helpers'
   setup_env
   stage_run
-  # stage_run set DIP_ARTIFACT_DIR; reuse it as the persister's tracker root.
+  # stage_run set DIP_ARTIFACT_DIR; reuse it as the persister's artifact root.
   SCRIPTS="${BATS_TEST_DIRNAME}/../scripts"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
 }
