@@ -1,0 +1,18 @@
+{
+  "_note": "Curated aggregate of the faithfulness judge panel (3 lenses per config: completeness / scope_discipline / holistic, each scoring the config's sprint_plan.md against the NIFB source spec as ground truth, 0-10). high/medium/low/hybrid were scored in one panel run; medlow in a follow-up run with the identical lenses/rubric. fr_count is the FR count of that run's spec_analysis==sprint_plan (the tournament is FR-set-preserving). n=1 generation per config — see ../README.md 'Caveats'.",
+  "spec": "NIFB (2026-03-06 Galaxy Digital transcript + Email 1)",
+  "aggregate": {
+    "high":   { "config": "analyze=high, tournament=high",     "mean_faithfulness": 7.7, "per_lens": [7, 8, 8], "fr_count": 22, "n_missed_flags": 14, "n_invented_flags": 10 },
+    "medium": { "config": "analyze=medium, tournament=medium", "mean_faithfulness": 8.0, "per_lens": [8, 8, 8], "fr_count": 35, "n_missed_flags": 14, "n_invented_flags": 6 },
+    "low":    { "config": "analyze=low, tournament=low",       "mean_faithfulness": 7.7, "per_lens": [7, 8, 8], "fr_count": 34, "n_missed_flags": 17, "n_invented_flags": 7 },
+    "hybrid": { "config": "analyze=high, tournament=low",      "mean_faithfulness": 8.0, "per_lens": [8, 8, 8], "fr_count": 27, "n_missed_flags": 14, "n_invented_flags": 9 },
+    "medlow": { "config": "analyze=medium, tournament=low",    "mean_faithfulness": 8.0, "per_lens": [8, 8, 8], "fr_count": 19, "n_missed_flags": 17, "n_invented_flags": 2 }
+  },
+  "ranking": ["medium (8.0)", "hybrid (8.0)", "medlow (8.0)", "high (7.7)", "low (7.7)"],
+  "verdict_fr_count_vs_faithfulness": "No correlation. medium (~35 FRs in this run) and hybrid (~27) tied at the top with low-FR configs; high (22) and low (34) tied at the bottom. Faithfulness is driven by error TYPE (high over-specifies/invents SLAs+stack; low under-specifies/flattens the conversational UX), not FR count.",
+  "universal_blind_spots": [
+    "Login modernization (Google/Apple SSO, phone-code OTP, biometric/badge sign-in) — missed or deferred-to-non-goal by EVERY config",
+    "In-flow donor/company recognition during the signup/check-in conversation (the spec's marquee 'magical moment') — absent or reduced to a post-hoc batch match in EVERY config"
+  ],
+  "recommendation": "analyze_spec=medium + tournament=low (config 'medlow'): on the faithfulness frontier (8.0) at lowest cost; tournament is reasoning-insensitive so 'low' there is free. The remaining gap is the analyze_spec PROMPT (the two universal blind spots above), not a reasoning level."
+}

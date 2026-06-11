@@ -4,6 +4,8 @@ End-to-end pipeline for taking a product `spec.md` and producing a working codeb
 
 > **Why this exists vs. the root [`spec_to_sprints.dip`](../spec_to_sprints.dip):** Harper's pipeline at the repo root is the generic spec-to-sprints workflow, designed for cloud-only code generation downstream. This variant is tuned for *local* code generation — sprint specs need to be more rigorous (the local model is a transcriber, not a designer), the file ownership model is different (front-loaded foundation + auto-discovery to avoid cross-sprint patches), and the runner has its own SR-block-based fix loop. The two pipelines share the upstream decomposition tournament; only the architect step + downstream runner differ.
 
+> **📊 Research — reasoning-tier study:** [`research/reasoning-tiers/`](research/reasoning-tiers/README.md) measures how much `reasoning_effort` each upstream stage actually needs. Headline: the decomposition tournament is **reasoning-insensitive** (run it `low`), a higher FR count does **not** mean worse faithfulness, and a judge panel finds all reasoning tiers roughly equally faithful — so the cost-optimal config is **`analyze_spec: medium` + tournament `: low`** (more faithful *and* cheaper than the default all-`high`). The real quality lever is the `analyze_spec` prompt, not the reasoning knob. Includes the stage-decomposition (microservice) dips, the faithfulness-panel harness, and reproducible artifacts.
+
 ## Design philosophy
 
 **Offload every step to the weakest model that can do it correctly.** The full pipeline reads as a hand-off across four model tiers, each given a tightly-scoped role and a contract that pre-decides every choice the next tier downstream might otherwise have to make.

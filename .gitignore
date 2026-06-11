@@ -31,3 +31,7 @@ experiments/enrich_sprints_test/architect_v*/
 experiments/NIFB/
 experiments/NIFB_baseline/
 experiments/remix-os-go-3/
+experiments/nifb_upto_*/
+experiments/nifb_run_*/
+experiments/stage_test_*/
+experiments/varn_*/

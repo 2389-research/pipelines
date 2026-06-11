@@ -1,0 +1,401 @@
+# ABOUTME: Stage 2 of the decomposed spec-to-sprints pipeline — DECOMPOSITION TOURNAMENT.
+#          Standalone microservice stage: 3 decomposers (Claude/GPT/Gemini) + 6 cross-critiques
+#          + merge. INPUT (on disk): .ai/spec_analysis.md (from stage_01_ingest). OUTPUT (on
+#          disk): .ai/sprint_plan.md (the handoff unit for stage_03_plan_gate / the architect).
+#          The decompose + merge agents offload verbose writing to expand_from_notes, so this
+#          stage REQUIRES TRACKER_NOTES_WRITER_MODEL (e.g. claude-sonnet-4-6); Start preflights it.
+#          reasoning_effort on the tournament nodes is the knob under test. Extracted verbatim
+#          from spec_to_sprints.dip (nodes + prompts).
+workflow TournamentStage
+  goal: "Read .ai/spec_analysis.md and produce .ai/sprint_plan.md via the multi-model decomposition tournament (decompose x3 + critique x6 + merge)."
+  start: Start
+  exit: Exit
+
+  defaults
+    max_retries: 3
+    max_restarts: 10
+    fidelity: summary:medium
+
+  tool Start
+    label: Start
+    timeout: 5s
+    command:
+      set -eu
+      # The decompose + merge agents offload their verbose writing to the
+      # expand_from_notes tool, which tracker only registers when this env var
+      # is set. Preflight here so a missing var fails loud at the start rather
+      # than as a confusing "tool not found" mid-tournament.
+      : "${TRACKER_NOTES_WRITER_MODEL:?TRACKER_NOTES_WRITER_MODEL must be set so expand_from_notes registers (e.g. claude-sonnet-4-6)}"
+      mkdir -p .ai/drafts
+      printf 'tournament-stage-begin (notes writer=%s)' "$TRACKER_NOTES_WRITER_MODEL"
+
+  tool Exit
+    label: Exit
+    timeout: 5s
+    command:
+      printf 'tournament-stage-complete'
+
+  parallel decompose_parallel -> decompose_claude, decompose_gpt, decompose_gemini
+
+  agent decompose_claude
+    label: "Claude Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_claude
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Thoroughness
+      Focus on dependency ordering, risk sequencing, and DoD traceability. Every functional requirement (FR1-FRn) must be covered by at least one sprint. No requirement should be orphaned.
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## How to produce output: dictate, then offload the writing
+      You do the reasoning; a cheaper writer model does the verbose write-up. Two steps:
+
+      1. Reason through the full decomposition, making EVERY decision (sprint count, exact FR-to-sprint mapping, dependencies, expected artifacts, DoD items, complexity). Write your decisions as TERSE bullet NOTES — not prose — to `.ai/drafts/notes_claude.md` using the `write` tool (create `.ai/drafts` if needed). Pin every value; do not pad or explain. The notes must be decision-complete: anything you leave unstated, the writer cannot invent.
+
+      2. Call `expand_from_notes` ONCE with:
+         - `notes_file`: ".ai/drafts/notes_claude.md"
+         - `out_file`: ".ai/drafts/decomposition_claude.md"
+         - `format`: "For each sprint, in order: Sprint number (sequential, zero-padded 3-digit starting at 001); Title (short, descriptive); Scope (what this sprint delivers, 2-3 sentences); Non-goals (what is explicitly excluded); Requirements covered (FR IDs from the spec analysis); Dependencies (which sprint numbers must complete first, empty for the first sprint); Expected artifacts (specific files, modules, or configurations produced); DoD items (5-10 checkable items that prove the sprint is complete); Complexity (low / medium / high)."
+
+      Do NOT write the decomposition document yourself — that is the writer tool's job. After the tool returns, output one line stating the gaps it reported (or "no gaps") and stop. If any reported gap is material, tighten `.ai/drafts/notes_claude.md` and call `expand_from_notes` again.
+
+  agent decompose_gpt
+    label: "GPT Decomposition"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gpt
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Implementation Pragmatism
+      Focus on execution order, what can be parallelized, and build/test feasibility. Think about what a developer actually needs working first before the next piece can start.
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## How to produce output: dictate, then offload the writing
+      You do the reasoning; a cheaper writer model does the verbose write-up. Two steps:
+
+      1. Reason through the full decomposition, making EVERY decision (sprint count, exact FR-to-sprint mapping, dependencies, expected artifacts, DoD items, complexity). Write your decisions as TERSE bullet NOTES — not prose — to `.ai/drafts/notes_gpt.md` using the `write` tool (create `.ai/drafts` if needed). Pin every value; do not pad or explain. The notes must be decision-complete: anything you leave unstated, the writer cannot invent.
+
+      2. Call `expand_from_notes` ONCE with:
+         - `notes_file`: ".ai/drafts/notes_gpt.md"
+         - `out_file`: ".ai/drafts/decomposition_gpt.md"
+         - `format`: "For each sprint, in order: Sprint number (sequential, zero-padded 3-digit starting at 001); Title (short, descriptive); Scope (what this sprint delivers, 2-3 sentences); Non-goals (what is explicitly excluded); Requirements covered (FR IDs from the spec analysis); Dependencies (which sprint numbers must complete first, empty for the first sprint); Expected artifacts (specific files, modules, or configurations produced); DoD items (5-10 checkable items that prove the sprint is complete); Complexity (low / medium / high)."
+
+      Do NOT write the decomposition document yourself — that is the writer tool's job. After the tool returns, output one line stating the gaps it reported (or "no gaps") and stop. If any reported gap is material, tighten `.ai/drafts/notes_gpt.md` and call `expand_from_notes` again.
+
+  agent decompose_gemini
+    label: "Gemini Decomposition"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: spec_analysis
+    writes: decomposition_gemini
+    fallback_target: decompose_join
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Read .ai/spec_analysis.md and decompose the project into an ordered list of implementation sprints.
+
+      ## Your Emphasis: Delivery Robustness
+      Focus on scope discipline, sprint size consistency, validation checkpoints, and risk mitigation. Flag any sprint that seems too large or has unclear validation criteria.
+
+      ## Constraints
+      - Sprints should be roughly equal in effort where possible
+      - Earlier sprints should establish foundations that later sprints build on
+      - Every sprint must be independently verifiable (has its own validation)
+      - Prefer fewer, well-scoped sprints over many tiny ones
+      - Target 8-20 sprints for a typical project
+      - HARD CAP: Do not produce more than 20 sprints. If the project seems to need more, consolidate.
+      - DoD items must be concrete and machine-verifiable. Good: "Unit tests for AudioCapture pass". Bad: "Audio capture works correctly"
+      - Every sprint's DoD should include at least one test-related item (write tests, run tests, tests pass)
+      - Sprint validation should specify exact commands (e.g., "swift test --filter X passes")
+
+      ## How to produce output: dictate, then offload the writing
+      You do the reasoning; a cheaper writer model does the verbose write-up. Two steps:
+
+      1. Reason through the full decomposition, making EVERY decision (sprint count, exact FR-to-sprint mapping, dependencies, expected artifacts, DoD items, complexity). Write your decisions as TERSE bullet NOTES — not prose — to `.ai/drafts/notes_gemini.md` using the `write` tool (create `.ai/drafts` if needed). Pin every value; do not pad or explain. The notes must be decision-complete: anything you leave unstated, the writer cannot invent.
+
+      2. Call `expand_from_notes` ONCE with:
+         - `notes_file`: ".ai/drafts/notes_gemini.md"
+         - `out_file`: ".ai/drafts/decomposition_gemini.md"
+         - `format`: "For each sprint, in order: Sprint number (sequential, zero-padded 3-digit starting at 001); Title (short, descriptive); Scope (what this sprint delivers, 2-3 sentences); Non-goals (what is explicitly excluded); Requirements covered (FR IDs from the spec analysis); Dependencies (which sprint numbers must complete first, empty for the first sprint); Expected artifacts (specific files, modules, or configurations produced); DoD items (5-10 checkable items that prove the sprint is complete); Complexity (low / medium / high)."
+
+      Do NOT write the decomposition document yourself — that is the writer tool's job. After the tool returns, output one line stating the gaps it reported (or "no gaps") and stop. If any reported gap is material, tighten `.ai/drafts/notes_gemini.md` and call `expand_from_notes` again.
+
+  fan_in decompose_join <- decompose_claude, decompose_gpt, decompose_gemini
+
+  parallel critique_parallel -> critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent critique_claude_on_gpt
+    label: "Claude Critique of GPT"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_claude_on_gemini
+    label: "Claude Critique of Gemini"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_claude
+    label: "GPT Critique of Claude"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gpt_on_gemini
+    label: "GPT Critique of Gemini"
+    model: gpt-5.2
+    provider: openai
+    reasoning_effort: high
+    reads: decomposition_gemini, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gemini.md (the Gemini decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Gemini decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_claude
+    label: "Gemini Critique of Claude"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_claude, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_claude.md (the Claude decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the Claude decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  agent critique_gemini_on_gpt
+    label: "Gemini Critique of GPT"
+    model: gemini-3-flash-preview
+    provider: gemini
+    reasoning_effort: high
+    reads: decomposition_gpt, spec_analysis
+    prompt:
+      You are working in `run.working_dir`.
+
+      Read .ai/drafts/decomposition_gpt.md (the GPT decomposition) and .ai/spec_analysis.md (the spec analysis with FR IDs).
+
+      Review the GPT decomposition for:
+      1. Missed functional requirements — check every FR in spec_analysis against the decomposition
+      2. Dependency ordering errors — can each sprint actually be built after its listed dependencies?
+      3. Sprints that are too large (should be split) or too small (should be merged)
+      4. Unclear or unverifiable DoD items
+      5. Missing validation criteria
+      6. Coverage gaps against the spec acceptance criteria
+
+      ## Output Format
+      For each issue found:
+      - Sprint number affected
+      - Issue type (missed-req / ordering / sizing / dod / validation / coverage)
+      - Severity (critical / important / minor)
+      - Specific description citing FR IDs and sprint numbers
+
+      Be specific. Vague critiques like "could be better" are not useful.
+
+  fan_in critique_join <- critique_claude_on_gpt, critique_claude_on_gemini, critique_gpt_on_claude, critique_gpt_on_gemini, critique_gemini_on_claude, critique_gemini_on_gpt
+
+  agent merge_decomposition
+    label: "Merge Decomposition"
+    model: claude-opus-4-6
+    provider: anthropic
+    reasoning_effort: high
+    reads: decomposition_claude, decomposition_gpt, decomposition_gemini, spec_analysis
+    writes: sprint_plan
+    goal_gate: true
+    retry_target: merge_decomposition
+    prompt:
+      You are working in `run.working_dir`.
+
+      ## Task
+      Synthesize the three decompositions and six cross-critiques into one final sprint plan.
+
+      ## Process
+      Read the three decomposition files:
+      - .ai/drafts/decomposition_claude.md
+      - .ai/drafts/decomposition_gpt.md
+      - .ai/drafts/decomposition_gemini.md
+      And the spec analysis: .ai/spec_analysis.md
+
+      1. Compare the three decompositions side by side
+      2. Incorporate valid critique findings — fix ordering errors, fill coverage gaps, adjust sprint sizes
+      3. Decide a single merged sprint list that takes the best from each decomposition
+
+      ## Rules
+      - Every FR from .ai/spec_analysis.md must appear in at least one sprint
+      - No dependency cycles
+      - Sprint IDs are sequential zero-padded 3-digit (001, 002, ...)
+      - First sprint should be project scaffold / foundation
+
+      ## How to produce output: dictate, then offload the writing
+      You do the merge reasoning; a cheaper writer model does the verbose write-up. Two steps:
+
+      1. Decide the final merged plan, making EVERY decision (the final sprint list, and per sprint: scope / non-goals / FRs / dependencies / artifacts / DoD / validation / complexity, plus the top-level merge summary). Write these as TERSE bullet NOTES to `.ai/drafts/notes_merge.md` using the `write` tool. The notes must be decision-complete — anything you leave unstated, the writer cannot invent.
+
+      2. Call `expand_from_notes` ONCE with:
+         - `notes_file`: ".ai/drafts/notes_merge.md"
+         - `out_file`: ".ai/sprint_plan.md"
+         - `format`: "Start with a summary paragraph: total sprint count, overall approach, key decisions made during merge. Then one section per sprint headed '### Sprint NNN — Title' followed by: '**Scope:**' (2-3 sentences); '**Non-goals:**'; '**Requirements:**' (FR IDs, e.g. FR1, FR3, FR7); '**Dependencies:**' (sprint numbers that must complete first); '**Expected Artifacts:**' (bulleted file/module paths); '**DoD:**' (a checkbox list using '- [ ]' of checkable items); '**Validation:**' (build/test commands); '**Complexity:**' (low / medium / high)."
+
+      Do NOT write .ai/sprint_plan.md yourself — the writer tool writes it. After the tool returns, output one line stating the gaps it reported (or "no gaps") and stop. If any reported gap is material, tighten `.ai/drafts/notes_merge.md` and call `expand_from_notes` again.
+
+
+  edges
+    Start -> decompose_parallel
+    decompose_parallel -> decompose_claude
+    decompose_parallel -> decompose_gpt
+    decompose_parallel -> decompose_gemini
+    decompose_claude -> decompose_join
+    decompose_gpt -> decompose_join
+    decompose_gemini -> decompose_join
+    decompose_join -> critique_parallel
+    critique_parallel -> critique_claude_on_gpt
+    critique_parallel -> critique_claude_on_gemini
+    critique_parallel -> critique_gpt_on_claude
+    critique_parallel -> critique_gpt_on_gemini
+    critique_parallel -> critique_gemini_on_claude
+    critique_parallel -> critique_gemini_on_gpt
+    critique_claude_on_gpt -> critique_join
+    critique_claude_on_gemini -> critique_join
+    critique_gpt_on_claude -> critique_join
+    critique_gpt_on_gemini -> critique_join
+    critique_gemini_on_claude -> critique_join
+    critique_gemini_on_gpt -> critique_join
+    critique_join -> merge_decomposition
+    merge_decomposition -> Exit
