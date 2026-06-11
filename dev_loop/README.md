@@ -254,6 +254,14 @@ accessible, base-branch autodetect failure, no repo configured.
   disk-side `filtered_issues.json` and `$RUN_DIR/issues.json` both keep
   the raw, unescaped form for forensics; only the stdout channel — the
   one that lands in agent prompts — is sanitized.
+- **The dip executor's on-disk convention is named in exactly one place:
+  the `--- begin dip-executor discovery ---` block in `setup_run.sh`.**
+  Everywhere else in `dev_loop/` reads `${DIP_ARTIFACT_DIR}` from the
+  per-run env file. To port dev_loop to a different dip executor, replace
+  that one block (and the prereq tool list above it) — no other script
+  needs to change. Today's executor is `tracker`; the discovery block
+  resolves its `.tracker/runs/<runID>/` layout. The full porting guide is
+  tracked in issue #45.
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.

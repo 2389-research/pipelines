@@ -118,7 +118,7 @@ teardown() {
   # trap the persist script would exit 1 and halt the pipeline mid-flight.
   PERSIST="${BATS_TEST_DIRNAME}/../scripts/persist_pragmatism_verdict.sh"
   CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
-  # Wipe .tracker so TRACKER_RUN_DIR (set by stage_run) points at a now-gone
+  # Wipe .tracker so DIP_ARTIFACT_DIR (set by stage_run) points at a now-gone
   # dir — the script's first post-bootstrap check fails -> trap fires.
   rm -rf "${WORKDIR}/.tracker"
   run sh -c "$(cat "${PERSIST}")"

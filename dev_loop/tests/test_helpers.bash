@@ -40,20 +40,25 @@ setup_env() {
 
 # stage_run [rid] — provision a minimal RUN_DIR + env + .current_rid so the
 # canonical bootstrap (every downstream script's preamble) resolves cleanly.
-# Sets rid, RUN_DIR, TRACKER_RUN_DIR for the caller. Optional first arg
+# Sets rid, RUN_DIR, DIP_ARTIFACT_DIR for the caller. Optional first arg
 # overrides the rid (default "t-$$").
+#
+# The on-disk layout `WORKDIR/.tracker/runs/trk-$$` is intentionally
+# tracker-shaped — fixtures mirror the executor we actually run against.
+# The variable name (DIP_ARTIFACT_DIR) carries the neutral contract; the
+# path shape is the executor's concern, not dev_loop's.
 stage_run() {
   rid="${1:-t-$$}"
   RUN_DIR="${DIP_ROOT}/runs/${rid}"
-  TRACKER_RUN_DIR="${WORKDIR}/.tracker/runs/trk-$$"
-  mkdir -p "${RUN_DIR}" "${TRACKER_RUN_DIR}"
+  DIP_ARTIFACT_DIR="${WORKDIR}/.tracker/runs/trk-$$"
+  mkdir -p "${RUN_DIR}" "${DIP_ARTIFACT_DIR}"
   cat > "${RUN_DIR}/env" <<EOF
 GH_REPO='test/test'
 BASE_BRANCH='main'
 ALLOW_NO_CI='false'
 DEV_LOOP_RUN_ID='${rid}'
 DEV_LOOP_RUN_DIR='${RUN_DIR}'
-TRACKER_RUN_DIR='${TRACKER_RUN_DIR}'
+DIP_ARTIFACT_DIR='${DIP_ARTIFACT_DIR}'
 EOF
   chmod 600 "${RUN_DIR}/env"
   printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"

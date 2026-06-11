@@ -69,3 +69,68 @@ EOF
   run sh -c "$(cat "${SCRIPT}")"
   [ "${output}" = "gates-fail" ]
 }
+
+@test "local_gates no longer invokes tracker validate (#44)" {
+  # Executor decoupling: dippin check (language-level) stays; tracker validate
+  # (executor-level) is dropped. Stage a tracker stub that tattles via a
+  # sentinel string and assert the sentinel never lands in gates_log.txt.
+  git -C "${REPO}" checkout -q -b feature
+  cat > "${REPO}/clean.dip" <<'EOF'
+workflow test
+  goal: "trivial"
+  start: A
+  exit: A
+  agent A
+    label: A
+    max_turns: 1
+    tool_access: none
+EOF
+  git -C "${REPO}" add clean.dip
+  git -C "${REPO}" commit -q -m "add clean dip"
+
+  shim="${TMPDIR}/shim"
+  mkdir -p "${shim}"
+  cat > "${shim}/tracker" <<'TR'
+#!/bin/sh
+printf 'TRACKER_VALIDATE_SHOULD_NOT_RUN\n'
+exit 0
+TR
+  chmod +x "${shim}/tracker"
+
+  PATH="${shim}:${PATH}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${output}" = "gates-pass" ]
+  # dippin check ran (its JSON output landed in the log).
+  grep -q '"valid":true' "${RUN_DIR}/gates_log.txt"
+  # tracker validate did NOT run (the stub's sentinel is absent).
+  ! grep -q TRACKER_VALIDATE_SHOULD_NOT_RUN "${RUN_DIR}/gates_log.txt"
+}
+
+@test "local_gates tolerates absence of tracker on PATH (#44)" {
+  # Porting payoff: operators on a non-tracker dip executor have no
+  # `tracker` binary at all. gates-pass on a valid .dip must still land.
+  git -C "${REPO}" checkout -q -b feature
+  cat > "${REPO}/clean.dip" <<'EOF'
+workflow test
+  goal: "trivial"
+  start: A
+  exit: A
+  agent A
+    label: A
+    max_turns: 1
+    tool_access: none
+EOF
+  git -C "${REPO}" add clean.dip
+  git -C "${REPO}" commit -q -m "add clean dip"
+
+  # PATH with every binary local_gates needs (sh, git, dippin) but no tracker.
+  sysbin="${TMPDIR}/sysbin-no-tracker"
+  mkdir -p "${sysbin}"
+  for cmd in sh dash cat printf mkdir rm chmod ln stat ls grep awk sed tr \
+             head tail sort uniq find dirname basename git dippin; do
+    src="$(command -v "${cmd}" 2>/dev/null || true)"
+    [ -n "${src}" ] && ln -sf "${src}" "${sysbin}/${cmd}"
+  done
+
+  PATH="${sysbin}" run sh -c "$(cat "${SCRIPT}")"
+  [ "${output}" = "gates-pass" ]
+}

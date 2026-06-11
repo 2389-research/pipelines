@@ -6,7 +6,7 @@ setup() {
   load 'test_helpers'
   setup_env
   stage_run
-  mkdir -p "${TRACKER_RUN_DIR}/SquadSynthesizer"
+  mkdir -p "${DIP_ARTIFACT_DIR}/SquadSynthesizer"
 
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/persist_synthesis.sh"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
@@ -17,7 +17,7 @@ teardown() {
 }
 
 stage() {
-  cp "${FIXTURES}/$1" "${TRACKER_RUN_DIR}/SquadSynthesizer/response.md"
+  cp "${FIXTURES}/$1" "${DIP_ARTIFACT_DIR}/SquadSynthesizer/response.md"
 }
 
 @test "approved synthesis emits synthesized-approved" {
@@ -42,7 +42,7 @@ stage() {
 }
 
 @test "missing response.md falls back to synthesized-abandoned + exit 0" {
-  rm -f "${TRACKER_RUN_DIR}/SquadSynthesizer/response.md"
+  rm -f "${DIP_ARTIFACT_DIR}/SquadSynthesizer/response.md"
   run sh -c "$(cat "${SCRIPT}")"
   # Routing tools MUST exit 0 even on the fallback path. A non-zero exit can
   # bypass marker_grep routing in the .dip and halt the pipeline mid-flight.
@@ -51,10 +51,10 @@ stage() {
   [ -f "${RUN_DIR}/persist_synthesis_error.txt" ]
 }
 
-@test "missing TRACKER_RUN_DIR also trips the trap (synthesized-abandoned)" {
+@test "missing DIP_ARTIFACT_DIR also trips the trap (synthesized-abandoned)" {
   # Issue #48 parity: every post-bootstrap exit-1 site in persist_synthesis.sh
   # must trip the EXIT trap and emit synthesized-abandoned. Wipe the entire
-  # .tracker tree so TRACKER_RUN_DIR (set by stage_run) points at a now-gone
+  # .tracker tree so DIP_ARTIFACT_DIR (set by stage_run) points at a now-gone
   # directory.
   rm -rf "${WORKDIR}/.tracker"
   run sh -c "$(cat "${SCRIPT}")"
