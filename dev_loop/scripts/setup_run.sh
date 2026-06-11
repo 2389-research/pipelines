@@ -262,7 +262,8 @@ fi
 # per-run env file. (The persist scripts still print the literal
 # `.tracker/runs` path in error breadcrumbs when DIP_ARTIFACT_DIR is
 # unset — those are not authoritative; the executor's layout is owned
-# here. Centralizing the breadcrumb path is tracked as #45.)
+# here. Centralizing or dropping that breadcrumb string is a separate
+# code-refactor follow-up tracked as #61; #45 covers the docs side.)
 #
 # To port dev_loop to a different dip executor:
 #   1. Replace this discovery with whatever locates that executor's
@@ -271,7 +272,7 @@ fi
 #      `tracker` if no longer needed).
 #   3. Update the emit_env DIP_ARTIFACT_DIR call below if the variable
 #      name carries over.
-#   4. Update the breadcrumb path string in persist_*.sh (see #45).
+#   4. Update the breadcrumb path string in persist_*.sh (see #61).
 #
 # Today's executor is tracker, which creates <workdir>/.tracker/runs/<runID>/
 # when it starts, so by the time SetupRun executes the dir already exists
