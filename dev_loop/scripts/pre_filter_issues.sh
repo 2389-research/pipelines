@@ -105,13 +105,18 @@ fi
 # filtered issue list via ctx.last_response (auto-injected into its prompt).
 # Anthropic/Gemini prompt guidance both recommend XML tags over text fences
 # for parser reliability with long-context structured inputs.
-printf 'filter-ok'
 # XML-escape <, >, & in every string value before embedding the JSON in the
 # XML block (issue #50 follow-up): without this, an attacker title containing
 # </filtered_issues> can break out of the block and inject prose into
 # SelectNextIssue's prompt. Escape & first so we don't double-escape the
 # substitutions for < and >. Disk-side filtered_issues.json keeps raw form.
-issues_text=$(jq '(.. | strings) |= (gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;"))' "${RUN_DIR}/filtered_issues.json")
+# Run this BEFORE the filter-ok marker so a jq failure goes through the
+# emit_failure path cleanly rather than producing mixed filter-ok+filter-failed
+# output on stdout.
+if ! issues_text=$(jq '(.. | strings) |= (gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;"))' "${RUN_DIR}/filtered_issues.json"); then
+  emit_failure "jq XML escape failed"
+fi
+printf 'filter-ok'
 cat <<DATA
 
 <filtered_issues>
