@@ -86,6 +86,9 @@ jq --argjson excluded "${EXCLUDED_LABELS}" \
     and ((.title // "") | test($title_re; "i") | not)
   ))
   | sort_by(priority_rank, .number)
+  # Drop free-form body (issue #50 prompt-injection close): SelectNextIssue
+  # consumes this list via ctx.last_response; raw body still on disk for forensics.
+  | map(del(.body))
 ' "${RUN_DIR}/issues.json" > "${RUN_DIR}/filtered_issues.json.tmp" \
   || emit_failure "jq filter failed"
 
@@ -98,12 +101,24 @@ if [ "${count}" -eq 0 ]; then
   exit 0
 fi
 
-# Emit marker first; SelectNextIssue agent (tool_access: none) reads the
-# filtered issue list via ctx.last_response (auto-injected into its prompt).
-# Anthropic/Gemini prompt guidance both recommend XML tags over text fences
-# for parser reliability with long-context structured inputs.
+# SelectNextIssue (tool_access: none) consumes the filtered list via
+# ctx.last_response, which is auto-injected into its prompt. Anthropic/Gemini
+# prompt guidance both recommend XML tags over text fences for parser
+# reliability with long-context structured inputs.
+#
+# XML-escape <, >, & in every string value before embedding the JSON in the
+# XML block (issue #50 follow-up): without this, an attacker title containing
+# </filtered_issues> can break out of the block and inject prose into
+# SelectNextIssue's prompt. Escape & first so we don't double-escape the
+# substitutions for < and >. Disk-side filtered_issues.json keeps raw form.
+#
+# Order matters: run the XML escape BEFORE the filter-ok marker, so a jq
+# failure here goes through emit_failure and produces a clean filter-failed
+# marker rather than mixed filter-ok+filter-failed output on stdout.
+if ! issues_text=$(jq '(.. | strings) |= (gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;"))' "${RUN_DIR}/filtered_issues.json"); then
+  emit_failure "jq XML escape failed"
+fi
 printf 'filter-ok'
-issues_text=$(cat "${RUN_DIR}/filtered_issues.json")
 cat <<DATA
 
 <filtered_issues>
