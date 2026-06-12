@@ -121,9 +121,7 @@ Tracker reads the `.dip` file, builds the execution graph, and orchestrates LLM 
 
 ## Releases & Changelog
 
-Tagged releases live on the [GitHub releases page](https://github.com/2389-research/pipelines/releases) with full forensic notes. A short, scannable summary lives in [`CHANGELOG.md`](./CHANGELOG.md) at repo root, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
-
-When cutting a new tag: move the `[Unreleased]` entries into a new dated version section, refresh the compare-link footers, and publish the long-form notes as a GitHub release.
+See [`CHANGELOG.md`](./CHANGELOG.md) for the per-version summary and [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut convention.
 
 ## Related Projects
 
