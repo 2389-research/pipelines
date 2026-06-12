@@ -340,6 +340,9 @@ accessible, base-branch autodetect failure, no repo configured.
 
 ## Anti-patterns
 
+Imperative don'ts for operators and reviewers. (Descriptive truths the
+workflow upholds live under [Invariants](#invariants) below.)
+
 - **Don't commit secrets to `dev_loop/config/repo_conventions.md`.** The
   file content flows into agent prompts via `ctx.last_response` — anything
   there ends up in the LLM context for every PR review.
@@ -347,6 +350,21 @@ accessible, base-branch autodetect failure, no repo configured.
   `${ctx.last_response}` is a known cross-node prompt-injection vector; a
   malicious convention edit could steer the Implementer or reviewers. This is
   a separate threat from accidental secret-leak (which is item 1).
+- **Don't set `allow_no_ci: true` on a repo with branch protection.**
+  The combo means dev_loop will try to merge with no CI signal and get
+  blocked by branch protection late in the pipeline.
+- **Don't run dev_loop on a repo with auto-merge enabled.** Squad-merge
+  and auto-merge race; the squad result may be stale by the time auto-merge
+  fires.
+- **Don't set `DEV_LOOP_STATE_ROOT` to a network mount.** Atomic rename
+  guarantees (used for `.current_rid` and `env` publication) are weaker on
+  NFS/SMB; lost writes can corrupt the run.
+
+## Invariants
+
+Descriptive single-source-of-truth rules the workflow upholds. Where to
+look when something seems duplicated, and what NOT to drift.
+
 - **`pre_filter_issues` applies two defenses before feeding the filtered list
   into `SelectNextIssue` via `${ctx.last_response}`.** (1) It drops the
   GitHub issue `body` field entirely — body is the only unbounded
@@ -377,15 +395,6 @@ accessible, base-branch autodetect failure, no repo configured.
   `dev_loop/prompts/implementer.system.md` still include `tracker
   validate` by design — that's a separate scope from LocalGates and
   outside the executor-decoupling refactor.)
-- **Don't set `allow_no_ci: true` on a repo with branch protection.**
-  The combo means dev_loop will try to merge with no CI signal and get
-  blocked by branch protection late in the pipeline.
-- **Don't run dev_loop on a repo with auto-merge enabled.** Squad-merge
-  and auto-merge race; the squad result may be stale by the time auto-merge
-  fires.
-- **Don't set `DEV_LOOP_STATE_ROOT` to a network mount.** Atomic rename
-  guarantees (used for `.current_rid` and `env` publication) are weaker on
-  NFS/SMB; lost writes can corrupt the run.
 
 ## Layout
 
