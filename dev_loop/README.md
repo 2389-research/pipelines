@@ -363,7 +363,7 @@ workflow upholds live under [Invariants](#invariants) below.)
 ## Invariants
 
 Descriptive single-source-of-truth rules the workflow upholds. Where to
-look when something seems duplicated, and what NOT to drift.
+look when something seems duplicated, and what NOT to let drift.
 
 - **`pre_filter_issues` applies two defenses before feeding the filtered list
   into `SelectNextIssue` via `${ctx.last_response}`.** (1) It drops the
