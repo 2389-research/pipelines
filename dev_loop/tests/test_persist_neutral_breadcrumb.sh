@@ -18,11 +18,23 @@ if [ ! -d "${SCRIPTS_DIR}" ]; then
   exit 2
 fi
 
+# Resolve the persist_*.sh glob explicitly into positional params BEFORE
+# calling grep. If the glob ever stops matching (files renamed/moved/relocated
+# under a new naming scheme), `grep ... || true` would otherwise swallow the
+# "No such file or directory" error and the guard would silently exit 0 —
+# weakening the regression lock. Fail loud instead.
+set -- "${SCRIPTS_DIR}"/persist_*.sh
+if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
+  printf 'FAIL: no persist_*.sh files under %s (guard cannot run)\n' \
+    "${SCRIPTS_DIR}" >&2
+  exit 2
+fi
+
 # The forbidden literal: any reference to the dip executor's on-disk layout
 # in a persist script's user-facing surface (comments OR printfs). The
 # executor-discovery block lives in setup_run.sh; persist scripts must stay
 # executor-neutral and name only ${DIP_ARTIFACT_DIR} in their breadcrumbs.
-hits=$(grep -nH "tracker/runs" "${SCRIPTS_DIR}"/persist_*.sh || true)
+hits=$(grep -nH "tracker/runs" "$@" || true)
 
 if [ -n "${hits}" ]; then
   printf 'FAIL: persist_*.sh must not reference executor-specific path strings (see #61):\n%s\n' \
