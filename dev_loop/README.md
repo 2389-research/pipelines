@@ -201,16 +201,21 @@ dev_loop scripts assume the executor provides:
 - **Environment variables published before any persist script runs.**
   `setup_run.sh` is the adapter: it discovers / synthesizes these and
   writes them to `${DEV_LOOP_RUN_DIR}/env`, which every downstream
-  script's bootstrap preamble sources. The executor-coupled keys (the
-  values that depend on the dip-executor's layout) are:
+  script's bootstrap preamble sources. The required contract keys are:
   - `DIP_ARTIFACT_DIR` — absolute path to the per-run artifact root for
     the executor. Agent responses live at
-    `<DIP_ARTIFACT_DIR>/<NodeID>/response.md`.
+    `<DIP_ARTIFACT_DIR>/<NodeID>/response.md`. **This is the only
+    executor-layout-coupled key** — its value comes from the discovery
+    block in `setup_run.sh` and is what porters must re-source for a
+    new executor.
   - `DEV_LOOP_RUN_DIR` — absolute path to dev_loop's per-run state dir
     (see Configuration: env `DEV_LOOP_STATE_ROOT` > YAML
-    `runtime_state_root` > default).
+    `runtime_state_root` > default). Dev_loop-internal; not coupled to
+    the executor's on-disk layout.
   - `DEV_LOOP_RUN_ID` — opaque run id (treat as a string).
+    Dev_loop-internal.
   - `GH_REPO` — target GitHub repo as `owner/name` for `gh` operations.
+    Sourced from env > YAML config; not coupled to the executor.
 
   The env file also carries `BASE_BRANCH` and `ALLOW_NO_CI` (resolved
   config that downstream scripts read), and the canonical allow-list of
