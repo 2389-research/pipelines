@@ -86,14 +86,13 @@ EOF
   [ "${persona}" = "pragmatism" ]
 }
 
-@test "env file present with missing/invalid DIP_ARTIFACT_DIR emits persist-failed" {
-  # The contract: when setup_run.sh has written an env file, we MUST honor
-  # DIP_ARTIFACT_DIR from it. If it's missing or points at a non-existent dir,
-  # emit `persist-failed` (issue #48) so the .dip routes through
-  # CleanupWorktree + RatchetLog rather than halting the pipeline. We do NOT
-  # fall back to mtime — that would defeat concurrency isolation.
-  # #61: the error breadcrumb names DIP_ARTIFACT_DIR (the actionable knob), not
-  # the executor's on-disk layout.
+@test "unset DIP_ARTIFACT_DIR emits 'DIP_ARTIFACT_DIR is unset' error (#73)" {
+  # Issue #73: the guard distinguishes truly-unset from set-but-stale. The
+  # contract still holds — when setup_run.sh has written an env file, we MUST
+  # honor DIP_ARTIFACT_DIR from it. If unset, emit `persist-failed` (issue #48)
+  # so the .dip routes through CleanupWorktree + RatchetLog rather than halt.
+  # We do NOT fall back to mtime — that would defeat concurrency isolation.
+  # #61: breadcrumb names only DIP_ARTIFACT_DIR, never the on-disk layout.
   stage_response SquadPragmatism verdict_pass.json
   # Rewrite env without DIP_ARTIFACT_DIR.
   cat > "${RUN_DIR}/env" <<EOF
@@ -104,12 +103,42 @@ EOF
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  # Pin the full actionable phrase (well-actually #3): a regression that drops
-  # the trailing "was setup_run executed?" suffix would still match a bare
+  # Pin the full actionable phrase: a regression that drops the trailing
+  # "was setup_run executed?" suffix would still match a bare
   # "DIP_ARTIFACT_DIR is unset" substring and pass green.
-  grep -q "DIP_ARTIFACT_DIR is unset or not a directory; was setup_run executed?" \
+  grep -q "DIP_ARTIFACT_DIR is unset; was setup_run executed?" \
     "${RUN_DIR}/persist_pragmatism_error.txt"
+  # The unset arm MUST NOT print the stale-path message (no path to print).
+  ! grep -q "is not a directory" "${RUN_DIR}/persist_pragmatism_error.txt"
   ! grep -q "tracker/runs" "${RUN_DIR}/persist_pragmatism_error.txt"
+}
+
+@test "stale DIP_ARTIFACT_DIR surfaces the value in the breadcrumb (#73)" {
+  # Issue #73: when DIP_ARTIFACT_DIR is set but the directory has been wiped
+  # under us (cleanup race / mv / operator tampering), the breadcrumb must
+  # surface the stale value so the operator can diagnose without opening
+  # ${RUN_DIR}/env. The unset arm would not name a path.
+  stage_response SquadPragmatism verdict_pass.json
+  stale="${WORKDIR}/.tracker/runs/trk-was-here-yesterday"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+DIP_ARTIFACT_DIR='${stale}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  # Pin the full actionable phrase including the surfaced path. -F treats the
+  # interpolated path as a fixed string so regex metacharacters in WORKDIR (e.g.
+  # `.`) can't loosen the match.
+  grep -qF "DIP_ARTIFACT_DIR=${stale} is not a directory; was the artifact dir cleaned up under us?" \
+    "${RUN_DIR}/persist_pragmatism_error.txt"
+  # The stale arm MUST NOT print the unset message.
+  ! grep -qF "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {

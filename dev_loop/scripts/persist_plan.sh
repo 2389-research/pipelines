@@ -44,8 +44,17 @@ trap 'rc=$?
 # back to ls -dt mtime (which would silently route to whichever run finished
 # most recently, defeating concurrency isolation). The breadcrumb names the
 # env var (the actionable knob), not the executor's on-disk layout — see #61.
-if [ -z "${DIP_ARTIFACT_DIR:-}" ] || [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
-  printf 'DIP_ARTIFACT_DIR is unset or not a directory; was setup_run executed?\n' \
+# Issue #73: split unset vs set-but-stale so the operator can tell
+# setup_run-skipped from cleanup-race apart without opening ${RUN_DIR}/env.
+# The stale arm prints the surfaced path; safe per PR #65's security review
+# (reject_special in setup_run.sh strips NL/CR before the env file write).
+if [ -z "${DIP_ARTIFACT_DIR:-}" ]; then
+  printf 'DIP_ARTIFACT_DIR is unset; was setup_run executed?\n' \
+    > "${RUN_DIR}/persist_plan_error.txt"
+  exit 1
+elif [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
+  printf 'DIP_ARTIFACT_DIR=%s is not a directory; was the artifact dir cleaned up under us?\n' \
+    "${DIP_ARTIFACT_DIR}" \
     > "${RUN_DIR}/persist_plan_error.txt"
   exit 1
 fi

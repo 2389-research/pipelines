@@ -69,10 +69,12 @@ JSON
   [ ! -f "${RUN_DIR}/branch_name.txt" ]
 }
 
-@test "missing DIP_ARTIFACT_DIR emits neutral 'DIP_ARTIFACT_DIR is unset' error (#61)" {
-  # Executor decoupling (#61): persist scripts must NOT name the executor's
-  # on-disk layout (`.tracker/runs`) in their error breadcrumb. The actionable
-  # signal is the env var name `DIP_ARTIFACT_DIR`, not the discovered root.
+@test "unset DIP_ARTIFACT_DIR emits 'DIP_ARTIFACT_DIR is unset' error (#73)" {
+  # Issue #73: the guard must distinguish truly-unset from set-but-stale so
+  # the operator can tell setup_run-skipped from cleanup-race apart without
+  # opening ${RUN_DIR}/env. This test pins the unset arm.
+  # Executor decoupling (#61) still holds: the breadcrumb names only
+  # DIP_ARTIFACT_DIR (the actionable knob), never the on-disk layout.
   cat > "${RUN_DIR}/env" <<EOF
 GH_REPO='test/test'
 BASE_BRANCH='main'
@@ -84,11 +86,40 @@ EOF
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  # Pin the full actionable phrase (well-actually #3): a regression that drops
-  # the trailing "was setup_run executed?" suffix would still match a bare
+  # Pin the full actionable phrase: a regression that drops the trailing
+  # "was setup_run executed?" suffix would still match a bare
   # "DIP_ARTIFACT_DIR is unset" substring and pass green.
-  grep -q "DIP_ARTIFACT_DIR is unset or not a directory; was setup_run executed?" \
+  grep -q "DIP_ARTIFACT_DIR is unset; was setup_run executed?" \
     "${RUN_DIR}/persist_plan_error.txt"
+  # The unset arm MUST NOT print the stale-path message (no path to print).
+  ! grep -q "is not a directory" "${RUN_DIR}/persist_plan_error.txt"
   ! grep -q "tracker/runs" "${RUN_DIR}/persist_plan_error.txt"
   ! grep -q "no tracker run dir" "${RUN_DIR}/persist_plan_error.txt"
+}
+
+@test "stale DIP_ARTIFACT_DIR surfaces the value in the breadcrumb (#73)" {
+  # Issue #73: when DIP_ARTIFACT_DIR is set but points at a non-existent dir
+  # (cleanup race, operator tampering, mv/rm under us), the breadcrumb must
+  # surface the stale value so the operator can diagnose without opening
+  # ${RUN_DIR}/env. The unset arm would not name a path.
+  stale="${WORKDIR}/.tracker/runs/trk-was-here-yesterday"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+DIP_ARTIFACT_DIR='${stale}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  printf '%s' "${output}" | grep -q "persist-failed"
+  # Pin the full actionable phrase including the surfaced path. -F treats the
+  # interpolated path as a fixed string so regex metacharacters in WORKDIR (e.g.
+  # `.`) can't loosen the match.
+  grep -qF "DIP_ARTIFACT_DIR=${stale} is not a directory; was the artifact dir cleaned up under us?" \
+    "${RUN_DIR}/persist_plan_error.txt"
+  # The stale arm MUST NOT print the unset message.
+  ! grep -qF "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_plan_error.txt"
 }
