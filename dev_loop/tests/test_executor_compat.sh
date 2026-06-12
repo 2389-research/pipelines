@@ -207,9 +207,10 @@ run_persist() {
   fi
 
   out_file="${tmp}/${script_name}.out"
-  # Run with the env file's keys passed in so the bootstrap resolves
-  # without depending on a real .current_rid resolution path. The script
-  # is invoked the same way tracker invokes it: `sh -c "$(cat <script>)"`.
+  # Pass DEV_LOOP_RUN_DIR + DEV_LOOP_STATE_ROOT so the bootstrap can find
+  # and source the env file directly, without resolving through a real
+  # .current_rid lookup. The script is invoked the same way tracker
+  # invokes it: `sh -c "$(cat <script>)"`.
   (
     cd "${WORKDIR}"
     DEV_LOOP_STATE_ROOT="${DIP_ROOT}" \
