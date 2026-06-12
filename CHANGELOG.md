@@ -4,6 +4,9 @@ All notable changes to `2389-research/pipelines` are recorded here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+A custom `### Deferred` section type is used where in-flight scope was
+reclassified rather than landed (see v0.1.3); other sections follow the KAC
+1.1.0 enumeration.
 
 Each tagged release also publishes the full long-form notes (rationale, scope
 counts, process notes, known gaps) on the
@@ -15,10 +18,50 @@ forensic detail.
 
 ### Added
 
-- `CHANGELOG.md` at repo root, backfilled with entries for v0.1.0 → v0.1.3
-  ([#37](https://github.com/2389-research/pipelines/issues/37)).
+- `writable_paths` 5-site adoption across `sprint_exec*` agents, with the
+  minimum tracker pin bumped to `v0.35.0` (which vendors dippin-lang
+  ≥ `v0.35.0`); enforces Landlock + openat2 fs-jail bounds on Linux and
+  refuses to start on macOS/Windows when the field is set
+  ([#41](https://github.com/2389-research/pipelines/pull/41)).
+- `dev_loop/` subsystem — autonomous issue-driven dev loop (v6 design from
+  [#40](https://github.com/2389-research/pipelines/issues/40)): multi-round
+  scope → implement → verify loop with breadcrumb persistence, executor
+  decoupling, and reusable setup_run sub-pipeline
+  ([#42](https://github.com/2389-research/pipelines/pull/42)).
+- `.dipx` packable-workaround machinery for Phase 0.5 dev_loop runs from any
+  cwd ([#54](https://github.com/2389-research/pipelines/pull/54)).
+- Low-reasoning tournament variant of `spec_to_sprints` for `local_code_gen/`
+  ([#55](https://github.com/2389-research/pipelines/pull/55)).
+- `CHANGELOG.md` at repo root, backfilled with entries for v0.1.0 → v0.1.3,
+  plus the `Releases & Changelog` section in `README.md` documenting the
+  release-time update convention
+  ([#37](https://github.com/2389-research/pipelines/issues/37),
+  [#62](https://github.com/2389-research/pipelines/pull/62)).
+- `docs/research/` reasoning-tier study + cross-module-test panel notes for
+  the `spec→sprints` upstream
+  ([#59](https://github.com/2389-research/pipelines/pull/59)).
 
-## [0.1.3] — 2026-05-27
+### Changed
+
+- `dev_loop` setup_run sub-pipeline centralizes dip-executor coupling
+  (refactor surface for [#44](https://github.com/2389-research/pipelines/issues/44))
+  ([#60](https://github.com/2389-research/pipelines/pull/60)).
+
+### Fixed
+
+- `dev_loop` setup_run failure-path safety hardening
+  ([#56](https://github.com/2389-research/pipelines/pull/56),
+  closes [#51](https://github.com/2389-research/pipelines/issues/51) and
+  [#52](https://github.com/2389-research/pipelines/issues/52)).
+- `dev_loop` persist scripts now emit failure markers instead of halting the
+  pipeline ([#57](https://github.com/2389-research/pipelines/pull/57),
+  closes [#48](https://github.com/2389-research/pipelines/issues/48)).
+- `dev_loop` `pre_filter` strips issue body to avoid prompt-injection surface
+  via untrusted GitHub content
+  ([#58](https://github.com/2389-research/pipelines/pull/58),
+  closes [#50](https://github.com/2389-research/pipelines/issues/50)).
+
+## [0.1.3] - 2026-05-27
 
 Track B Phase 2 verdict synthesizers + sprint runner redecompose hardening.
 
@@ -63,11 +106,11 @@ Track B Phase 2 verdict synthesizers + sprint runner redecompose hardening.
 
 - 6 of the originally-listed [#18](https://github.com/2389-research/pipelines/issues/18)
   Phase 2 sites reclassified to Category C/D — they need a write-allowlist
-  primitive (e.g. `tool_access: workspace_only`) that does not exist in
+  primitive (e.g., `tool_access: workspace_only`) that does not exist in
   dippin-lang v0.32.0. Issue #18 closed with the reclassification table as
   final disposition.
 
-## [0.1.2] — 2026-05-27
+## [0.1.2] - 2026-05-27
 
 Track B Phase 1: `tool_access: none` on acknowledge-only agents.
 
@@ -94,7 +137,7 @@ Track B Phase 1: `tool_access: none` on acknowledge-only agents.
   22 converted sites. Output-policy clauses ("Your ONLY job is to acknowledge
   X") are preserved as plain instructions.
 
-## [0.1.1] — 2026-05-26
+## [0.1.1] - 2026-05-26
 
 Bench refactor + `local_code_gen/` hardening.
 
@@ -136,7 +179,7 @@ Bench refactor + `local_code_gen/` hardening.
 - Bench `local-fix-applied` → `local-fixed` marker typo that dead-ended the
   empty-Ollama-response guard.
 
-## [0.1.0] — 2026-05-26
+## [0.1.0] - 2026-05-26
 
 First formal release. Tags the state of `main` after the tracker
 v0.29–v0.30 era quality work.
@@ -174,11 +217,12 @@ v0.29–v0.30 era quality work.
   Start/Exit conversions, `goal_gate` recovery wiring, `max_turns` budget
   normalization ([#13](https://github.com/2389-research/pipelines/pull/13)).
 - `marker_grep` extended to `iter_dev.dip` and three `spec_to_sprints`
-  variants, clearing 8 lint warnings via dippin-lang#42's suppression
-  ([#16](https://github.com/2389-research/pipelines/pull/16)).
+  variants, clearing 8 lint warnings via
+  [dippin-lang#42](https://github.com/2389-research/dippin-lang/issues/42)'s
+  suppression ([#16](https://github.com/2389-research/pipelines/pull/16)).
 
 [Unreleased]: https://github.com/2389-research/pipelines/compare/v0.1.3...HEAD
-[0.1.3]: https://github.com/2389-research/pipelines/releases/tag/v0.1.3
-[0.1.2]: https://github.com/2389-research/pipelines/releases/tag/v0.1.2
-[0.1.1]: https://github.com/2389-research/pipelines/releases/tag/v0.1.1
+[0.1.3]: https://github.com/2389-research/pipelines/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/2389-research/pipelines/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/2389-research/pipelines/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/2389-research/pipelines/releases/tag/v0.1.0
