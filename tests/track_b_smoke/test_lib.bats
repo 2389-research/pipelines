@@ -29,12 +29,27 @@ make_run() {
   if [ -n "${body}" ]; then
     printf '%s\n' "${body}" > "${run_dir}/${node}/response.md"
   fi
-  shift 4 || true
+  # Drop the fixed positional args so the remainder are activity.jsonl lines.
+  # A blanket `shift 4` would fail (and leave "$@" unchanged) when only 3 args
+  # were passed, contaminating activity.jsonl with workdir/rid/node. Shift the
+  # 3 mandatory args first, then the optional body only if it was supplied.
+  shift 3
+  if [ "$#" -gt 0 ]; then shift; fi
   # Remaining args become activity.jsonl lines.
   : > "${run_dir}/activity.jsonl"
   for line in "$@"; do
     printf '%s\n' "${line}" >> "${run_dir}/activity.jsonl"
   done
+}
+
+@test "make_run with 3 args produces an empty activity.jsonl" {
+  # Regression guard for the helper's documented signature: when called with
+  # only <workdir> <rid> <node_id> (no response body, no activity lines), the
+  # fixture's activity.jsonl must be empty — not silently populated with the
+  # positional args because `shift 4` failed on a 3-arg call.
+  make_run "${TMPDIR}" run1 Exit
+  [ -f "${TMPDIR}/.tracker/runs/run1/activity.jsonl" ]
+  [ ! -s "${TMPDIR}/.tracker/runs/run1/activity.jsonl" ]
 }
 
 @test "track_b_run_dir errors when no .tracker/runs exists" {
