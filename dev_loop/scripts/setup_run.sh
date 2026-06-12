@@ -266,18 +266,9 @@ fi
 # code-refactor follow-up tracked as #61.)
 #
 # See "Executor compatibility" in dev_loop/README.md for the full
-# dev_loop ↔ executor contract (env vars published here, what downstream
-# scripts may assume, and the porting recipe). The steps below are the
-# in-code summary; the README is the authoritative version.
-#
-# To port dev_loop to a different dip executor:
-#   1. Replace this discovery with whatever locates that executor's
-#      per-run artifact dir (env var, sentinel file, etc.).
-#   2. Add its CLI name to the prereq command list above (and drop
-#      `tracker` if no longer needed).
-#   3. Update the emit_env DIP_ARTIFACT_DIR call below if the variable
-#      name carries over.
-#   4. Update the breadcrumb path string in persist_*.sh (see #61).
+# dev_loop ↔ executor contract — env vars published here, what
+# downstream scripts may assume, and the porting recipe. The README is
+# the single authoritative source; this block is the code it describes.
 #
 # Today's executor is tracker, which creates <workdir>/.tracker/runs/<runID>/
 # when it starts, so by the time SetupRun executes the dir already exists

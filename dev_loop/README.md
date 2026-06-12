@@ -5,7 +5,7 @@ repository (any language). It picks the highest-priority open issue, plans a
 minimal PR, implements it in a git worktree, runs a 5-persona squad review
 against the diff, and merges or iterates under deterministic gates — no human
 approval per iteration. Configured today for `tracker` as the executor;
-engine-pluggability deferred to pipelines#44.
+engine-pluggability deferred to #44.
 
 ## What it does
 
@@ -200,20 +200,32 @@ dev_loop scripts assume the executor provides:
 - **Environment variables published before any persist script runs.**
   `setup_run.sh` is the adapter: it discovers / synthesizes these and
   writes them to `${DEV_LOOP_RUN_DIR}/env`, which every downstream
-  script's bootstrap preamble sources:
+  script's bootstrap preamble sources. The executor-coupled keys (the
+  values that depend on the dip-executor's layout) are:
   - `DIP_ARTIFACT_DIR` — absolute path to the per-run artifact root for
     the executor. Agent responses live at
     `<DIP_ARTIFACT_DIR>/<NodeID>/response.md`.
   - `DEV_LOOP_RUN_DIR` — absolute path to dev_loop's per-run state dir
-    under `${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}/runs/`.
-  - `DEV_LOOP_RUN_ID` — opaque run id (date + pid in v1; treat as a
-    string).
+    (see Configuration: env `DEV_LOOP_STATE_ROOT` > YAML
+    `runtime_state_root` > default).
+  - `DEV_LOOP_RUN_ID` — opaque run id (treat as a string).
   - `GH_REPO` — target GitHub repo as `owner/name` for `gh` operations.
+
+  The env file also carries `BASE_BRANCH` and `ALLOW_NO_CI` (resolved
+  config that downstream scripts read), and the canonical allow-list of
+  emitted keys lives in `dev_loop/scripts/setup_run.sh` above `emit_env`.
+  When porting, preserve the structural-hygiene invariants `setup_run.sh`
+  applies to every value: NL/CR rejection via `reject_special`,
+  single-quote escaping via `emit_env`, mode-600 on the env file, atomic
+  publication via `mv -f`, and rejection of a pre-existing symlink at the
+  destination. Downstream scripts source the env file under `set -a` and
+  trust it.
 
 `setup_run.sh` is the ONLY place that knows how the executor's on-disk
 layout is shaped; everywhere else reads `${DIP_ARTIFACT_DIR}` from the env
 file. See the `--- begin dip-executor discovery (PORTING NOTE) ---` block
-in `dev_loop/scripts/setup_run.sh`.
+in `dev_loop/scripts/setup_run.sh` for the in-code implementation of this
+contract.
 
 ### Porting to a different dip executor
 
@@ -223,28 +235,30 @@ in `dev_loop/scripts/setup_run.sh`.
    subprocesses, a sentinel file, or its own discovery routine. The block
    must populate `dip_artifact_dir` with the executor's per-run artifact
    root for the current invocation; `emit_env DIP_ARTIFACT_DIR` does the
-   rest.
+   rest. The populated value must be an absolute path to an existing
+   directory; `setup_run.sh` enforces both today (and `reject_special`
+   blocks NL/CR before `emit_env` writes it).
 2. **Update the prereq command check.** In the `for cmd in gh jq git
    tracker yq timeout;` loop near the top of `setup_run.sh`, swap
    `tracker` for the new executor's CLI name (and drop tracker if it's no
    longer needed).
-3. **Replace the local validator if it differs.** `local_gates.sh` runs
-   `dippin check` on changed `.dip` files. If the new executor ships a
-   different language validator, swap that command. If it bundles its
-   own pre-merge gate, wire that here instead.
-4. **Update the breadcrumb path strings.** The persist scripts still
-   reference the literal `.tracker/runs` in their `DIP_ARTIFACT_ROOT`
-   error breadcrumbs. These are non-authoritative — the executor's
-   layout is owned by `setup_run.sh` — but they should match the new
-   executor's path for readable failures. Tracked as #61.
-5. **No other changes required.** The 8 persist scripts, the PR-ops
-   scripts (push/fetch-context/recheck/poll/comment/merge), the iter
-   counters, the worktree manager, and the ratchet log are
-   executor-agnostic: they read `${DIP_ARTIFACT_DIR}` and the per-run
-   env file, and they talk to `git` / `gh` directly. They need no
-   changes when the executor swaps.
+3. **Persist scripts (8 verdict-/plan-/synthesis-side), PR-ops scripts
+   (push/fetch-context/recheck/poll/comment/merge), the iter counters,
+   the worktree manager, and the ratchet log need no changes.** They
+   read `${DIP_ARTIFACT_DIR}` from the per-run env file and talk to
+   `git` / `gh` directly. They also assume the executor honors the
+   marker-routing model in the Tool-node invocation bullet above
+   (`ctx.tool_marker` from stdout against each node's `marker_grep`); a
+   different executor that routes differently would invalidate the
+   persist scripts' fail-closed `persist-failed` pattern.
+4. **Carry-overs.** `local_gates.sh` runs `dippin check` — a
+   *language*-level validator, not an executor-coupling point — so a
+   dip-compliant executor doesn't need it changed. The persist scripts'
+   error-breadcrumb literal `.tracker/runs` is the last bit of executor
+   string outside `setup_run.sh`'s discovery block; centralizing or
+   dropping it is tracked as #61.
 
-### `tracker --resume` and the resume contract
+### Resume contract
 
 dev_loop does NOT auto-resume. `setup_run.sh` detects a prior run's
 worktree on disk and emits the `setup-resume-required` marker, which the
@@ -333,23 +347,13 @@ accessible, base-branch autodetect failure, no repo configured.
   disk-side `filtered_issues.json` and `$RUN_DIR/issues.json` both keep
   the raw, unescaped form for forensics; only the stdout channel — the
   one that lands in agent prompts — is sanitized.
-- **The dip executor's on-disk convention is discovered in exactly one
-  place: the `--- begin dip-executor discovery (PORTING NOTE) ---` block
-  in `dev_loop/scripts/setup_run.sh`.** Everywhere else in `dev_loop/`
-  reads `${DIP_ARTIFACT_DIR}` from the per-run env file. (Persist scripts
-  still reference the literal `.tracker/runs` path in their error
-  breadcrumbs; those are non-authoritative — the executor's layout is
-  owned by the discovery block. Centralizing or dropping that
-  breadcrumb string is a separate code follow-up tracked as #61.) To
-  port dev_loop to a different dip executor, replace the discovery block
-  + the prereq tool list above it, and the breadcrumb path strings —
-  no other LocalGates / persist logic needs to change. (Note: the
+- **Don't bake dip-executor assumptions outside the discovery block in
+  `setup_run.sh`.** See "Executor compatibility" above for the full
+  contract + porting recipe. (Implementer-scope footnote: the
   Implementer agent's pre-push gates at
   `dev_loop/prompts/implementer.system.md` still include `tracker
-  validate` by design — that's a separate scope from LocalGates and not
-  part of this refactor.) Today's executor is `tracker`; the discovery
-  block resolves its `.tracker/runs/<runID>/` layout. See "Executor
-  compatibility" above for the full contract + porting recipe.
+  validate` by design — that's a separate scope from LocalGates and
+  outside the executor-decoupling refactor.)
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.
