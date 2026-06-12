@@ -8,7 +8,8 @@ A custom `### Deferred` section type is used where in-flight scope was
 reclassified rather than landed (see v0.1.3); other sections follow the KAC
 1.1.0 enumeration.
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut convention and the pointer to long-form GitHub release notes.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut
+convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
@@ -28,15 +29,14 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut conventi
   cwd ([#54](https://github.com/2389-research/pipelines/pull/54)).
 - Low-reasoning tournament variant of `spec_to_sprints` for `local_code_gen/`
   ([#55](https://github.com/2389-research/pipelines/pull/55)).
-- `CHANGELOG.md` at repo root, backfilled with entries for v0.1.0 → v0.1.3,
-  plus the `Releases & Changelog` section in `README.md` documenting the
-  release-time update convention
+- `CHANGELOG.md` at repo root, backfilled with entries for v0.1.0 → v0.1.3
   ([#37](https://github.com/2389-research/pipelines/issues/37),
   [#62](https://github.com/2389-research/pipelines/pull/62)).
 - `CONTRIBUTING.md` at repo root with a `Releases` section that now owns the
   release-cut convention; `README.md` and `CHANGELOG.md` headers point to it
   instead of duplicating the prose
-  ([#69](https://github.com/2389-research/pipelines/issues/69)).
+  ([#69](https://github.com/2389-research/pipelines/issues/69),
+  [#79](https://github.com/2389-research/pipelines/pull/79)).
 - `docs/research/` reasoning-tier study + cross-module-test panel notes for
   the `spec→sprints` upstream
   ([#59](https://github.com/2389-research/pipelines/pull/59)).

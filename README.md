@@ -121,7 +121,7 @@ Tracker reads the `.dip` file, builds the execution graph, and orchestrates LLM 
 
 ## Releases & Changelog
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for the per-version summary and [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut convention.
+See [`CHANGELOG.md`](CHANGELOG.md) for the per-version summary and [`CONTRIBUTING.md`](CONTRIBUTING.md#releases) for the release-cut convention.
 
 ## Related Projects
 
