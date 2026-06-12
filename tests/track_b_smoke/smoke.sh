@@ -82,7 +82,33 @@ if ! command -v tracker >/dev/null 2>&1; then
 fi
 
 workdir=$(mktemp -d -t track_b_smoke.XXXXXX)
-trap 'rm -rf "${workdir}"' EXIT
+
+# Cleanup contract: remove the workdir only when the smoke run passed *and*
+# the operator did not opt into retention. On any failure (assertion failure
+# under `set -e`, tracker-runs lookup failure, signal) we leave the workdir
+# in place so the operator can inspect `.tracker/runs/...`, `tracker.stdout`,
+# and `tracker.stderr`. The trap also dumps the tracker streams to stderr so
+# the failure message and the diagnostics arrive in the same log block.
+pass=0
+on_exit() {
+  status=$?
+  if [ "${pass}" -eq 1 ] && [ "${TRACK_B_SMOKE_KEEP:-0}" != 1 ]; then
+    rm -rf "${workdir}"
+  else
+    printf '\n--- smoke harness retained workdir for inspection ---\n' >&2
+    printf 'workdir: %s\n' "${workdir}" >&2
+    if [ -f "${workdir}/tracker.stdout" ]; then
+      printf '=== tracker.stdout ===\n' >&2
+      sed 's/^/  /' "${workdir}/tracker.stdout" >&2 || true
+    fi
+    if [ -f "${workdir}/tracker.stderr" ]; then
+      printf '=== tracker.stderr ===\n' >&2
+      sed 's/^/  /' "${workdir}/tracker.stderr" >&2 || true
+    fi
+  fi
+  exit "${status}"
+}
+trap on_exit EXIT
 
 # Copy the pipeline (and any subgraph deps in "$@") into the temp workdir so
 # per-run state lands there and not under the repo's .tracker/. Hermetic by
@@ -106,16 +132,11 @@ tracker --no-tui --auto-approve "${pipeline_basename}" >tracker.stdout 2>tracker
 printf 'tracker exit: %s\n' "${tracker_status}" >&2
 
 # If tracker never created a .tracker/runs/ dir (or the dir is empty),
-# track_b_run_dir fails. Under `set -eu` the bare command substitution would
-# exit the script before the EXIT trap had a chance to dump diagnostics — and
-# the trap then rm -rf's the workdir, taking tracker.stdout/stderr with it.
-# Surface those streams to the operator first.
+# track_b_run_dir fails. The `if !` guard keeps `set -eu` from terminating
+# the script before we set `pass` semantics. The on_exit trap will retain
+# the workdir and dump tracker.stdout/stderr so the operator can diagnose.
 if ! run_dir=$(track_b_run_dir "${workdir}"); then
   printf 'track_b_run_dir failed under %s\n' "${workdir}" >&2
-  printf '=== tracker.stdout ===\n' >&2
-  sed 's/^/  /' tracker.stdout >&2 || true
-  printf '=== tracker.stderr ===\n' >&2
-  sed 's/^/  /' tracker.stderr >&2 || true
   exit 1
 fi
 printf 'run dir: %s\n' "${run_dir}" >&2
@@ -138,3 +159,4 @@ track_b_assert_no_tool_calls_in_response "${run_dir}" "${converted_node}"
 track_b_assert_no_tool_events_in_activity "${run_dir}" "${converted_node}"
 
 printf 'PASS: %s smoke — %s ran without dispatching tools\n' "${family}" "${converted_node}"
+pass=1

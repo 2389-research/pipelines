@@ -27,6 +27,8 @@ tests/track_b_smoke/
   smoke.sh           — runtime harness (POSIX sh; invokes tracker)
   lib.sh             — assertion helpers (sourced by smoke.sh; pure POSIX)
   test_lib.bats      — bats tests for the assertion helpers
+  test_smoke.bats    — bats tests for smoke.sh workdir lifecycle (uses
+                       PATH shim; no real tracker invocation)
 ```
 
 ## How to run
@@ -34,13 +36,21 @@ tests/track_b_smoke/
 ### Assertion-helper unit tests (free, no LLM calls)
 
 ```sh
-bats tests/track_b_smoke/test_lib.bats
+bats tests/track_b_smoke/
 ```
 
-16 tests. Exercises every helper in `lib.sh` against synthetic
-`.tracker/runs/<rid>/` directories — including regression guards for nested
-`tool_call_start` payloads, node IDs with regex metacharacters, and
-symlinks under `runs/`. Required tooling: `bats`. No tracker / no API keys.
+21 tests across two files:
+
+- `test_lib.bats` (17) — exercises every helper in `lib.sh` against
+  synthetic `.tracker/runs/<rid>/` directories, including regression guards
+  for nested `tool_call_start` payloads, node IDs with regex metacharacters,
+  and symlinks under `runs/`.
+- `test_smoke.bats` (4) — uses a PATH shim to stand in for `tracker` and
+  covers the workdir lifecycle: removed on success, retained on failure
+  (with `tracker.stdout`/`tracker.stderr` dumped to stderr), and forced
+  retention via `TRACK_B_SMOKE_KEEP=1`.
+
+Required tooling: `bats`. No tracker / no API keys.
 
 ### Runtime smoke probes (real LLM calls)
 

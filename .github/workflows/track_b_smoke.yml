@@ -43,5 +43,8 @@ jobs:
           shellcheck --shell=sh tests/track_b_smoke/lib.sh
           shellcheck --shell=sh tests/track_b_smoke/smoke.sh
 
-      - name: bats unit tests for assertion helpers
-        run: bats tests/track_b_smoke/test_lib.bats
+      - name: bats unit tests for assertion helpers and smoke.sh lifecycle
+        # test_lib.bats covers lib.sh helpers against synthetic fixtures.
+        # test_smoke.bats covers smoke.sh's workdir cleanup contract via a
+        # PATH shim for `tracker` (no real LLM calls).
+        run: bats tests/track_b_smoke/test_lib.bats tests/track_b_smoke/test_smoke.bats
