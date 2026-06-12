@@ -43,9 +43,9 @@ trap 'rc=$?
 # in the env file; if it's missing or invalid, fail closed rather than falling
 # back to ls -dt mtime (which would silently route to whichever run finished
 # most recently, defeating concurrency isolation). The breadcrumb names the
-# env-var (the actionable knob), not the executor's on-disk layout — see #61.
+# env var (the actionable knob), not the executor's on-disk layout — see #61.
 if [ -z "${DIP_ARTIFACT_DIR:-}" ] || [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
-  printf 'DIP_ARTIFACT_DIR is unset or points at missing dir; was setup_run executed?\n' \
+  printf 'DIP_ARTIFACT_DIR is unset or not a directory; was setup_run executed?\n' \
     > "${RUN_DIR}/persist_yagni_error.txt"
   exit 1
 fi

@@ -84,7 +84,11 @@ EOF
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  grep -q "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_plan_error.txt"
+  # Pin the full actionable phrase (well-actually #3): a regression that drops
+  # the trailing "was setup_run executed?" suffix would still match a bare
+  # "DIP_ARTIFACT_DIR is unset" substring and pass green.
+  grep -q "DIP_ARTIFACT_DIR is unset or not a directory; was setup_run executed?" \
+    "${RUN_DIR}/persist_plan_error.txt"
   ! grep -q "tracker/runs" "${RUN_DIR}/persist_plan_error.txt"
   ! grep -q "no tracker run dir" "${RUN_DIR}/persist_plan_error.txt"
 }
