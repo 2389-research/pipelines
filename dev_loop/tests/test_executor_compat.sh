@@ -36,10 +36,17 @@ if [ ! -d "${SCRIPTS_DIR}" ] || [ ! -f "${README}" ] || [ ! -f "${SETUP_RUN}" ];
 fi
 
 rc=0
-TMPDIR_T=""
+# `tmp` is the test's mktemp -d root; the cleanup trap reads it. `DIP_ROOT`
+# is assigned at Section 2 and mirrors test_helpers.bash's test-side alias
+# for DEV_LOOP_STATE_ROOT (script-side).
+tmp=""
 # shellcheck disable=SC2317  # invoked indirectly via trap
 cleanup() {
-  [ -n "${TMPDIR_T}" ] && rm -rf "${TMPDIR_T}"
+  # Defense-in-depth: only rm -rf paths under a tmpdir root we recognize, so a
+  # future refactor that re-points `tmp` at a non-mktemp path can't escalate.
+  case "${tmp}" in
+    /tmp/*|"${TMPDIR:-/tmp}"/*) rm -rf "${tmp}" ;;
+  esac
 }
 trap cleanup EXIT INT TERM
 
@@ -59,37 +66,63 @@ fail() {
 # only the next porter.
 # -------------------------------------------------------------------------
 
+# Load-bearing anchor — the sentinel comment that marks the discovery block
+# in setup_run.sh AND is referenced by name from the README. This is the
+# durable contract anchor: it survives the tracker#323 refactor (which
+# collapses the discovery body to a single env-var read) because the block
+# delimiter does not depend on the implementation strategy. Pinning this
+# guarantees the README's "see this block" pointer stays valid even after
+# the literals below get rewritten.
+LIT_SENTINEL='--- begin dip-executor discovery (PORTING NOTE) ---'
+
 # Load-bearing literal #1 — the discovery-block anchor the porting recipe
-# names as the porter's first edit target. Single-quoted intentionally so
-# `$(pwd)` is preserved verbatim for the grep target (we are pinning the
-# code string as-written, not its expanded form).
+# names as the porter's first edit target. Anchor on the trailing closing
+# quote so a refactor that appends extra characters mid-line trips the lock.
+# Single-quoted intentionally so `$(pwd)` is preserved verbatim for the
+# grep target (we are pinning the code string as-written, not its expanded
+# form).
 # shellcheck disable=SC2016
 LIT_DISCOVERY='DIP_ARTIFACT_ROOT="$(pwd)/.tracker/runs"'
 
 # Load-bearing literal #2 — the prereq-tool loop the porting recipe names
-# as the porter's second edit target. In setup_run.sh the loop is a single
-# line; in README the same span is reflowed across two markdown lines
-# inside one backtick-quoted block. Pin the contiguous setup_run.sh form,
-# and pin a whitespace-collapsed form against the README so a reflow
-# (typical of doc edits) does not trip the lock but a content edit does.
-LIT_PREREQ='for cmd in gh jq git tracker yq timeout'
+# as the porter's second edit target. Anchor on the trailing punctuation
+# so a list extension after `timeout` trips the lock — that is the failure
+# mode where a porter who reads the README and edits setup_run.sh blindly
+# would silently miss a new prereq. The setup_run.sh form ends with
+# `timeout; do` (loop opener); the README form ends with `timeout;` (the
+# trailing `do` is dropped from the backtick-quoted snippet). In README,
+# the literal is reflowed across two markdown lines inside one
+# backtick-quoted block, so the README assertion collapses whitespace.
+LIT_PREREQ_CODE='for cmd in gh jq git tracker yq timeout; do'
+LIT_PREREQ_DOC='for cmd in gh jq git tracker yq timeout;'
 
+# Sentinel comment on the setup_run.sh side: the contract anchor proper.
+# `--` separator is required because the literal begins with `--`, which
+# grep would otherwise parse as an option.
+if ! grep -qF -e "${LIT_SENTINEL}" "${SETUP_RUN}"; then
+  fail "setup_run.sh no longer contains the discovery sentinel comment: ${LIT_SENTINEL}"
+fi
+# README references the sentinel by name; if either side drops the
+# reference the porter's pointer goes stale.
+if ! grep -qF -e "${LIT_SENTINEL}" "${README}"; then
+  fail "README no longer references the discovery sentinel comment: ${LIT_SENTINEL}"
+fi
 if ! grep -qF "${LIT_DISCOVERY}" "${SETUP_RUN}"; then
   fail "setup_run.sh no longer contains the porting-recipe discovery literal: ${LIT_DISCOVERY}"
 fi
 if ! grep -qF "${LIT_DISCOVERY}" "${README}"; then
   fail "README porting recipe no longer quotes the discovery literal: ${LIT_DISCOVERY}"
 fi
-if ! grep -qF "${LIT_PREREQ}" "${SETUP_RUN}"; then
-  fail "setup_run.sh no longer contains the porting-recipe prereq loop literal: ${LIT_PREREQ}"
+if ! grep -qF "${LIT_PREREQ_CODE}" "${SETUP_RUN}"; then
+  fail "setup_run.sh no longer contains the porting-recipe prereq loop literal: ${LIT_PREREQ_CODE}"
 fi
 # README form: collapse any run of whitespace (incl. newlines) inside the
 # file to a single space, then look for the literal. tr to a single-line
 # stream first; grep -F on the collapsed form. This is intentionally
 # resilient to markdown reflow but strict on content drift (rename or
 # reorder the tools and the assertion trips).
-if ! tr '\n' ' ' < "${README}" | tr -s ' ' | grep -qF "${LIT_PREREQ}"; then
-  fail "README porting recipe no longer quotes the prereq loop literal: ${LIT_PREREQ}"
+if ! tr '\n' ' ' < "${README}" | tr -s ' ' | grep -qF "${LIT_PREREQ_DOC}"; then
+  fail "README porting recipe no longer quotes the prereq loop literal: ${LIT_PREREQ_DOC}"
 fi
 
 # -------------------------------------------------------------------------
@@ -103,19 +136,21 @@ fi
 # not emit tracker-coupled strings on success or failure paths.
 # -------------------------------------------------------------------------
 
-TMPDIR_T="$(mktemp -d)"
+tmp="$(mktemp -d)"
 
 # Mirror test_helpers.bash's setup_env shape, but with an executor-neutral
 # artifact-dir name to make the contract-violation message obvious when the
-# assertion below trips.
-WORKDIR="${TMPDIR_T}/workdir"
-DIP_STATE_ROOT="${TMPDIR_T}/state"
+# assertion below trips. `DIP_ROOT` matches the test_helpers.bash naming
+# convention: it's the test-side inspection alias for `DEV_LOOP_STATE_ROOT`
+# (script-side) — both point at the same tmpdir-anchored dir.
+WORKDIR="${tmp}/workdir"
+DIP_ROOT="${tmp}/state"
 # Deliberately NOT `.tracker/runs`. A second executor would put its
 # per-node responses somewhere else; the directory name here is just a
 # stand-in for "any other executor's layout".
 STUB_ARTIFACT_DIR="${WORKDIR}/.stub-executor/run-abc123"
 RID="t-executor-compat-$$"
-RUN_DIR="${DIP_STATE_ROOT}/runs/${RID}"
+RUN_DIR="${DIP_ROOT}/runs/${RID}"
 
 mkdir -p "${WORKDIR}" "${RUN_DIR}" "${STUB_ARTIFACT_DIR}"
 
@@ -130,7 +165,7 @@ DEV_LOOP_RUN_DIR='${RUN_DIR}'
 DIP_ARTIFACT_DIR='${STUB_ARTIFACT_DIR}'
 EOF
 chmod 600 "${RUN_DIR}/env"
-printf '%s' "${RID}" > "${DIP_STATE_ROOT}/.current_rid"
+printf '%s' "${RID}" > "${DIP_ROOT}/.current_rid"
 
 # Stage stub responses for every NodeID a persist script will read. The
 # fixture JSON files already validate against the schemas — the stub just
@@ -152,8 +187,11 @@ stage_response SquadBlocker      verdict_attest_valid.json
 stage_response SquadSynthesizer  synthesis_approved.json
 
 # Run a single persist script under the stub-executor env. Asserts:
-#   - stdout begins with the expected marker
-#   - stdout does NOT contain `tracker` or `.tracker/runs`
+#   - stdout contains the expected marker exactly once (so prefix isolation
+#     below cannot be widened by a future here-doc payload echoing the
+#     marker text inside it)
+#   - the script-emitted prefix (everything through the marker line) does
+#     NOT contain `tracker` or `.tracker/runs`
 #   - no `persist_*_error.txt` was written
 # The DEV_LOOP_RUN_DIR + DEV_LOOP_STATE_ROOT env vars steer the bootstrap
 # at our test-side RUN_DIR rather than ~/.cache/dip/dev_loop.
@@ -168,16 +206,16 @@ run_persist() {
     return
   fi
 
-  out_file="${TMPDIR_T}/${script_name}.out"
+  out_file="${tmp}/${script_name}.out"
   # Run with the env file's keys passed in so the bootstrap resolves
   # without depending on a real .current_rid resolution path. The script
   # is invoked the same way tracker invokes it: `sh -c "$(cat <script>)"`.
   (
     cd "${WORKDIR}"
-    DEV_LOOP_STATE_ROOT="${DIP_STATE_ROOT}" \
+    DEV_LOOP_STATE_ROOT="${DIP_ROOT}" \
     DEV_LOOP_RUN_DIR="${RUN_DIR}" \
-    XDG_CACHE_HOME="${TMPDIR_T}/cache" \
-    HOME="${TMPDIR_T}/home" \
+    XDG_CACHE_HOME="${tmp}/cache" \
+    HOME="${tmp}/home" \
     sh -c "$(cat "${script_path}")"
   ) > "${out_file}" 2>&1 || {
     fail "${script_name} exited non-zero"
@@ -185,10 +223,17 @@ run_persist() {
   }
 
   # Marker assertion: each persist script's success marker must appear in
-  # stdout. We don't pin position — persist_plan.sh / persist_selected_issue.sh
-  # follow the marker with a here-doc, but the marker itself must be present.
-  if ! grep -qF "${expected_marker}" "${out_file}"; then
+  # stdout exactly once. Tracker routes on the FIRST marker via marker_grep;
+  # a second occurrence inside the post-marker here-doc would defeat the
+  # prefix isolation below (the marker line is the prefix boundary) and
+  # widen the tracker-string scan to include user/agent content.
+  marker_count=$(grep -cF "${expected_marker}" "${out_file}" || true)
+  if [ "${marker_count}" -eq 0 ]; then
     fail "${script_name} did not emit ${expected_marker}; got: $(cat "${out_file}")"
+    return
+  fi
+  if [ "${marker_count}" -ne 1 ]; then
+    fail "${script_name} emitted ${expected_marker} ${marker_count} times (expected 1); marker must be unique so prefix isolation holds"
     return
   fi
 
@@ -199,7 +244,7 @@ run_persist() {
   # into ctx.last_response — that payload is user/agent content, not
   # script-emitted, and matching against it would couple this guard to
   # fixture phrasing.
-  prefix_file="${TMPDIR_T}/${script_name}.prefix"
+  prefix_file="${tmp}/${script_name}.prefix"
   awk -v m="${expected_marker}" '
     { print }
     index($0, m) { exit }
@@ -250,26 +295,39 @@ DIP_ARTIFACT_DIR='${WORKDIR}/.stub-executor/nonexistent-run'
 EOF
 chmod 600 "${RUN_DIR}/env"
 
-out_file="${TMPDIR_T}/persist_plan_failure.out"
+out_file="${tmp}/persist_plan_failure.out"
 (
   cd "${WORKDIR}"
-  DEV_LOOP_STATE_ROOT="${DIP_STATE_ROOT}" \
+  DEV_LOOP_STATE_ROOT="${DIP_ROOT}" \
   DEV_LOOP_RUN_DIR="${RUN_DIR}" \
-  XDG_CACHE_HOME="${TMPDIR_T}/cache" \
-  HOME="${TMPDIR_T}/home" \
+  XDG_CACHE_HOME="${tmp}/cache" \
+  HOME="${tmp}/home" \
   sh -c "$(cat "${SCRIPTS_DIR}/persist_plan.sh")"
-) > "${out_file}" 2>&1 || {
-  fail "persist_plan.sh exited non-zero under failure path (should trip trap and exit 0)"
-}
+) > "${out_file}" 2>&1 || fail "persist_plan.sh exited non-zero under failure path (should trip trap and exit 0)"
 
-if [ "${rc}" -eq 0 ] && ! grep -qF "persist-failed" "${out_file}"; then
+# Section 3 assertions run unconditionally. The earlier `rc==0` gate hid
+# combined regressions: when a Section-2 assertion tripped, Section 3 was
+# silently skipped and a porter saw only half of the diff in one CI run.
+# `fail` accumulates without exiting, so listing every failure in one shot
+# is strictly more informative.
+if ! grep -qF "persist-failed" "${out_file}"; then
   fail "persist_plan.sh did not emit persist-failed under stub-executor failure path: $(cat "${out_file}")"
 fi
-if [ "${rc}" -eq 0 ] && grep -qE 'tracker|\.tracker/runs' "${RUN_DIR}/persist_plan_error.txt"; then
-  fail "persist_plan_error.txt names tracker on failure path: $(cat "${RUN_DIR}/persist_plan_error.txt")"
+# Positively assert the sidecar exists before scanning it for forbidden
+# literals. Without this, a regression that drops the error-breadcrumb
+# entirely would silently pass the `! grep ...` form (rc=2 file-not-found
+# collapses into rc=1 no-match). The breadcrumb's documented role is to
+# name `DIP_ARTIFACT_DIR` — the actionable knob — so we assert that too.
+plan_err="${RUN_DIR}/persist_plan_error.txt"
+if [ ! -s "${plan_err}" ]; then
+  fail "persist_plan.sh failure path did not write persist_plan_error.txt under ${RUN_DIR}"
+elif ! grep -qF 'DIP_ARTIFACT_DIR' "${plan_err}"; then
+  fail "persist_plan_error.txt does not name DIP_ARTIFACT_DIR (the actionable knob): $(cat "${plan_err}")"
+elif grep -qE 'tracker|\.tracker/runs' "${plan_err}"; then
+  fail "persist_plan_error.txt names tracker on failure path: $(cat "${plan_err}")"
 fi
 
 if [ "${rc}" -eq 0 ]; then
-  printf 'OK: porting-contract smoke clean (8 persist scripts + 2 README load-bearing literals)\n'
+  printf 'OK: porting-contract smoke clean (8 persist scripts + README load-bearing literals + sentinel anchor)\n'
 fi
 exit "${rc}"
