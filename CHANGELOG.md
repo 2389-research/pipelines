@@ -8,11 +8,7 @@ A custom `### Deferred` section type is used where in-flight scope was
 reclassified rather than landed (see v0.1.3); other sections follow the KAC
 1.1.0 enumeration.
 
-Each tagged release also publishes the full long-form notes (rationale, scope
-counts, process notes, known gaps) on the
-[GitHub releases page](https://github.com/2389-research/pipelines/releases).
-The entries below are the short, scannable summary; click through for the
-forensic detail.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut convention and the pointer to long-form GitHub release notes.
 
 ## [Unreleased]
 
@@ -37,6 +33,10 @@ forensic detail.
   release-time update convention
   ([#37](https://github.com/2389-research/pipelines/issues/37),
   [#62](https://github.com/2389-research/pipelines/pull/62)).
+- `CONTRIBUTING.md` at repo root with a `Releases` section that now owns the
+  release-cut convention; `README.md` and `CHANGELOG.md` headers point to it
+  instead of duplicating the prose
+  ([#69](https://github.com/2389-research/pipelines/issues/69)).
 - `docs/research/` reasoning-tier study + cross-module-test panel notes for
   the `spec→sprints` upstream
   ([#59](https://github.com/2389-research/pipelines/pull/59)).
