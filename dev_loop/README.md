@@ -4,8 +4,9 @@ dev_loop is an autonomous, issue-driven PR loop you can point at any GitHub
 repository (any language). It picks the highest-priority open issue, plans a
 minimal PR, implements it in a git worktree, runs a 5-persona squad review
 against the diff, and merges or iterates under deterministic gates — no human
-approval per iteration. Configured today for `tracker` as the executor;
-engine-pluggability deferred to #44.
+approval per iteration. Configured today for `tracker` as the executor; see
+[Executor compatibility](#executor-compatibility) below for the dev_loop ↔
+executor contract and porting recipe.
 
 ## What it does
 
@@ -237,9 +238,13 @@ contract.
    subprocesses, a sentinel file, or its own discovery routine. The block
    must populate `dip_artifact_dir` with the executor's per-run artifact
    root for the current invocation; `emit_env DIP_ARTIFACT_DIR` does the
-   rest. The populated value must be an absolute path to an existing
-   directory; `setup_run.sh` enforces both today (and `reject_special`
-   blocks NL/CR before `emit_env` writes it).
+   rest. The populated value must be an existing directory — `setup_run.sh`
+   enforces existence (`[ ! -d "${dip_artifact_dir}" ]` → `setup-failed`)
+   and `reject_special` blocks NL/CR before `emit_env` writes it.
+   Downstream scripts treat the value as an absolute path; the existing
+   tracker discovery derives it from `$(pwd)` so absoluteness is
+   incidental, not enforced — keep your replacement absolute by
+   convention.
 2. **Update the prereq command check.** In the `for cmd in gh jq git
    tracker yq timeout;` loop near the top of `setup_run.sh`, swap
    `tracker` for the new executor's CLI name (and drop tracker if it's no
