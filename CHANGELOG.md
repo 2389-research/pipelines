@@ -1,0 +1,228 @@
+# Changelog
+
+All notable changes to `2389-research/pipelines` are recorded here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+A custom `### Deferred` section type is used where in-flight scope was
+reclassified rather than landed (see v0.1.3); other sections follow the KAC
+1.1.0 enumeration.
+
+Each tagged release also publishes the full long-form notes (rationale, scope
+counts, process notes, known gaps) on the
+[GitHub releases page](https://github.com/2389-research/pipelines/releases).
+The entries below are the short, scannable summary; click through for the
+forensic detail.
+
+## [Unreleased]
+
+### Added
+
+- `writable_paths` 5-site adoption across `sprint_exec*` agents, with the
+  minimum tracker pin bumped to `v0.35.0` (which vendors dippin-lang
+  ≥ `v0.35.0`); enforces Landlock + openat2 fs-jail bounds on Linux and
+  refuses to start on macOS/Windows when the field is set
+  ([#41](https://github.com/2389-research/pipelines/pull/41)).
+- `dev_loop/` subsystem — autonomous issue-driven dev loop (v6 design from
+  [#40](https://github.com/2389-research/pipelines/issues/40)): multi-round
+  scope → implement → verify loop with breadcrumb persistence, executor
+  decoupling, and reusable setup_run sub-pipeline
+  ([#42](https://github.com/2389-research/pipelines/pull/42)).
+- `.dipx` packable-workaround machinery for Phase 0.5 dev_loop runs from any
+  cwd ([#54](https://github.com/2389-research/pipelines/pull/54)).
+- Low-reasoning tournament variant of `spec_to_sprints` for `local_code_gen/`
+  ([#55](https://github.com/2389-research/pipelines/pull/55)).
+- `CHANGELOG.md` at repo root, backfilled with entries for v0.1.0 → v0.1.3,
+  plus the `Releases & Changelog` section in `README.md` documenting the
+  release-time update convention
+  ([#37](https://github.com/2389-research/pipelines/issues/37),
+  [#62](https://github.com/2389-research/pipelines/pull/62)).
+- `docs/research/` reasoning-tier study + cross-module-test panel notes for
+  the `spec→sprints` upstream
+  ([#59](https://github.com/2389-research/pipelines/pull/59)).
+
+### Changed
+
+- `dev_loop` setup_run sub-pipeline centralizes dip-executor coupling
+  (refactor surface for [#44](https://github.com/2389-research/pipelines/issues/44))
+  ([#60](https://github.com/2389-research/pipelines/pull/60)).
+
+### Fixed
+
+- `dev_loop` setup_run failure-path safety hardening
+  ([#56](https://github.com/2389-research/pipelines/pull/56),
+  closes [#51](https://github.com/2389-research/pipelines/issues/51) and
+  [#52](https://github.com/2389-research/pipelines/issues/52)).
+- `dev_loop` persist scripts now emit failure markers instead of halting the
+  pipeline ([#57](https://github.com/2389-research/pipelines/pull/57),
+  closes [#48](https://github.com/2389-research/pipelines/issues/48)).
+- `dev_loop` `pre_filter` strips issue body to avoid prompt-injection surface
+  via untrusted GitHub content
+  ([#58](https://github.com/2389-research/pipelines/pull/58),
+  closes [#50](https://github.com/2389-research/pipelines/issues/50)).
+
+## [0.1.3] - 2026-05-27
+
+Track B Phase 2 verdict synthesizers + sprint runner redecompose hardening.
+
+### Added
+
+- `commit_after_splice` tool node in `sprint_runner_yaml_v2.dip` — splits the
+  ledger commit out of `commit_output` so redecompose only commits after
+  `splice_ledger` has settled state, with an allowlisted git-staging set
+  (ledger + new sprint files + rewritten dependents only)
+  ([#25](https://github.com/2389-research/pipelines/pull/25)).
+
+### Changed
+
+- 4 Category B verdict synthesizers converted from prompt-level "HARD
+  CONSTRAINT" tool-access copy to dippin-lang v0.32.0's `tool_access: none`
+  structural primitive: `sprint_exec.dip:347` (`ReviewAnalysis`),
+  `sprint_exec-cheap.dip:326` (`GateCheap`),
+  `sprint_exec_yaml.dip:553` (`ReviewAnalysis`),
+  `sprint_exec_yaml_v2.dip:874` (`ReviewAnalysis`)
+  ([#23](https://github.com/2389-research/pipelines/pull/23)).
+- `splice_ledger` now idempotently inserts new sub-sprint entries from disk
+  (was: assumed regenerator had already appended them)
+  ([#25](https://github.com/2389-research/pipelines/pull/25)).
+- `commit_output` made redecompose-aware — commits only new `SPRINT-*.md`
+  files on the redecompose path and refuses on partial state, so a corrupted
+  ledger can no longer poison git HEAD
+  ([#25](https://github.com/2389-research/pipelines/pull/25)).
+- `redecompose_single` agent hardened with `auto_status: true`, inverted
+  STATUS contract, and an explicit PROHIBITED ACTIONS checklist, after a real
+  run wrote source files and fabricated YAML status fields
+  ([#25](https://github.com/2389-research/pipelines/pull/25)).
+
+### Fixed
+
+- `validate_ledger_after_redecompose` no longer wholesale-restores from
+  snapshot when `completed_count` drops, which had been erasing newly-appended
+  sub-sprint entries ([#25](https://github.com/2389-research/pipelines/pull/25)).
+- `splice_ledger` dependents are normalized with `|= unique` for retry safety
+  ([#25](https://github.com/2389-research/pipelines/pull/25)).
+
+### Deferred
+
+- 6 of the originally-listed [#18](https://github.com/2389-research/pipelines/issues/18)
+  Phase 2 sites reclassified to Category C/D — they need a write-allowlist
+  primitive (e.g., `tool_access: workspace_only`) that does not exist in
+  dippin-lang v0.32.0. Issue #18 closed with the reclassification table as
+  final disposition.
+
+## [0.1.2] - 2026-05-27
+
+Track B Phase 1: `tool_access: none` on acknowledge-only agents.
+
+### Changed
+
+- 22 Category A agent Start/Exit/single-Exit sites across 12 files in
+  `greenfield/` and `sprint/` converted from prompt-level "HARD CONSTRAINT"
+  tool-access copy to dippin-lang v0.32.0's `tool_access: none` structural
+  primitive ([#21](https://github.com/2389-research/pipelines/pull/21)).
+  Acknowledge-only agents that only need to emit text can no longer call tools
+  that are not in the registry — the v0.28.2 single-agent multi-tool-call
+  vector is now bounded structurally, not by prompt copy.
+- Minimum tracker bumped to `v0.32.0` (clean dippin-lang v0.32.0 vendor pin),
+  closing the pre-release vendor-lag risk that #21 was developed against
+  ([#22](https://github.com/2389-research/pipelines/pull/22)).
+- `docs/agent-node-safety.md` TL;DR rewritten to lead with `tool_access: none`;
+  deeper analysis sections retained as background.
+- `max_turns: 1` added to 6 `sprint_exec_*` Start/Exit agents that lacked it.
+
+### Removed
+
+- Tool-access HARD CONSTRAINT clauses ("Do NOT read project files / write code
+  / create-modify-delete / run tests / install dependencies / debug") from the
+  22 converted sites. Output-policy clauses ("Your ONLY job is to acknowledge
+  X") are preserved as plain instructions.
+
+## [0.1.1] - 2026-05-26
+
+Bench refactor + `local_code_gen/` hardening.
+
+### Changed
+
+- `local_code_gen/bench_local_fix_sr.dip` refactored to source
+  `lib/lang_profile.sh` and dispatch through the same per-language entry points
+  as `sprint_runner_qwen.dip` — bench is now a faithful test of production's
+  LocalFix shape, not a parallel implementation. C/70 (4 warnings) → A/90 (0
+  warnings). Closes [#5](https://github.com/2389-research/pipelines/issues/5).
+  Repo-wide lint: 67 → 63 warnings ([#17](https://github.com/2389-research/pipelines/pull/17)).
+- `restore_state` in both production runners now deletes-then-restores
+  `ROOT_FILES` (previously, a root manifest created mid-round would persist
+  past rollback).
+- `uv.lock` added to `ROOT_FILES` snapshot/restore surface (was the only major
+  lockfile missing alongside `package-lock.json`, `go.sum`, `Cargo.lock`,
+  `Gemfile.lock`).
+- LocalFix scratch files (`lf_*.txt`) moved from `/tmp` to `$WORKDIR_ABS/.ai/`
+  to eliminate symlink-clobber surface and concurrent-run collisions.
+- `marker_grep` declarations added to bench RunTests and LocalFix, replacing
+  substring-vulnerable `ctx.tool_stdout contains X` routing with exact-match
+  `ctx.tool_marker = X`.
+
+### Fixed
+
+- `set -f` / `set +f` wrap around the LocalFix `find` loop so glob patterns in
+  `$lf_prune` (`*/__pycache__/*`, `*/node_modules/*`) aren't expanded against
+  CWD before reaching `find`.
+- `FAIL_COUNT` double-zero bug — `grep -c . || echo 0` emitted `"0\n0"` on
+  empty input, injecting a literal newline into the qwen prompt template.
+  Switched to `|| true`.
+- Bench `snapshot_state` / `restore_state` now normalize `$snap_dir` to an
+  absolute path (silently broke rollback for the documented `backend/`-shaped
+  fixtures).
+- Bench `proj_root` pinned from Setup's persisted value (production needs
+  re-detection because of mid-workflow `Generate`; bench does not).
+- Bench `lang` fallback now triggers on empty file contents, not just non-zero
+  exit, matching RunTests' `[ -z ]` + persist pattern.
+- Bench `local-fix-applied` → `local-fixed` marker typo that dead-ended the
+  empty-Ollama-response guard.
+
+## [0.1.0] - 2026-05-26
+
+First formal release. Tags the state of `main` after the tracker
+v0.29–v0.30 era quality work.
+
+### Added
+
+- 43 `.dip` workflows across seven buckets: `build-and-ship/` (5),
+  `sprint/` (15), `iterative/` (5), `greenfield/` (5), `interactive/` (3),
+  `local_code_gen/` (6), `pipeline-gen/` (4). See [README.md](./README.md)
+  for the full catalog.
+- Local-model code generation pipelines (qwen + gemma) and the
+  `local_code_gen/` bucket including `lib/lang_profile.sh` shared per-language
+  dispatch (PRs [#1](https://github.com/2389-research/pipelines/pull/1),
+  [#2](https://github.com/2389-research/pipelines/pull/2),
+  [#4](https://github.com/2389-research/pipelines/pull/4)).
+- Cross-module integration-test mandate in the architect's dependency-edge
+  contract authoring, validated end-to-end on `experiments/rust_calc_v2`
+  ([#7](https://github.com/2389-research/pipelines/pull/7)).
+- `docs/agent-node-safety.md` (158 lines) — design note on agent-node
+  tool-access semantics, `max_turns` bounding behavior, and the
+  `${ctx.last_response}` cross-node prompt-injection vector.
+- README Requirements callout for the tracker version dependency, introduced
+  alongside the first `marker_grep` adoption
+  ([#14](https://github.com/2389-research/pipelines/pull/14)).
+
+### Changed
+
+- Spec-to-sprints hardening — removed fragile writes, added verification gates
+  ([#3](https://github.com/2389-research/pipelines/pull/3)).
+- `iter_run` + iter family contract gap closures, reviewer model selection,
+  cycle fix (PRs [#9](https://github.com/2389-research/pipelines/pull/9),
+  [#10](https://github.com/2389-research/pipelines/pull/10),
+  [#11](https://github.com/2389-research/pipelines/pull/11)).
+- Quality pass against tracker v0.29.2 / dippin v0.27.0: 16 files, agent
+  Start/Exit conversions, `goal_gate` recovery wiring, `max_turns` budget
+  normalization ([#13](https://github.com/2389-research/pipelines/pull/13)).
+- `marker_grep` extended to `iter_dev.dip` and three `spec_to_sprints`
+  variants, clearing 8 lint warnings via
+  [dippin-lang#42](https://github.com/2389-research/dippin-lang/issues/42)'s
+  suppression ([#16](https://github.com/2389-research/pipelines/pull/16)).
+
+[Unreleased]: https://github.com/2389-research/pipelines/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/2389-research/pipelines/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/2389-research/pipelines/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/2389-research/pipelines/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/2389-research/pipelines/releases/tag/v0.1.0

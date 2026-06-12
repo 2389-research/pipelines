@@ -354,9 +354,17 @@ accessible, base-branch autodetect failure, no repo configured.
   disk-side `filtered_issues.json` and `$RUN_DIR/issues.json` both keep
   the raw, unescaped form for forensics; only the stdout channel — the
   one that lands in agent prompts — is sanitized.
-- **Don't bake dip-executor assumptions outside the discovery block in
-  `setup_run.sh`.** See "Executor compatibility" above for the full
-  contract + porting recipe. (Implementer-scope footnote: the
+- **The dip executor's on-disk convention is discovered in exactly one
+  place: the `--- begin dip-executor discovery (PORTING NOTE) ---` block
+  in `dev_loop/scripts/setup_run.sh`.** Everywhere else in `dev_loop/`
+  reads `${DIP_ARTIFACT_DIR}` from the per-run env file. Persist scripts
+  speak in env-var terms only — their error breadcrumb names
+  `DIP_ARTIFACT_DIR` (the actionable knob), never the executor's
+  on-disk layout (#61). To port dev_loop to a different dip executor,
+  replace the discovery block + the prereq tool list above it — no
+  other LocalGates / persist logic needs to change. See
+  [Executor compatibility](#executor-compatibility) above for the full
+  contract + porting recipe. (Note: the
   Implementer agent's pre-push gates at
   `dev_loop/prompts/implementer.system.md` still include `tracker
   validate` by design — that's a separate scope from LocalGates and

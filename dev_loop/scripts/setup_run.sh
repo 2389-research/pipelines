@@ -259,11 +259,8 @@ fi
 # than via ls -dt mtime — which would clash with any concurrent run in the
 # same workdir. This is the ONLY DISCOVERY block in dev_loop/; downstream
 # persist scripts read the result via `${DIP_ARTIFACT_DIR}` from the
-# per-run env file. (The persist scripts still print the literal
-# `.tracker/runs` path in error breadcrumbs when DIP_ARTIFACT_DIR is
-# unset — those are not authoritative; the executor's layout is owned
-# here. Centralizing or dropping that breadcrumb string is a separate
-# code-refactor follow-up tracked as #61.)
+# per-run env file and name only that env var in their error breadcrumbs
+# (no executor-specific path strings — #61).
 #
 # See "Executor compatibility" in dev_loop/README.md for the full
 # dev_loop ↔ executor contract — env vars published here, what
