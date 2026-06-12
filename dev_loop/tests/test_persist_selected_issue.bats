@@ -6,11 +6,11 @@ setup() {
   load 'test_helpers'
   setup_env
   stage_run
-  mkdir -p "${TRACKER_RUN_DIR}/SelectNextIssue"
+  mkdir -p "${DIP_ARTIFACT_DIR}/SelectNextIssue"
 
   SCRIPT="${BATS_TEST_DIRNAME}/../scripts/persist_selected_issue.sh"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
-  cp "${FIXTURES}/selected_issue_sample.json" "${TRACKER_RUN_DIR}/SelectNextIssue/response.md"
+  cp "${FIXTURES}/selected_issue_sample.json" "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md"
 }
 
 teardown() {
@@ -30,7 +30,7 @@ teardown() {
 @test "missing response.md emits persist-failed (status 0) with error file" {
   # Issue #48: post-bootstrap failures emit ctx.tool_marker=persist-failed
   # so the .dip routes through CleanupWorktree + RatchetLog.
-  rm -f "${TRACKER_RUN_DIR}/SelectNextIssue/response.md"
+  rm -f "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md"
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
@@ -39,7 +39,7 @@ teardown() {
 
 @test "malformed response.md emits persist-failed" {
   # jq parse failure on the response is a post-bootstrap failure.
-  printf 'not valid json {{{\n' > "${TRACKER_RUN_DIR}/SelectNextIssue/response.md"
+  printf 'not valid json {{{\n' > "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md"
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
@@ -51,7 +51,7 @@ teardown() {
   # issue_number so create_worktree + push_and_open_pr never interpolate the
   # literal string "null" into branch names. Convert from exit 1 to
   # persist-failed (issue #48).
-  cat > "${TRACKER_RUN_DIR}/SelectNextIssue/response.md" <<'JSON'
+  cat > "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md" <<'JSON'
 {
   "issue_number": "not-a-number",
   "title": "x",

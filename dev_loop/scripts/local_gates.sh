@@ -4,8 +4,14 @@
 #
 # Runs (in order; first failure short-circuits and records its name):
 #   1. dippin check on every *.dip touched in the diff (clean required)
-#   2. tracker validate on every *.dip touched
-#   3. (optional) the repo's local_test_command from config — currently a no-op
+#   2. (optional) the repo's local_test_command from config — currently a no-op
+#
+# Note: language-level (dippin check) only — no executor-level validator
+# runs here (#44). The `local_test_command` key in
+# `dev_loop/config/dev_loop.config.yaml` is reserved for a future hook that
+# would let operators chain `tracker validate` (or another executor's
+# validator) into this gate; today the loader is a no-op stub, so adding it
+# to YAML has no effect. Wiring that hook is its own PR.
 set -eu
 
 # ---begin-bootstrap-reference---
@@ -55,9 +61,6 @@ if [ -n "${changed_dips}" ]; then
   for dip in ${changed_dips}; do
     if ! dippin check "${dip}" >> "${RUN_DIR}/gates_log.txt" 2>&1; then
       emit_failure "dippin check failed for ${dip}"
-    fi
-    if ! tracker validate "${dip}" >> "${RUN_DIR}/gates_log.txt" 2>&1; then
-      emit_failure "tracker validate failed for ${dip}"
     fi
   done
 fi

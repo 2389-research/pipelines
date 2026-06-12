@@ -254,6 +254,23 @@ accessible, base-branch autodetect failure, no repo configured.
   disk-side `filtered_issues.json` and `$RUN_DIR/issues.json` both keep
   the raw, unescaped form for forensics; only the stdout channel — the
   one that lands in agent prompts — is sanitized.
+- **The dip executor's on-disk convention is discovered in exactly one
+  place: the `--- begin dip-executor discovery (PORTING NOTE) ---` block
+  in `dev_loop/scripts/setup_run.sh`.** Everywhere else in `dev_loop/`
+  reads `${DIP_ARTIFACT_DIR}` from the per-run env file. (Persist scripts
+  still reference the literal `.tracker/runs` path in their error
+  breadcrumbs; those are non-authoritative — the executor's layout is
+  owned by the discovery block. Centralizing or dropping that
+  breadcrumb string is a separate code follow-up tracked as #61.) To
+  port dev_loop to a different dip executor, replace the discovery block
+  + the prereq tool list above it, and the breadcrumb path strings —
+  no other LocalGates / persist logic needs to change. (Note: the
+  Implementer agent's pre-push gates at
+  `dev_loop/prompts/implementer.system.md` still include `tracker
+  validate` by design — that's a separate scope from LocalGates and not
+  part of this refactor.) Today's executor is `tracker`; the discovery
+  block resolves its `.tracker/runs/<runID>/` layout. The full porting
+  guide (docs side) is tracked in issue #45.
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.

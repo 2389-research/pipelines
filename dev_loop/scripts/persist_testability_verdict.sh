@@ -39,19 +39,19 @@ trap 'rc=$?
         exit 0
       fi' EXIT
 
-# Resolve tracker's active artifact dir. setup_run.sh pins TRACKER_RUN_DIR in
+# Resolve the dip executor's active artifact dir. setup_run.sh pins DIP_ARTIFACT_DIR in
 # the env file; if it's missing or invalid, fail closed rather than falling
 # back to ls -dt mtime (which would silently route to whichever run finished
 # most recently, defeating concurrency isolation).
-TRACKER_ROOT="$(pwd)/.tracker/runs"
-if [ -z "${TRACKER_RUN_DIR:-}" ] || [ ! -d "${TRACKER_RUN_DIR}" ]; then
-  printf 'no tracker run dir under %s\n' "${TRACKER_ROOT}" \
+DIP_ARTIFACT_ROOT="$(pwd)/.tracker/runs"
+if [ -z "${DIP_ARTIFACT_DIR:-}" ] || [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
+  printf 'no dip artifact dir under %s\n' "${DIP_ARTIFACT_ROOT}" \
     > "${RUN_DIR}/persist_testability_error.txt"
   exit 1
 fi
-tracker_run_dir="${TRACKER_RUN_DIR%/}/"
+dip_artifact_dir="${DIP_ARTIFACT_DIR%/}/"
 
-response="${tracker_run_dir}SquadTestability/response.md"
+response="${dip_artifact_dir}SquadTestability/response.md"
 target="${RUN_DIR}/verdict_testability.json"
 
 if [ ! -f "${response}" ]; then

@@ -7,7 +7,7 @@ setup() {
   load 'test_helpers'
   setup_env
   stage_run
-  # stage_run set TRACKER_RUN_DIR; reuse it as the persister's tracker root.
+  # stage_run set DIP_ARTIFACT_DIR; reuse it as the persister's artifact root.
   SCRIPTS="${BATS_TEST_DIRNAME}/../scripts"
   FIXTURES="${BATS_TEST_DIRNAME}/fixtures"
 }
@@ -18,8 +18,8 @@ teardown() {
 
 stage_response() {
   # $1 = NodeID (e.g. SquadPragmatism), $2 = fixture filename
-  mkdir -p "${TRACKER_RUN_DIR}/$1"
-  cp "${FIXTURES}/$2" "${TRACKER_RUN_DIR}/$1/response.md"
+  mkdir -p "${DIP_ARTIFACT_DIR}/$1"
+  cp "${FIXTURES}/$2" "${DIP_ARTIFACT_DIR}/$1/response.md"
 }
 
 @test "persist_pragmatism_verdict copies the verdict JSON" {
@@ -60,23 +60,23 @@ stage_response() {
   [ "${lines[0]}" = "persisted-holistic" ]
 }
 
-@test "TRACKER_RUN_DIR env var pins exact tracker run dir" {
-  # Stage TWO tracker run dirs; the explicitly-pinned one carries the verdict,
-  # the other is empty. Setting TRACKER_RUN_DIR in env points the persister at
-  # the right dir regardless of mtime.
+@test "DIP_ARTIFACT_DIR env var pins exact dip executor artifact dir" {
+  # Stage TWO artifact dirs; the explicitly-pinned one carries the verdict,
+  # the other is empty. Setting DIP_ARTIFACT_DIR in env points the persister
+  # at the right dir regardless of mtime.
   older="${WORKDIR}/.tracker/runs/trk-older"
   newer="${WORKDIR}/.tracker/runs/trk-newer"
   mkdir -p "${older}/SquadPragmatism"
   cp "${FIXTURES}/verdict_pass.json" "${older}/SquadPragmatism/response.md"
   mkdir -p "${newer}"
-  # Overwrite the env file with TRACKER_RUN_DIR pointing at the older dir.
+  # Overwrite the env file with DIP_ARTIFACT_DIR pointing at the older dir.
   cat > "${RUN_DIR}/env" <<EOF
 GH_REPO='test/test'
 BASE_BRANCH='main'
 ALLOW_NO_CI='false'
 DEV_LOOP_RUN_ID='${rid}'
 DEV_LOOP_RUN_DIR='${RUN_DIR}'
-TRACKER_RUN_DIR='${older}'
+DIP_ARTIFACT_DIR='${older}'
 EOF
   chmod 600 "${RUN_DIR}/env"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
@@ -86,14 +86,14 @@ EOF
   [ "${persona}" = "pragmatism" ]
 }
 
-@test "env file present with missing/invalid TRACKER_RUN_DIR emits persist-failed" {
+@test "env file present with missing/invalid DIP_ARTIFACT_DIR emits persist-failed" {
   # The contract: when setup_run.sh has written an env file, we MUST honor
-  # TRACKER_RUN_DIR from it. If it's missing or points at a non-existent dir,
+  # DIP_ARTIFACT_DIR from it. If it's missing or points at a non-existent dir,
   # emit `persist-failed` (issue #48) so the .dip routes through
   # CleanupWorktree + RatchetLog rather than halting the pipeline. We do NOT
   # fall back to mtime — that would defeat concurrency isolation.
   stage_response SquadPragmatism verdict_pass.json
-  # Rewrite env without TRACKER_RUN_DIR.
+  # Rewrite env without DIP_ARTIFACT_DIR.
   cat > "${RUN_DIR}/env" <<EOF
 GH_REPO='test/test'
 BASE_BRANCH='main'
@@ -102,7 +102,7 @@ EOF
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  grep -q "no tracker run dir" "${RUN_DIR}/persist_pragmatism_error.txt"
+  grep -q "no dip artifact dir" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {
@@ -124,14 +124,14 @@ EOF
   # Post-bootstrap exit-1 sites now route through ctx.tool_marker=persist-failed
   # (issue #48) so the .dip can cleanup + ratchet rather than halt mid-flight.
   # No stage_response call -> response.md missing.
-  mkdir -p "${TRACKER_RUN_DIR}/SquadPragmatism"   # keep tracker_run_dir resolvable
+  mkdir -p "${DIP_ARTIFACT_DIR}/SquadPragmatism"   # keep dip_artifact_dir resolvable
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
   grep -q "response missing" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
-@test "missing tracker run dir emits persist-failed (status 0)" {
+@test "missing dip artifact dir emits persist-failed (status 0)" {
   rm -rf "${WORKDIR}/.tracker"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
@@ -141,8 +141,8 @@ EOF
 @test "malformed response.md emits persist-failed with jq stderr in sidecar" {
   # jq's parse failure on the response is a post-bootstrap failure; emit
   # persist-failed so the .dip routes to CleanupWorktree.
-  mkdir -p "${TRACKER_RUN_DIR}/SquadPragmatism"
-  printf 'this is not valid JSON {{{\n' > "${TRACKER_RUN_DIR}/SquadPragmatism/response.md"
+  mkdir -p "${DIP_ARTIFACT_DIR}/SquadPragmatism"
+  printf 'this is not valid JSON {{{\n' > "${DIP_ARTIFACT_DIR}/SquadPragmatism/response.md"
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"

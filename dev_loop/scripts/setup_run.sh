@@ -86,7 +86,7 @@ write_emergency_env() {
     printf "ALLOW_NO_CI='false'\n"
     printf "DEV_LOOP_RUN_ID='%s'\n" "${rid}"
     printf "DEV_LOOP_RUN_DIR='%s'\n" "${run_dir}"
-    printf "TRACKER_RUN_DIR=''\n"
+    printf "DIP_ARTIFACT_DIR=''\n"
   } > "${run_dir}/env" 2>/dev/null || true
   chmod 600 "${run_dir}/env" 2>/dev/null || true
 }
@@ -253,31 +253,53 @@ if ! printf '%s' "${yq_ver}" | grep -qF 'github.com/mikefarah/yq'; then
   emit_failure "yq must be mikefarah/yq v4+; got: ${yq_ver} — install from https://github.com/mikefarah/yq/releases"
 fi
 
-# Discover tracker's per-invocation artifact dir NOW (at pipeline start) so
-# downstream persist scripts can address it explicitly rather than via
-# ls -dt mtime — which would clash with any concurrent tracker run in the
-# same workdir. tracker creates <workdir>/.tracker/runs/<runID>/ when it
-# starts, so by the time SetupRun executes the dir already exists and is
-# the newest under .tracker/runs.
-TRACKER_ROOT="$(pwd)/.tracker/runs"
+# --- begin dip-executor discovery (PORTING NOTE) -------------------------
+# Discover the dip executor's per-invocation artifact dir NOW (at pipeline
+# start) so downstream persist scripts can address it explicitly rather
+# than via ls -dt mtime — which would clash with any concurrent run in the
+# same workdir. This is the ONLY DISCOVERY block in dev_loop/; downstream
+# persist scripts read the result via `${DIP_ARTIFACT_DIR}` from the
+# per-run env file. (The persist scripts still print the literal
+# `.tracker/runs` path in error breadcrumbs when DIP_ARTIFACT_DIR is
+# unset — those are not authoritative; the executor's layout is owned
+# here. Centralizing or dropping that breadcrumb string is a separate
+# code-refactor follow-up tracked as #61; #45 covers the docs side.)
+#
+# To port dev_loop to a different dip executor:
+#   1. Replace this discovery with whatever locates that executor's
+#      per-run artifact dir (env var, sentinel file, etc.).
+#   2. Add its CLI name to the prereq command list above (and drop
+#      `tracker` if no longer needed).
+#   3. Update the emit_env DIP_ARTIFACT_DIR call below if the variable
+#      name carries over.
+#   4. Update the breadcrumb path string in persist_*.sh (see #61).
+#
+# Today's executor is tracker, which creates <workdir>/.tracker/runs/<runID>/
+# when it starts, so by the time SetupRun executes the dir already exists
+# and is the newest under .tracker/runs.
+# Upstream: tracker#323 asks tracker to export TRACKER_RUN_ID/TRACKER_RUN_DIR
+# to tool subprocesses — when that lands, this block collapses to a single
+# env-var read.
+DIP_ARTIFACT_ROOT="$(pwd)/.tracker/runs"
 # shellcheck disable=SC2012
-tracker_run_dir=$(ls -dt "${TRACKER_ROOT}"/*/ 2>/dev/null | head -1)
+dip_artifact_dir=$(ls -dt "${DIP_ARTIFACT_ROOT}"/*/ 2>/dev/null | head -1)
 # Strip the trailing slash for cleaner env-file output.
-tracker_run_dir=${tracker_run_dir%/}
+dip_artifact_dir=${dip_artifact_dir%/}
 
-# Fail fast if we couldn't pin TRACKER_RUN_DIR. The persist_*.sh scripts
-# now treat an env file present + TRACKER_RUN_DIR missing as a hard error
+# Fail fast if we couldn't pin DIP_ARTIFACT_DIR. The persist_*.sh scripts
+# now treat an env file present + DIP_ARTIFACT_DIR missing as a hard error
 # (they refuse the mtime fallback when an env exists), so emitting setup-ok
-# without TRACKER_RUN_DIR would just defer the failure to the first persist
+# without DIP_ARTIFACT_DIR would just defer the failure to the first persist
 # node with a less actionable message. Catch it here instead.
-if [ -z "${tracker_run_dir}" ] || [ ! -d "${tracker_run_dir}" ]; then
-  emit_failure "no tracker run dir found under ${TRACKER_ROOT}; is this being invoked through tracker?"
+if [ -z "${dip_artifact_dir}" ] || [ ! -d "${dip_artifact_dir}" ]; then
+  emit_failure "no dip artifact dir found under ${DIP_ARTIFACT_ROOT}; is this being invoked through tracker?"
 fi
+# --- end dip-executor discovery ------------------------------------------
 
 # --- YAML config resolver -------------------------------------------------
 # Allow-list (canonical home for both setup_run's emit and test_helpers.bash's
 # unset list — keep these two in sync):
-#   GH_REPO BASE_BRANCH DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR TRACKER_RUN_DIR
+#   GH_REPO BASE_BRANCH DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR
 #   ALLOW_NO_CI
 # --------------------------------------------------------------------------
 CFG="dev_loop/config/dev_loop.config.yaml"
@@ -358,15 +380,15 @@ fi
 # Coverage: yaml_repo / yaml_base_branch / yaml_allow_no_ci checked upstream
 # at YAML-parse time; resolved_base also checked after autodetect. The
 # remaining cases (env-precedence GH_REPO / ALLOW_NO_CI; synthesized rid /
-# run_dir / tracker_run_dir) are caught here. rid is built from a fixed date
-# format + $$ so the check is dead-code defense-in-depth, but keeping it
-# preserves the "all emit_env inputs validated" invariant the test suite
+# run_dir / dip_artifact_dir) are caught here. rid is built from a fixed
+# date format + $$ so the check is dead-code defense-in-depth, but keeping
+# it preserves the "all emit_env inputs validated" invariant the test suite
 # implicitly relies on.
 reject_special "${resolved_repo}" GH_REPO
 reject_special "${resolved_allow_no_ci}" ALLOW_NO_CI
 reject_special "${rid}" DEV_LOOP_RUN_ID
 reject_special "${run_dir}" DEV_LOOP_RUN_DIR
-reject_special "${tracker_run_dir}" TRACKER_RUN_DIR
+reject_special "${dip_artifact_dir}" DIP_ARTIFACT_DIR
 
 # Build env file atomically: write to env.tmp inside RUN_DIR, then mv -f to
 # env. umask 077 (set at the top of the script) ensures env.tmp inherits
@@ -379,7 +401,7 @@ env_tmp="${run_dir}/env.tmp"
   emit_env ALLOW_NO_CI      "${resolved_allow_no_ci}"
   emit_env DEV_LOOP_RUN_ID  "${rid}"
   emit_env DEV_LOOP_RUN_DIR "${run_dir}"
-  emit_env TRACKER_RUN_DIR  "${tracker_run_dir}"
+  emit_env DIP_ARTIFACT_DIR "${dip_artifact_dir}"
 } > "${env_tmp}"
 chmod 600 "${env_tmp}"
 # Reject a pre-existing symlink at the destination (operator's UID is trusted

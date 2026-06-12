@@ -153,11 +153,11 @@ YAML
   [ "${rid}" != "stale-rid" ]
 }
 
-@test "missing .tracker/runs (no tracker artifact dir) routes to setup-failed" {
-  # Without staged .tracker/runs/<id>/, tracker_run_dir resolves empty.
+@test "missing .tracker/runs (no dip artifact dir) routes to setup-failed" {
+  # Without staged .tracker/runs/<id>/, dip_artifact_dir resolves empty.
   # setup_run.sh must catch this and emit setup-failed with a clear message —
-  # NOT write an env file with TRACKER_RUN_DIR unset and emit setup-ok (which
-  # would later trip every persist_*.sh's env-present-but-TRACKER_RUN_DIR-
+  # NOT write an env file with DIP_ARTIFACT_DIR unset and emit setup-ok (which
+  # would later trip every persist_*.sh's env-present-but-DIP_ARTIFACT_DIR-
   # missing fail-closed gate).
   rm -rf "${WORKDIR}/.tracker"
   run sh -c "$(cat "${SCRIPT}")"
@@ -165,7 +165,7 @@ YAML
   [ "${output}" = "setup-failed" ]
   # Failure paths publish .current_rid so downstream cleanup/ratchet can find run_dir.
   run_dir="$(ls -d "${DIP_ROOT}/runs/"*/ | head -1)"
-  grep -q "no tracker run dir" "${run_dir%/}/setup_error.txt"
+  grep -q "no dip artifact dir" "${run_dir%/}/setup_error.txt"
 }
 
 @test "missing tools route to setup-failed" {
@@ -507,7 +507,7 @@ GH
   [ "$(stat -c %a "${run_dir}/env")" = "600" ]
   # Each of the 6 allow-listed keys must be present (empty values OK for the
   # strings the failure path can't resolve).
-  for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR TRACKER_RUN_DIR; do
+  for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR; do
     grep -q "^${key}=" "${run_dir}/env" \
       || { printf 'missing key %s in emergency env\n' "${key}" >&2; return 1; }
   done
@@ -582,7 +582,7 @@ YQ
   # bootstrap can source it. Same 6 keys + same mode as the emit_failure path.
   [ -f "${run_dir}/env" ]
   [ "$(stat -c %a "${run_dir}/env")" = "600" ]
-  for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR TRACKER_RUN_DIR; do
+  for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR; do
     grep -q "^${key}=" "${run_dir}/env" \
       || { printf 'missing key %s in trap-written env\n' "${key}" >&2; return 1; }
   done
