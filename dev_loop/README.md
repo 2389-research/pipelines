@@ -4,8 +4,9 @@ dev_loop is an autonomous, issue-driven PR loop you can point at any GitHub
 repository (any language). It picks the highest-priority open issue, plans a
 minimal PR, implements it in a git worktree, runs a 5-persona squad review
 against the diff, and merges or iterates under deterministic gates — no human
-approval per iteration. Configured today for `tracker` as the executor;
-engine-pluggability deferred to pipelines#44.
+approval per iteration. Configured today for `tracker` as the executor; see
+[Executor compatibility](#executor-compatibility) below for the dev_loop ↔
+executor contract and porting recipe.
 
 ## What it does
 
@@ -177,6 +178,113 @@ prints the allowlist as "known models for <provider>"). The
 `tests/test_branch_model_ids.sh` smoke check enforces this on the per-branch
 overrides too.
 
+## Executor compatibility
+
+dev_loop is dip-executor-agnostic in principle. v1 ships configured for
+[`tracker`](https://github.com/2389-research/tracker) as the executor, but
+the workflow shape (pick → plan → implement → squad-review → merge) does
+not depend on any tracker-specific feature. Porting to another dip
+executor is a localized change to `setup_run.sh`; the persist scripts and
+PR-ops scripts already read `${DIP_ARTIFACT_DIR}` from the per-run env
+file and need no edits.
+
+### The dev_loop ↔ executor contract
+
+dev_loop scripts assume the executor provides:
+
+- **Tool-node invocation per the dip language spec** — the executor reads
+  the `.dip` file, dispatches tool nodes (POSIX `sh` scripts under
+  `dev_loop/scripts/`), and routes on `ctx.tool_marker` from each tool's
+  stdout against the node's `marker_grep` regex set.
+- **A per-run, per-node artifact directory** — each agent node's response
+  is written to `<DIP_ARTIFACT_DIR>/<NodeID>/response.md` so the
+  `persist_*.sh` tools can read the prior node's output.
+- **Environment variables published before any persist script runs.**
+  `setup_run.sh` is the adapter: it discovers / synthesizes these and
+  writes them to `${DEV_LOOP_RUN_DIR}/env`, which every downstream
+  script's bootstrap preamble sources. The required contract keys are:
+  - `DIP_ARTIFACT_DIR` — absolute path to the per-run artifact root for
+    the executor. Agent responses live at
+    `<DIP_ARTIFACT_DIR>/<NodeID>/response.md`. **This is the only
+    executor-layout-coupled key** — its value comes from the discovery
+    block in `setup_run.sh` and is what porters must re-source for a
+    new executor.
+  - `DEV_LOOP_RUN_DIR` — absolute path to dev_loop's per-run state dir
+    (see Configuration: env `DEV_LOOP_STATE_ROOT` > YAML
+    `runtime_state_root` > default). Dev_loop-internal; not coupled to
+    the executor's on-disk layout.
+  - `DEV_LOOP_RUN_ID` — opaque run id (treat as a string).
+    Dev_loop-internal.
+  - `GH_REPO` — target GitHub repo as `owner/name` for `gh` operations.
+    Sourced from env > YAML config; not coupled to the executor.
+
+  The env file also carries `BASE_BRANCH` and `ALLOW_NO_CI` (resolved
+  config that downstream scripts read), and the canonical allow-list of
+  emitted keys lives in the `# Allow-list` comment block in
+  `dev_loop/scripts/setup_run.sh` (kept in sync with
+  `tests/test_helpers.bash`'s unset list).
+  When porting, preserve the structural-hygiene invariants `setup_run.sh`
+  applies to every value: NL/CR rejection via `reject_special`,
+  single-quote escaping via `emit_env`, mode-600 on the env file, atomic
+  publication via `mv -f`, and rejection of a pre-existing symlink at the
+  destination. Downstream scripts source the env file under `set -a` and
+  trust it.
+
+`setup_run.sh` is the ONLY place that knows how the executor's on-disk
+layout is shaped; everywhere else reads `${DIP_ARTIFACT_DIR}` from the env
+file. See the `--- begin dip-executor discovery (PORTING NOTE) ---` block
+in `dev_loop/scripts/setup_run.sh` for the in-code implementation of this
+contract.
+
+### Porting to a different dip executor
+
+1. **Rewrite the discovery block in `setup_run.sh`.** Replace the
+   `DIP_ARTIFACT_ROOT="$(pwd)/.tracker/runs"` + `ls -dt` heuristic with
+   whatever the new executor exposes — an env var it sets on tool
+   subprocesses, a sentinel file, or its own discovery routine. The block
+   must populate `dip_artifact_dir` with the executor's per-run artifact
+   root for the current invocation; `emit_env DIP_ARTIFACT_DIR` does the
+   rest. The populated value must be an existing directory — `setup_run.sh`
+   enforces existence (`[ ! -d "${dip_artifact_dir}" ]` → `setup-failed`)
+   and `reject_special` blocks NL/CR before `emit_env` writes it.
+   Downstream scripts treat the value as an absolute path; the existing
+   tracker discovery derives it from `$(pwd)` so absoluteness is
+   incidental, not enforced — keep your replacement absolute by
+   convention.
+2. **Update the prereq command check.** In the `for cmd in gh jq git
+   tracker yq timeout;` loop near the top of `setup_run.sh`, swap
+   `tracker` for the new executor's CLI name (and drop tracker if it's no
+   longer needed).
+3. **Persist scripts (8 verdict-/plan-/synthesis-side), PR-ops scripts
+   (push/fetch-context/recheck/poll/comment/merge), the iter counters,
+   the worktree manager, and the ratchet log need no changes.** They
+   read `${DIP_ARTIFACT_DIR}` from the per-run env file and talk to
+   `git` / `gh` directly. They also assume the executor honors the
+   marker-routing model in the Tool-node invocation bullet above
+   (`ctx.tool_marker` from stdout against each node's `marker_grep`); a
+   different executor that routes differently would invalidate the
+   persist scripts' fail-closed `persist-failed` pattern.
+4. **Carry-overs.** `local_gates.sh` runs `dippin check` — a
+   *language*-level validator, not an executor-coupling point — so a
+   dip-compliant executor doesn't need it changed. The persist scripts
+   are already executor-neutral (#61, landed): they read
+   `${DIP_ARTIFACT_DIR}` from the env file, and their `persist-failed`
+   error breadcrumbs deliberately avoid naming any executor-specific
+   on-disk path so a porter sees the same actionable message regardless
+   of executor.
+
+### Resume contract
+
+dev_loop does NOT auto-resume. `setup_run.sh` detects a prior run's
+worktree on disk and emits the `setup-resume-required` marker, which the
+`.dip` routes straight to Exit without cleanup. The operator then
+re-invokes the executor's own resume mechanism (today: `tracker --resume
+<run-id>`); a different executor would use whatever its equivalent is.
+If the target executor has no resume mechanism, an operator hitting the
+`setup-resume-required` path would need to manually `rm -rf` the prior
+run's worktree before re-invoking — a porting target without resume
+support is usable, just less forgiving of process kills.
+
 ## Failure modes
 
 - **`setup-failed`** → cleanup, exit. See `runs/<rid>/setup_error.txt`.
@@ -262,13 +370,13 @@ accessible, base-branch autodetect failure, no repo configured.
   `DIP_ARTIFACT_DIR` (the actionable knob), never the executor's
   on-disk layout (#61). To port dev_loop to a different dip executor,
   replace the discovery block + the prereq tool list above it — no
-  other LocalGates / persist logic needs to change. (Note: the
+  other LocalGates / persist logic needs to change. See
+  [Executor compatibility](#executor-compatibility) above for the full
+  contract + porting recipe. (Note: the
   Implementer agent's pre-push gates at
   `dev_loop/prompts/implementer.system.md` still include `tracker
-  validate` by design — that's a separate scope from LocalGates and not
-  part of this refactor.) Today's executor is `tracker`; the discovery
-  block resolves its `.tracker/runs/<runID>/` layout. The full porting
-  guide (docs side) is tracked in issue #45.
+  validate` by design — that's a separate scope from LocalGates and
+  outside the executor-decoupling refactor.)
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.

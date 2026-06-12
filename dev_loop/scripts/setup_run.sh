@@ -260,16 +260,12 @@ fi
 # same workdir. This is the ONLY DISCOVERY block in dev_loop/; downstream
 # persist scripts read the result via `${DIP_ARTIFACT_DIR}` from the
 # per-run env file and name only that env var in their error breadcrumbs
-# (no executor-specific path strings — #61). #45 covers the docs side
-# of the porting guide.
+# (no executor-specific path strings — #61).
 #
-# To port dev_loop to a different dip executor:
-#   1. Replace this discovery with whatever locates that executor's
-#      per-run artifact dir (env var, sentinel file, etc.).
-#   2. Add its CLI name to the prereq command list above (and drop
-#      `tracker` if no longer needed).
-#   3. Update the emit_env DIP_ARTIFACT_DIR call below if the variable
-#      name carries over.
+# See "Executor compatibility" in dev_loop/README.md for the full
+# dev_loop ↔ executor contract — env vars published here, what
+# downstream scripts may assume, and the porting recipe. The README is
+# the single authoritative source; this block is the code it describes.
 #
 # Today's executor is tracker, which creates <workdir>/.tracker/runs/<runID>/
 # when it starts, so by the time SetupRun executes the dir already exists
