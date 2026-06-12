@@ -132,11 +132,13 @@ EOF
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  # Pin the full actionable phrase including the surfaced path.
-  grep -q "DIP_ARTIFACT_DIR=${stale} is not a directory; was the run dir cleaned up under us?" \
+  # Pin the full actionable phrase including the surfaced path. -F treats the
+  # interpolated path as a fixed string so regex metacharacters in WORKDIR (e.g.
+  # `.`) can't loosen the match.
+  grep -qF "DIP_ARTIFACT_DIR=${stale} is not a directory; was the artifact dir cleaned up under us?" \
     "${RUN_DIR}/persist_pragmatism_error.txt"
   # The stale arm MUST NOT print the unset message.
-  ! grep -q "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_pragmatism_error.txt"
+  ! grep -qF "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {

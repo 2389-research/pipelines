@@ -46,14 +46,14 @@ trap 'rc=$?
 # env var (the actionable knob), not the executor's on-disk layout — see #61.
 # Issue #73: split unset vs set-but-stale so the operator can tell
 # setup_run-skipped from cleanup-race apart without opening ${RUN_DIR}/env.
-# The stale arm prints the surfaced path; safe per #73 (operator-controlled,
-# reject_special in setup_run.sh:388 strips NL/CR before the env file write).
+# The stale arm prints the surfaced path; safe per PR #65's security review
+# (reject_special in setup_run.sh strips NL/CR before the env file write).
 if [ -z "${DIP_ARTIFACT_DIR:-}" ]; then
   printf 'DIP_ARTIFACT_DIR is unset; was setup_run executed?\n' \
     > "${RUN_DIR}/persist_plan_error.txt"
   exit 1
 elif [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
-  printf 'DIP_ARTIFACT_DIR=%s is not a directory; was the run dir cleaned up under us?\n' \
+  printf 'DIP_ARTIFACT_DIR=%s is not a directory; was the artifact dir cleaned up under us?\n' \
     "${DIP_ARTIFACT_DIR}" \
     > "${RUN_DIR}/persist_plan_error.txt"
   exit 1

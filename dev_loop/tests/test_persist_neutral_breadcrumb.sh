@@ -1,11 +1,17 @@
 #!/bin/sh
-# test_persist_neutral_breadcrumb.sh — static guard against executor-specific
-# path strings leaking back into persist_*.sh error breadcrumbs (#61).
+# test_persist_neutral_breadcrumb.sh — static guard for persist_*.sh breadcrumbs.
 #
-# Per-script bats coverage only exercises 2 of 8 persist scripts directly
-# (test_persist_plan.bats + test_persist_verdict.bats). The other 6 ride on
-# transitive coverage. This static guard catches a copy-paste regression on
-# any of the 8 scripts without growing the bats matrix.
+# Two locks enforced across all 8 persist_*.sh scripts at once (avoids growing
+# the bats matrix for the 6 scripts that lack direct per-arm coverage):
+#
+#   1. Forbidden-literal lock (#61): no executor-specific path strings
+#      ("tracker/runs") in comments or printfs. Persist scripts must stay
+#      executor-neutral and name only ${DIP_ARTIFACT_DIR}.
+#   2. Required-phrase lock (#73): both arms of the unset-vs-stale guard MUST
+#      surface the full actionable wording. A future "simplification" that
+#      re-collapses the arms or drops the surfaced path would slip past the
+#      per-script bats tests on the 6 unwired scripts; this guard catches it
+#      everywhere at once.
 #
 # Run from the repo root: ./dev_loop/tests/test_persist_neutral_breadcrumb.sh
 set -eu
@@ -30,10 +36,7 @@ if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
   exit 2
 fi
 
-# The forbidden literal: any reference to the dip executor's on-disk layout
-# in a persist script's user-facing surface (comments OR printfs). The
-# executor-discovery block lives in setup_run.sh; persist scripts must stay
-# executor-neutral and name only ${DIP_ARTIFACT_DIR} in their breadcrumbs.
+# Lock 1 — forbidden literal (#61).
 #
 # We need to distinguish grep's three exit codes here:
 #   0 → match(es) found     → forbidden literal present, FAIL (lock tripped)
@@ -43,7 +46,7 @@ fi
 # A bare `grep ... || true` would collapse 1 and 2 into the same "empty hits,
 # print OK" branch — a false-positive for a regression lock.
 set +e
-hits=$(grep -nH "tracker/runs" "$@")
+hits=$(grep -nH -F "tracker/runs" "$@")
 grep_rc=$?
 set -e
 
@@ -57,5 +60,32 @@ elif [ "${grep_rc}" -ne 1 ]; then
   exit 2
 fi
 
-printf 'OK: persist_*.sh free of executor-specific path strings\n'
+# Lock 2 — required phrases (#73). Each persist_*.sh MUST contain BOTH the
+# unset-arm and stale-arm wording verbatim. We grep -F (fixed string) for the
+# full actionable phrase including the trailing question — a regression that
+# drops the suffix, mixes the wording, or re-collapses the arms will fail.
+#
+# Phrases are the canonical operator-facing strings. Update both here and in
+# the 8 persist_*.sh scripts together if the wording ever changes.
+UNSET_PHRASE='DIP_ARTIFACT_DIR is unset; was setup_run executed?'
+STALE_PHRASE='is not a directory; was the artifact dir cleaned up under us?'
+
+guard_lock2_failed=0
+for f in "$@"; do
+  if ! grep -qF "${UNSET_PHRASE}" "${f}"; then
+    printf 'FAIL: %s is missing the #73 unset-arm phrase: %s\n' \
+      "${f}" "${UNSET_PHRASE}" >&2
+    guard_lock2_failed=1
+  fi
+  if ! grep -qF "${STALE_PHRASE}" "${f}"; then
+    printf 'FAIL: %s is missing the #73 stale-arm phrase: %s\n' \
+      "${f}" "${STALE_PHRASE}" >&2
+    guard_lock2_failed=1
+  fi
+done
+if [ "${guard_lock2_failed}" -ne 0 ]; then
+  exit 1
+fi
+
+printf 'OK: persist_*.sh breadcrumbs clean (executor-neutral + #73 phrases pinned)\n'
 exit 0
