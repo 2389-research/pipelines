@@ -167,10 +167,10 @@ with a quiet regression.
 
 ## Conventions matched
 
-- Repo-wide test suite location: `tests/<name>/` (per `dev_loop/config/repo_conventions.md`
-  "Testing policy"). Track B agents span `sprint/`, `greenfield/`, `iterative/`,
-  `local_code_gen/`, `build-and-ship/`, so this harness sits at the repo root
-  rather than under `dev_loop/tests/`.
+- Cross-workflow suite location under `tests/<name>/` (per
+  `dev_loop/config/repo_conventions.md` "Testing policy") — Track B agents
+  live across multiple top-level families, not just `dev_loop/`, so this
+  harness sits at the repo root rather than under `dev_loop/tests/`.
 - POSIX `sh`, not bash (per `dev_loop/README.md` "Scripts are POSIX sh not
   bash" and `dev_loop/config/repo_conventions.md`).
 - bats tests for shell helpers (matches `dev_loop/tests/*.bats`).
