@@ -33,6 +33,10 @@ out-of-scope list), drop in a different `repo_conventions.md` and update
 
 ## Testing policy
 
+- Test suites colocate with the workflow they exercise: `dev_loop/tests/`
+  for dev_loop, `sprint/tests/` for a sprint-only suite, etc.
+- Suites that span multiple top-level workflow trees live at `tests/<name>/`
+  (see `tests/track_b_smoke/` for the first instance).
 - Integration over mocks for these subsystems: real databases, real `gh`
   (mocked only via PATH-shim under bats), real `tracker`, real `dippin`. A
   test that mocks any of these to "make it pass" is a defect; flag it.
