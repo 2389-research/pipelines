@@ -184,8 +184,9 @@ dev_loop is dip-executor-agnostic in principle. v1 ships configured for
 [`tracker`](https://github.com/2389-research/tracker) as the executor, but
 the workflow shape (pick → plan → implement → squad-review → merge) does
 not depend on any tracker-specific feature. Porting to another dip
-executor is a localized change to `setup_run.sh` (plus a one-line
-breadcrumb tweak in the persist scripts; see #61).
+executor is a localized change to `setup_run.sh`; the persist scripts and
+PR-ops scripts already read `${DIP_ARTIFACT_DIR}` from the per-run env
+file and need no edits.
 
 ### The dev_loop ↔ executor contract
 
@@ -265,10 +266,12 @@ contract.
    persist scripts' fail-closed `persist-failed` pattern.
 4. **Carry-overs.** `local_gates.sh` runs `dippin check` — a
    *language*-level validator, not an executor-coupling point — so a
-   dip-compliant executor doesn't need it changed. The persist scripts'
-   error-breadcrumb literal `.tracker/runs` is the last bit of executor
-   string outside `setup_run.sh`'s discovery block; centralizing or
-   dropping it is tracked as #61.
+   dip-compliant executor doesn't need it changed. The persist scripts
+   are already executor-neutral (#61, landed): they read
+   `${DIP_ARTIFACT_DIR}` from the env file, and their `persist-failed`
+   error breadcrumbs deliberately avoid naming any executor-specific
+   on-disk path so a porter sees the same actionable message regardless
+   of executor.
 
 ### Resume contract
 
