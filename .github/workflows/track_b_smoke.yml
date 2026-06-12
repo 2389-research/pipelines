@@ -5,12 +5,19 @@ on:
     paths:
       - "tests/track_b_smoke/**"
       - ".github/workflows/track_b_smoke.yml"
+      # Re-trigger when the .dip files the harness targets change so the
+      # helper-health suite runs against any edit to the converted-agent
+      # surface, even though the runtime probes themselves remain off-CI.
+      - "sprint/verify_sprint.dip"
+      - "sprint/verify_sprints_runner.dip"
   push:
     branches:
       - main
     paths:
       - "tests/track_b_smoke/**"
       - ".github/workflows/track_b_smoke.yml"
+      - "sprint/verify_sprint.dip"
+      - "sprint/verify_sprints_runner.dip"
 
 # Note: the runtime smoke probes (smoke.sh) are NOT wired here. They cost real
 # LLM calls and currently fail on main due to an upstream tracker

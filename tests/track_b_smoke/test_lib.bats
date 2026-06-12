@@ -139,6 +139,43 @@ TOOL RESULT: bash'
   [ "$status" -eq 0 ]
 }
 
+@test "track_b_assert_no_tool_events_in_activity: nested payload mentioning converted node ignored" {
+  # Regression guard for the `.*` -> `[^{]*` tightening: an unrelated
+  # tool_call_start event whose nested payload contains `"node_id":"Exit"`
+  # used to false-positive against the converted node `Exit`.
+  line='{"ts":"x","source":"agent","type":"tool_call_start","node_id":"SomeOtherNode","child":{"node_id":"Exit"}}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_events_in_activity: node_id with regex meta is treated literally" {
+  # Regression guard for the node_id ERE-escape: a converted node literally
+  # named `Exit.Default` must not regex-match `ExitXDefault` (or any other
+  # node) on the activity stream.
+  line='{"ts":"x","source":"agent","type":"tool_call_start","node_id":"ExitXDefault","tool_name":"bash"}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" 'Exit.Default'
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_run_dir ignores symlink-to-dir entries under runs/" {
+  # Defense-in-depth for the operator-extension flow: an attacker-planted or
+  # accidentally-planted symlink under .tracker/runs/ should not be followed.
+  mkdir -p "${TMPDIR}/.tracker/runs/aaa11111"
+  mkdir -p "${TMPDIR}/elsewhere"
+  ln -sn "${TMPDIR}/elsewhere" "${TMPDIR}/.tracker/runs/zzzlink"
+  run track_b_run_dir "${TMPDIR}"
+  [ "$status" -eq 0 ]
+  case "${output}" in
+    */aaa11111) ;;
+    *zzzlink) printf 'symlink was followed: %s\n' "${output}" >&2; return 1 ;;
+    *) printf 'unexpected: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
 @test "track_b_assert_node_reached fails when stage_started absent" {
   line='{"ts":"x","source":"pipeline","type":"pipeline_started"}'
   make_run "${TMPDIR}" run1 Exit 'ok' "${line}"

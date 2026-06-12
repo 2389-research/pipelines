@@ -37,9 +37,10 @@ tests/track_b_smoke/
 bats tests/track_b_smoke/test_lib.bats
 ```
 
-13 tests. Exercises every helper in `lib.sh` against synthetic
-`.tracker/runs/<rid>/` directories. Required tooling: `bats`. No tracker / no
-API keys.
+16 tests. Exercises every helper in `lib.sh` against synthetic
+`.tracker/runs/<rid>/` directories — including regression guards for nested
+`tool_call_start` payloads, node IDs with regex metacharacters, and
+symlinks under `runs/`. Required tooling: `bats`. No tracker / no API keys.
 
 ### Runtime smoke probes (real LLM calls)
 
@@ -55,9 +56,11 @@ tests/track_b_smoke/smoke.sh verify-runner
 
 Required: `tracker` on `$PATH`, valid `ANTHROPIC_API_KEY` (or whichever
 provider `tracker setup` selected). Per-invocation cost: <$0.01 against
-Claude Sonnet on observed runs. Each probe hermetically copies the pipeline
-into a temp workdir and asserts on the resulting `.tracker/runs/<rid>/`
-artifacts.
+Claude Sonnet on observed runs **assuming tracker#366 is fixed**; while the
+regression is live, the converted agent runs with full tool access and the
+observed cost per probe may exceed this. Each probe hermetically copies the
+pipeline into a temp workdir and asserts on the resulting
+`.tracker/runs/<rid>/` artifacts.
 
 ### Heavier probes (not implemented as auto-runners)
 

@@ -42,23 +42,27 @@ repo_root=$(cd "${script_dir}/../.." && pwd)
 # shellcheck disable=SC1091
 . "${script_dir}/lib.sh"
 
+# Each branch sets:
+#   pipeline        — absolute path to the .dip to copy into the temp workdir
+#   converted_node  — node ID of the `tool_access: none` agent under test
+#   extra_files     — positional-args list of extra files to copy (use `set --`)
 case "${family}" in
   verify)
     pipeline="${repo_root}/sprint/verify_sprint.dip"
-    # verify_sprint.dip Exit is the converted agent (line 29, tool_access: none).
+    # Exit is the converted `tool_access: none` agent in verify_sprint.dip.
     # Without .ai/current_verify_id.txt the Start tool exits 1 and routes to Exit.
     converted_node=Exit
-    extra_files=
+    set --
     ;;
   verify-runner)
     pipeline="${repo_root}/sprint/verify_sprints_runner.dip"
-    # verify_sprints_runner.dip Exit is the converted agent (line 20-26).
+    # Exit is the converted `tool_access: none` agent in verify_sprints_runner.dip.
     # Without .ai/ledger.yaml the FindCompletedSprints tool fails and routes to Exit.
     converted_node=Exit
     # verify_sprints_runner.dip references verify_sprint.dip as a subgraph; the
     # tracker loader resolves it relative to the runner's directory, so both
     # files must land side-by-side in the temp workdir.
-    extra_files="${repo_root}/sprint/verify_sprint.dip"
+    set -- "${repo_root}/sprint/verify_sprint.dip"
     ;;
   *)
     printf 'unknown family: %s\n' "${family}" >&2
@@ -80,10 +84,12 @@ fi
 workdir=$(mktemp -d -t track_b_smoke.XXXXXX)
 trap 'rm -rf "${workdir}"' EXIT
 
-# Copy the pipeline (and any subgraph deps) into the temp workdir so per-run
-# state lands there and not under the repo's .tracker/. Hermetic by design.
+# Copy the pipeline (and any subgraph deps in "$@") into the temp workdir so
+# per-run state lands there and not under the repo's .tracker/. Hermetic by
+# design. The positional-args list is the POSIX-clean carrier for zero/one/N
+# paths, including ones with whitespace.
 cp "${pipeline}" "${workdir}/"
-for f in ${extra_files}; do
+for f in "$@"; do
   cp "${f}" "${workdir}/"
 done
 pipeline_basename=$(basename "${pipeline}")
@@ -99,7 +105,19 @@ tracker --no-tui --auto-approve "${pipeline_basename}" >tracker.stdout 2>tracker
   || tracker_status=$?
 printf 'tracker exit: %s\n' "${tracker_status}" >&2
 
-run_dir=$(track_b_run_dir "${workdir}")
+# If tracker never created a .tracker/runs/ dir (or the dir is empty),
+# track_b_run_dir fails. Under `set -eu` the bare command substitution would
+# exit the script before the EXIT trap had a chance to dump diagnostics — and
+# the trap then rm -rf's the workdir, taking tracker.stdout/stderr with it.
+# Surface those streams to the operator first.
+if ! run_dir=$(track_b_run_dir "${workdir}"); then
+  printf 'track_b_run_dir failed under %s\n' "${workdir}" >&2
+  printf '=== tracker.stdout ===\n' >&2
+  sed 's/^/  /' tracker.stdout >&2 || true
+  printf '=== tracker.stderr ===\n' >&2
+  sed 's/^/  /' tracker.stderr >&2 || true
+  exit 1
+fi
 printf 'run dir: %s\n' "${run_dir}" >&2
 
 # Assertion 1: the converted node was actually exercised. Without this the
