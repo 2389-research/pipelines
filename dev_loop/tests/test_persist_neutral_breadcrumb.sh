@@ -34,12 +34,27 @@ fi
 # in a persist script's user-facing surface (comments OR printfs). The
 # executor-discovery block lives in setup_run.sh; persist scripts must stay
 # executor-neutral and name only ${DIP_ARTIFACT_DIR} in their breadcrumbs.
-hits=$(grep -nH "tracker/runs" "$@" || true)
+#
+# We need to distinguish grep's three exit codes here:
+#   0 → match(es) found     → forbidden literal present, FAIL (lock tripped)
+#   1 → no matches          → guard clean, OK
+#   2 → grep error          → cannot trust the result, FAIL (don't silently
+#                             pass on permission/IO errors)
+# A bare `grep ... || true` would collapse 1 and 2 into the same "empty hits,
+# print OK" branch — a false-positive for a regression lock.
+set +e
+hits=$(grep -nH "tracker/runs" "$@")
+grep_rc=$?
+set -e
 
-if [ -n "${hits}" ]; then
+if [ "${grep_rc}" -eq 0 ]; then
   printf 'FAIL: persist_*.sh must not reference executor-specific path strings (see #61):\n%s\n' \
     "${hits}" >&2
   exit 1
+elif [ "${grep_rc}" -ne 1 ]; then
+  printf 'FAIL: grep exited %d while scanning persist_*.sh (guard cannot run)\n' \
+    "${grep_rc}" >&2
+  exit 2
 fi
 
 printf 'OK: persist_*.sh free of executor-specific path strings\n'
