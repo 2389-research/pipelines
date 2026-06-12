@@ -195,6 +195,7 @@ workflow IterScope
 
   tool validate_skeleton_heading
     label: "Validate Skeleton Heading"
+    marker_grep: '^(heading-ok|heading-bad|skeleton-missing)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -211,6 +212,7 @@ workflow IterScope
 
   tool count_skeleton_retry
     label: "Count Skeleton Heading Retry"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -237,6 +239,7 @@ workflow IterScope
 
   tool check_citations
     label: "Check Story Citations"
+    marker_grep: '^(citations-ok|citations-fail-.+)$'
     timeout: 15s
     command:
       set -euo pipefail
@@ -430,17 +433,14 @@ workflow IterScope
         printf 'continue'
       fi
 
-  # DIP101/DIP102 ack: the iterative-scope loop relies on conditional
-  # routing throughout — counters loop back via conditionals, validation
-  # gates branch on success/fail markers, and convergence requires the
-  # conditional cascade. The remaining DIP101 nodes (commit_roadmap,
-  # count_skeleton_retry, fix_citations, order_iterations,
-  # par_scope_dispatch, write_roadmap) are reached only along their
-  # intended branches. The remaining DIP102 nodes (check_citations,
-  # count_skeleton_retry, validate_roadmap, validate_skeleton_heading)
-  # have conditional edges whose conditions are exhaustive over their
-  # tool stdout outputs; per tracker/CLAUDE.md, adding unconditional
-  # fallbacks would create same-target traps.
+  # DIP101/DIP102 design note: the iterative-scope loop relies on
+  # conditional routing throughout — counters loop back via conditionals,
+  # validation gates branch on success/fail markers, and convergence
+  # requires the conditional cascade. Per tracker/CLAUDE.md, adding
+  # unconditional fallbacks would create same-target traps. The four
+  # validate / count tools above declare `marker_grep:` so the linter
+  # (dippin-lang#42) treats their typed routing as exhaustive and
+  # suppresses DIP101/DIP102 across the cascade.
   agent adjust_scope
     label: "Adjust Scope"
     max_turns: 200
@@ -510,6 +510,7 @@ workflow IterScope
 
   tool validate_roadmap
     label: "Validate Roadmap"
+    marker_grep: '^(roadmap-valid|roadmap-invalid-.+)$'
     timeout: 10s
     command:
       set -euo pipefail
