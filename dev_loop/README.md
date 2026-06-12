@@ -257,14 +257,12 @@ accessible, base-branch autodetect failure, no repo configured.
 - **The dip executor's on-disk convention is discovered in exactly one
   place: the `--- begin dip-executor discovery (PORTING NOTE) ---` block
   in `dev_loop/scripts/setup_run.sh`.** Everywhere else in `dev_loop/`
-  reads `${DIP_ARTIFACT_DIR}` from the per-run env file. (Persist scripts
-  still reference the literal `.tracker/runs` path in their error
-  breadcrumbs; those are non-authoritative — the executor's layout is
-  owned by the discovery block. Centralizing or dropping that
-  breadcrumb string is a separate code follow-up tracked as #61.) To
-  port dev_loop to a different dip executor, replace the discovery block
-  + the prereq tool list above it, and the breadcrumb path strings —
-  no other LocalGates / persist logic needs to change. (Note: the
+  reads `${DIP_ARTIFACT_DIR}` from the per-run env file. Persist scripts
+  speak in env-var terms only — their error breadcrumb names
+  `DIP_ARTIFACT_DIR` (the actionable knob), never the executor's
+  on-disk layout (#61). To port dev_loop to a different dip executor,
+  replace the discovery block + the prereq tool list above it — no
+  other LocalGates / persist logic needs to change. (Note: the
   Implementer agent's pre-push gates at
   `dev_loop/prompts/implementer.system.md` still include `tracker
   validate` by design — that's a separate scope from LocalGates and not

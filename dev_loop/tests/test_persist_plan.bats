@@ -69,10 +69,10 @@ JSON
   [ ! -f "${RUN_DIR}/branch_name.txt" ]
 }
 
-@test "missing DIP_ARTIFACT_DIR emits neutral 'no dip artifact dir' error (#44)" {
-  # Executor decoupling: persist scripts speak in neutral terms. The error
-  # written when the dip executor's artifact dir isn't pinned must name
-  # "dip artifact dir", not "tracker run dir".
+@test "missing DIP_ARTIFACT_DIR emits neutral 'DIP_ARTIFACT_DIR is unset' error (#61)" {
+  # Executor decoupling (#61): persist scripts must NOT name the executor's
+  # on-disk layout (`.tracker/runs`) in their error breadcrumb. The actionable
+  # signal is the env var name `DIP_ARTIFACT_DIR`, not the discovered root.
   cat > "${RUN_DIR}/env" <<EOF
 GH_REPO='test/test'
 BASE_BRANCH='main'
@@ -84,6 +84,7 @@ EOF
   run sh -c "$(cat "${SCRIPT}")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  grep -q "no dip artifact dir under " "${RUN_DIR}/persist_plan_error.txt"
+  grep -q "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_plan_error.txt"
+  ! grep -q "tracker/runs" "${RUN_DIR}/persist_plan_error.txt"
   ! grep -q "no tracker run dir" "${RUN_DIR}/persist_plan_error.txt"
 }

@@ -39,13 +39,13 @@ trap 'rc=$?
         exit 0
       fi' EXIT
 
-# Resolve the dip executor's active artifact dir. setup_run.sh pins DIP_ARTIFACT_DIR in
-# the env file; if it's missing or invalid, fail closed rather than falling
+# Resolve the dip executor's active artifact dir. setup_run.sh pins DIP_ARTIFACT_DIR
+# in the env file; if it's missing or invalid, fail closed rather than falling
 # back to ls -dt mtime (which would silently route to whichever run finished
-# most recently, defeating concurrency isolation).
-DIP_ARTIFACT_ROOT="$(pwd)/.tracker/runs"
+# most recently, defeating concurrency isolation). The breadcrumb names the
+# env-var (the actionable knob), not the executor's on-disk layout — see #61.
 if [ -z "${DIP_ARTIFACT_DIR:-}" ] || [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
-  printf 'no dip artifact dir under %s\n' "${DIP_ARTIFACT_ROOT}" \
+  printf 'DIP_ARTIFACT_DIR is unset or points at missing dir; was setup_run executed?\n' \
     > "${RUN_DIR}/persist_pragmatism_error.txt"
   exit 1
 fi

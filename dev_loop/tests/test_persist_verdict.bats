@@ -92,6 +92,8 @@ EOF
   # emit `persist-failed` (issue #48) so the .dip routes through
   # CleanupWorktree + RatchetLog rather than halting the pipeline. We do NOT
   # fall back to mtime — that would defeat concurrency isolation.
+  # #61: the error breadcrumb names DIP_ARTIFACT_DIR (the actionable knob), not
+  # the executor's on-disk layout.
   stage_response SquadPragmatism verdict_pass.json
   # Rewrite env without DIP_ARTIFACT_DIR.
   cat > "${RUN_DIR}/env" <<EOF
@@ -102,7 +104,8 @@ EOF
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
   [ "${status}" -eq 0 ]
   printf '%s' "${output}" | grep -q "persist-failed"
-  grep -q "no dip artifact dir" "${RUN_DIR}/persist_pragmatism_error.txt"
+  grep -q "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_pragmatism_error.txt"
+  ! grep -q "tracker/runs" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {
