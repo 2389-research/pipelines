@@ -97,8 +97,8 @@ LIT_PREREQ_CODE='for cmd in gh jq git tracker yq timeout; do'
 LIT_PREREQ_DOC='for cmd in gh jq git tracker yq timeout;'
 
 # Sentinel comment on the setup_run.sh side: the contract anchor proper.
-# `--` separator is required because the literal begins with `--`, which
-# grep would otherwise parse as an option.
+# `-e` marks the pattern explicitly because the literal begins with `---`,
+# which grep would otherwise parse as an option.
 if ! grep -qF -e "${LIT_SENTINEL}" "${SETUP_RUN}"; then
   fail "setup_run.sh no longer contains the discovery sentinel comment: ${LIT_SENTINEL}"
 fi
