@@ -68,7 +68,7 @@ fi
 # Phrases are the canonical operator-facing strings. Update both here and in
 # the 8 persist_*.sh scripts together if the wording ever changes.
 UNSET_PHRASE='DIP_ARTIFACT_DIR is unset; was setup_run executed?'
-STALE_PHRASE='is not a directory; was the artifact dir cleaned up under us?'
+STALE_PHRASE='DIP_ARTIFACT_DIR=%s is not a directory; was the artifact dir cleaned up under us?'
 
 guard_lock2_failed=0
 for f in "$@"; do
