@@ -1,0 +1,50 @@
+name: track_b smoke
+
+on:
+  pull_request:
+    paths:
+      - "tests/track_b_smoke/**"
+      - ".github/workflows/track_b_smoke.yml"
+      # Re-trigger when the .dip files the harness targets change so the
+      # helper-health suite runs against any edit to the converted-agent
+      # surface, even though the runtime probes themselves remain off-CI.
+      - "sprint/verify_sprint.dip"
+      - "sprint/verify_sprints_runner.dip"
+  push:
+    branches:
+      - main
+    paths:
+      - "tests/track_b_smoke/**"
+      - ".github/workflows/track_b_smoke.yml"
+      - "sprint/verify_sprint.dip"
+      - "sprint/verify_sprints_runner.dip"
+
+# Note: the runtime smoke probes (smoke.sh) are NOT wired here. They cost real
+# LLM calls and currently fail on main due to an upstream tracker
+# `tool_access` regression — see tests/track_b_smoke/README.md and
+# 2389-research/tracker#366. Operators run smoke.sh manually when investigating
+# Track B sites; this workflow gates only the assertion-helper unit tests.
+
+jobs:
+  lib_unit_tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats + shellcheck
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y bats shellcheck
+
+      - name: shellcheck (sh dialect)
+        run: |
+          shellcheck --shell=sh tests/track_b_smoke/lib.sh
+          shellcheck --shell=sh tests/track_b_smoke/smoke.sh
+
+      - name: bats unit tests for assertion helpers and smoke.sh lifecycle
+        # test_lib.bats covers lib.sh helpers against synthetic fixtures.
+        # test_smoke.bats covers smoke.sh's workdir cleanup contract via a
+        # PATH shim for `tracker` (no real LLM calls).
+        run: bats tests/track_b_smoke/test_lib.bats tests/track_b_smoke/test_smoke.bats

@@ -1,0 +1,208 @@
+#!/usr/bin/env bats
+# ABOUTME: Bats tests for the Track B smoke assertion helpers in lib.sh.
+# ABOUTME: Builds synthetic fixture run dirs so the helpers can be exercised
+# ABOUTME: without invoking tracker. The full-pipeline smoke run is opt-in
+# ABOUTME: (see smoke.sh + README.md) and lives outside this bats file.
+
+setup() {
+  LIB="${BATS_TEST_DIRNAME}/lib.sh"
+  TMPDIR="$(mktemp -d -t track_b_smoke.XXXXXX)"
+  export TMPDIR
+  # Source the helpers under test.
+  # shellcheck disable=SC1090
+  . "${LIB}"
+}
+
+teardown() {
+  rm -rf "${TMPDIR}"
+}
+
+# Build a synthetic .tracker/runs/<rid>/ tree for assertions.
+# Usage: make_run <workdir> <rid> <node_id> [response_body] [activity_lines...]
+make_run() {
+  workdir=$1
+  rid=$2
+  node=$3
+  body=${4:-}
+  run_dir="${workdir}/.tracker/runs/${rid}"
+  mkdir -p "${run_dir}/${node}"
+  if [ -n "${body}" ]; then
+    printf '%s\n' "${body}" > "${run_dir}/${node}/response.md"
+  fi
+  # Drop the fixed positional args so the remainder are activity.jsonl lines.
+  # A blanket `shift 4` would fail (and leave "$@" unchanged) when only 3 args
+  # were passed, contaminating activity.jsonl with workdir/rid/node. Shift the
+  # 3 mandatory args first, then the optional body only if it was supplied.
+  shift 3
+  if [ "$#" -gt 0 ]; then shift; fi
+  # Remaining args become activity.jsonl lines.
+  : > "${run_dir}/activity.jsonl"
+  for line in "$@"; do
+    printf '%s\n' "${line}" >> "${run_dir}/activity.jsonl"
+  done
+}
+
+@test "make_run with 3 args produces an empty activity.jsonl" {
+  # Regression guard for the helper's documented signature: when called with
+  # only <workdir> <rid> <node_id> (no response body, no activity lines), the
+  # fixture's activity.jsonl must be empty — not silently populated with the
+  # positional args because `shift 4` failed on a 3-arg call.
+  make_run "${TMPDIR}" run1 Exit
+  [ -f "${TMPDIR}/.tracker/runs/run1/activity.jsonl" ]
+  [ ! -s "${TMPDIR}/.tracker/runs/run1/activity.jsonl" ]
+}
+
+@test "track_b_run_dir errors when no .tracker/runs exists" {
+  run track_b_run_dir "${TMPDIR}"
+  [ "$status" -ne 0 ]
+}
+
+@test "track_b_run_dir picks the most recent run" {
+  mkdir -p "${TMPDIR}/.tracker/runs/aaa11111"
+  mkdir -p "${TMPDIR}/.tracker/runs/bbb22222"
+  # Force the second one newer.
+  touch -t 202601010000 "${TMPDIR}/.tracker/runs/aaa11111"
+  touch -t 202612010000 "${TMPDIR}/.tracker/runs/bbb22222"
+  run track_b_run_dir "${TMPDIR}"
+  [ "$status" -eq 0 ]
+  case "${output}" in
+    */bbb22222) ;;
+    *) printf 'unexpected: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
+@test "track_b_assert_response_exists fails when response.md missing" {
+  make_run "${TMPDIR}" run1 Exit ''
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_response_exists "${run_dir}" Exit
+  [ "$status" -ne 0 ]
+}
+
+@test "track_b_assert_response_exists fails when response.md empty" {
+  make_run "${TMPDIR}" run1 Exit
+  : > "${TMPDIR}/.tracker/runs/run1/Exit/response.md"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_response_exists "${run_dir}" Exit
+  [ "$status" -ne 0 ]
+}
+
+@test "track_b_assert_response_exists passes when response.md non-empty" {
+  make_run "${TMPDIR}" run1 Exit 'Pipeline complete.'
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_response_exists "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_calls_in_response passes on plain text" {
+  make_run "${TMPDIR}" run1 Exit 'Acknowledged. Pipeline ready.'
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_calls_in_response "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_calls_in_response fails when TOOL CALL present" {
+  body='TURN 1
+TOOL CALL: bash
+INPUT:
+{"command": "ls"}
+TOOL RESULT: bash'
+  make_run "${TMPDIR}" run1 Exit "${body}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_calls_in_response "${run_dir}" Exit
+  [ "$status" -ne 0 ]
+  case "${output}" in
+    *FAIL*) ;;
+    *) printf 'expected FAIL marker, got: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
+@test "track_b_assert_no_tool_calls_in_response: prose-mention of tool call OK" {
+  # The agent prose may describe what it "would" have done — only literal
+  # `TOOL CALL:` at line-start (tracker's transcript marker) is the regression
+  # signal.
+  body='I would normally make a TOOL CALL but tool_access is none, so acknowledging only.'
+  make_run "${TMPDIR}" run1 Exit "${body}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_calls_in_response "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_events_in_activity passes on quiet activity" {
+  line1='{"ts":"x","source":"pipeline","type":"stage_started","node_id":"Exit"}'
+  line2='{"ts":"x","source":"agent","type":"llm_text","node_id":"Exit"}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line1}" "${line2}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_events_in_activity fails on tool_call_start" {
+  line='{"ts":"x","source":"agent","type":"tool_call_start","node_id":"Exit","tool_name":"bash"}'
+  make_run "${TMPDIR}" run1 Exit 'irrelevant' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" Exit
+  [ "$status" -ne 0 ]
+}
+
+@test "track_b_assert_no_tool_events_in_activity: other node's tool calls ignored" {
+  # Some upstream tool node may legitimately have tool_call_start events. We
+  # only care about the converted agent.
+  line='{"ts":"x","source":"agent","type":"tool_call_start","node_id":"SomeOtherNode","tool_name":"bash"}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_events_in_activity: nested payload mentioning converted node ignored" {
+  # Regression guard for the `.*` -> `[^{]*` tightening: an unrelated
+  # tool_call_start event whose nested payload contains `"node_id":"Exit"`
+  # used to false-positive against the converted node `Exit`.
+  line='{"ts":"x","source":"agent","type":"tool_call_start","node_id":"SomeOtherNode","child":{"node_id":"Exit"}}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_assert_no_tool_events_in_activity: node_id with regex meta is treated literally" {
+  # Regression guard for the node_id ERE-escape: a converted node literally
+  # named `Exit.Default` must not regex-match `ExitXDefault` (or any other
+  # node) on the activity stream.
+  line='{"ts":"x","source":"agent","type":"tool_call_start","node_id":"ExitXDefault","tool_name":"bash"}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_no_tool_events_in_activity "${run_dir}" 'Exit.Default'
+  [ "$status" -eq 0 ]
+}
+
+@test "track_b_run_dir ignores symlink-to-dir entries under runs/" {
+  # Defense-in-depth for the operator-extension flow: an attacker-planted or
+  # accidentally-planted symlink under .tracker/runs/ should not be followed.
+  mkdir -p "${TMPDIR}/.tracker/runs/aaa11111"
+  mkdir -p "${TMPDIR}/elsewhere"
+  ln -sn "${TMPDIR}/elsewhere" "${TMPDIR}/.tracker/runs/zzzlink"
+  run track_b_run_dir "${TMPDIR}"
+  [ "$status" -eq 0 ]
+  case "${output}" in
+    */aaa11111) ;;
+    *zzzlink) printf 'symlink was followed: %s\n' "${output}" >&2; return 1 ;;
+    *) printf 'unexpected: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
+@test "track_b_assert_node_reached fails when stage_started absent" {
+  line='{"ts":"x","source":"pipeline","type":"pipeline_started"}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_node_reached "${run_dir}" Exit
+  [ "$status" -ne 0 ]
+}
+
+@test "track_b_assert_node_reached passes when stage_started present" {
+  line='{"ts":"x","source":"pipeline","type":"stage_started","node_id":"Exit"}'
+  make_run "${TMPDIR}" run1 Exit 'ok' "${line}"
+  run_dir=$(track_b_run_dir "${TMPDIR}")
+  run track_b_assert_node_reached "${run_dir}" Exit
+  [ "$status" -eq 0 ]
+}
