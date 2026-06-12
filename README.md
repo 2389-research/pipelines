@@ -119,6 +119,12 @@ Tracker reads the `.dip` file, builds the execution graph, and orchestrates LLM 
 - **parallel** / **fan_in** — Parallel fan-out and synchronization
 - **conditional** — Branching based on context
 
+## Releases & Changelog
+
+Tagged releases live on the [GitHub releases page](https://github.com/2389-research/pipelines/releases) with full forensic notes. A short, scannable summary lives in [`CHANGELOG.md`](./CHANGELOG.md) at repo root, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+When cutting a new tag: move the `[Unreleased]` entries into a new dated version section, refresh the compare-link footers, and publish the long-form notes as a GitHub release.
+
 ## Related Projects
 
 - [tracker](https://github.com/2389-research/tracker) — The runtime engine that executes these pipelines
