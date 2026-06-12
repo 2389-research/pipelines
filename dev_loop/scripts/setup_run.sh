@@ -259,11 +259,9 @@ fi
 # than via ls -dt mtime — which would clash with any concurrent run in the
 # same workdir. This is the ONLY DISCOVERY block in dev_loop/; downstream
 # persist scripts read the result via `${DIP_ARTIFACT_DIR}` from the
-# per-run env file. (The persist scripts still print the literal
-# `.tracker/runs` path in error breadcrumbs when DIP_ARTIFACT_DIR is
-# unset — those are not authoritative; the executor's layout is owned
-# here. Centralizing or dropping that breadcrumb string is a separate
-# code-refactor follow-up tracked as #61; #45 covers the docs side.)
+# per-run env file and name only that env var in their error breadcrumbs
+# (no executor-specific path strings — #61). #45 covers the docs side
+# of the porting guide.
 #
 # To port dev_loop to a different dip executor:
 #   1. Replace this discovery with whatever locates that executor's
@@ -272,7 +270,6 @@ fi
 #      `tracker` if no longer needed).
 #   3. Update the emit_env DIP_ARTIFACT_DIR call below if the variable
 #      name carries over.
-#   4. Update the breadcrumb path string in persist_*.sh (see #61).
 #
 # Today's executor is tracker, which creates <workdir>/.tracker/runs/<runID>/
 # when it starts, so by the time SetupRun executes the dir already exists
