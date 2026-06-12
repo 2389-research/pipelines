@@ -35,10 +35,12 @@ EOF
 }
 
 # latest_smoke_workdir -- echo the most recently created track_b_smoke.* dir.
+# Uses `-exec ls -1dt` for portability (BSD/macOS `find` lacks `-printf`),
+# matching the discipline used by `track_b_run_dir` in lib.sh.
 latest_smoke_workdir() {
+  # shellcheck disable=SC2012
   find "${SYS_TMP}" -maxdepth 1 -name 'track_b_smoke.*' -type d -mmin -5 \
-    -printf '%T@ %p\n' 2>/dev/null \
-    | sort -nr | head -1 | awk '{print $2}'
+    -exec ls -1dt {} + 2>/dev/null | head -1
 }
 
 @test "smoke.sh removes workdir on success" {
