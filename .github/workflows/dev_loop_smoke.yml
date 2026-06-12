@@ -110,6 +110,7 @@ jobs:
           shellcheck --shell=sh dev_loop/tests/test_marker_coverage.sh
           shellcheck --shell=sh dev_loop/tests/test_branch_model_ids.sh
           shellcheck --shell=sh dev_loop/tests/test_persist_neutral_breadcrumb.sh
+          shellcheck --shell=sh dev_loop/tests/test_executor_compat.sh
 
       - name: Bootstrap identity gate
         run: sh dev_loop/tests/test_bootstrap_identical.sh
@@ -160,6 +161,9 @@ jobs:
 
       - name: persist breadcrumb executor-neutrality (#61 regression lock)
         run: ./dev_loop/tests/test_persist_neutral_breadcrumb.sh
+
+      - name: executor-compatibility porting-contract smoke (#71)
+        run: ./dev_loop/tests/test_executor_compat.sh
 
       - name: branch model-ID allowlist
         run: ./dev_loop/tests/test_branch_model_ids.sh
