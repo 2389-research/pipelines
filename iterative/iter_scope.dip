@@ -438,9 +438,10 @@ workflow IterScope
   # validation gates branch on success/fail markers, and convergence
   # requires the conditional cascade. Per tracker/CLAUDE.md, adding
   # unconditional fallbacks would create same-target traps. The four
-  # validate / count tools above declare `marker_grep:` so the linter
-  # (dippin-lang#42) treats their typed routing as exhaustive and
-  # suppresses DIP101/DIP102 across the cascade.
+  # validate / count tools in this workflow (validate_skeleton_heading,
+  # count_skeleton_retry, check_citations, validate_roadmap) declare
+  # `marker_grep:` so the linter (dippin-lang#42) treats their typed
+  # routing as exhaustive and suppresses DIP101/DIP102 across the cascade.
   agent adjust_scope
     label: "Adjust Scope"
     max_turns: 200
