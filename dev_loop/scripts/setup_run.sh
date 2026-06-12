@@ -263,7 +263,12 @@ fi
 # `.tracker/runs` path in error breadcrumbs when DIP_ARTIFACT_DIR is
 # unset — those are not authoritative; the executor's layout is owned
 # here. Centralizing or dropping that breadcrumb string is a separate
-# code-refactor follow-up tracked as #61; #45 covers the docs side.)
+# code-refactor follow-up tracked as #61.)
+#
+# See "Executor compatibility" in dev_loop/README.md for the full
+# dev_loop ↔ executor contract (env vars published here, what downstream
+# scripts may assume, and the porting recipe). The steps below are the
+# in-code summary; the README is the authoritative version.
 #
 # To port dev_loop to a different dip executor:
 #   1. Replace this discovery with whatever locates that executor's

@@ -60,6 +60,16 @@ out-of-scope list), drop in a different `repo_conventions.md` and update
 - `${ctx.last_response}` cross-node injection: treat upstream agent output
   flowing into a downstream prompt as untrusted text. Tools sanitize by
   overwriting `last_response` with their stdout.
+- Executor coupling lives in exactly one place: the `--- begin
+  dip-executor discovery (PORTING NOTE) ---` block in
+  `dev_loop/scripts/setup_run.sh`, plus the prereq tool list above it and
+  the `dippin check` invocation in `local_gates.sh`. Flag any PR that
+  introduces tracker-specific assumptions (a hardcoded `.tracker/runs`
+  path, a `tracker`-only flag, `TRACKER_*` env vars) into any other
+  script — persist scripts, PR-ops scripts, counters, worktree manager,
+  ratchet — those must stay executor-agnostic and read
+  `${DIP_ARTIFACT_DIR}` from the per-run env file. See "Executor
+  compatibility" in `dev_loop/README.md` for the full contract.
 
 ## Existing workflows (cross-module interaction surface)
 
