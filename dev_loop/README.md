@@ -213,7 +213,9 @@ dev_loop scripts assume the executor provides:
 
   The env file also carries `BASE_BRANCH` and `ALLOW_NO_CI` (resolved
   config that downstream scripts read), and the canonical allow-list of
-  emitted keys lives in `dev_loop/scripts/setup_run.sh` above `emit_env`.
+  emitted keys lives in the `# Allow-list` comment block in
+  `dev_loop/scripts/setup_run.sh` (kept in sync with
+  `tests/test_helpers.bash`'s unset list).
   When porting, preserve the structural-hygiene invariants `setup_run.sh`
   applies to every value: NL/CR rejection via `reject_special`,
   single-quote escaping via `emit_env`, mode-600 on the env file, atomic
