@@ -327,13 +327,26 @@ reject_special "${yaml_repo}" repo
 reject_special "${yaml_base_branch}" base_branch
 reject_special "${yaml_allow_no_ci}" allow_no_ci
 
-# Resolve with precedence env > YAML > default. Track source for the log.
-if [ -n "${GH_REPO:-}" ]; then
-  resolved_repo="${GH_REPO}"; src_repo='env'
-elif [ -n "${yaml_repo}" ]; then
-  resolved_repo="${yaml_repo}"; src_repo='yaml'
+# Resolve GH_REPO with precedence env > YAML > git-remote > gh-cli.
+# The resolver lives in scripts/lib/resolve_gh_repo.sh and is sourced
+# directly so its emit_failure path re-enters this script's failure
+# machinery (the resolver references the symbol by name).
+LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
+if [ -f "${LIB_DIR}/resolve_gh_repo.sh" ]; then
+  # shellcheck source=lib/resolve_gh_repo.sh
+  . "${LIB_DIR}/resolve_gh_repo.sh"
+  resolve_gh_repo "${yaml_repo}"
+  resolved_repo="${RESOLVED_GH_REPO}"
+  src_repo="${RESOLVED_GH_REPO_SOURCE}"
 else
-  emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
+  # Packed-mode / lib-not-on-disk fallback: original env > YAML cascade only.
+  if [ -n "${GH_REPO:-}" ]; then
+    resolved_repo="${GH_REPO}"; src_repo='env'
+  elif [ -n "${yaml_repo}" ]; then
+    resolved_repo="${yaml_repo}"; src_repo='yaml'
+  else
+    emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
+  fi
 fi
 
 # Resolve BASE_BRANCH with precedence env > YAML > autodetect via gh.
