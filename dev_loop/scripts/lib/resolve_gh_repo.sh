@@ -71,5 +71,5 @@ resolve_gh_repo() {
     RESOLVED_GH_REPO_SOURCE="gh-cli"
     return 0
   fi
-  emit_failure "no GH_REPO resolvable (env/YAML/git-remote/gh all unavailable); set GH_REPO or run from a git repo with a github.com origin"
+  emit_failure "no repo configured (set GH_REPO env var, populate dev_loop.config.yaml with: repo: owner/name, or run from a git repo with a github.com origin)"
 }

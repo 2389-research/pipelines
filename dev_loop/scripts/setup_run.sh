@@ -53,9 +53,20 @@ unset _initial_cwd _repo_top
 # resolver runs later with strict parse-error handling; this peek is
 # silently lenient — if yq isn't installed yet, or the YAML is malformed,
 # the variant probe + full resolver will catch it downstream.
+# YAML config cascade: env override > operator-curated > shipped default.
+# Resolved here once and reused by the early peek + the full resolver below.
+CFG=""
+if [ -n "${DEV_LOOP_CONFIG_PATH:-}" ] && [ -f "${DEV_LOOP_CONFIG_PATH}" ]; then
+  CFG="${DEV_LOOP_CONFIG_PATH}"
+elif [ -f "./.dev_loop/config.yaml" ]; then
+  CFG="./.dev_loop/config.yaml"
+elif [ -f "dev_loop/config/dev_loop.config.yaml" ]; then
+  CFG="dev_loop/config/dev_loop.config.yaml"
+fi
+
 yaml_state_root=""
-if [ -f "dev_loop/config/dev_loop.config.yaml" ] && command -v yq >/dev/null 2>&1; then
-  yaml_state_root=$(yq -r '.runtime_state_root // ""' dev_loop/config/dev_loop.config.yaml 2>/dev/null || true)
+if [ -n "${CFG}" ] && command -v yq >/dev/null 2>&1; then
+  yaml_state_root=$(yq -r '.runtime_state_root // ""' "${CFG}" 2>/dev/null || true)
   # Newline/CR rejection (reject_special is defined later; inline this minimal
   # check). Define NL/CR via the trailing-underscore trick so command
   # substitution doesn't strip them: `$(printf '\n')` would return empty
@@ -326,11 +337,12 @@ fi
 #   GH_REPO BASE_BRANCH DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR
 #   ALLOW_NO_CI
 # --------------------------------------------------------------------------
-CFG="dev_loop/config/dev_loop.config.yaml"
+# CFG was resolved at the top of the script via the YAML config cascade
+# (env DEV_LOOP_CONFIG_PATH > ./.dev_loop/config.yaml > shipped default).
 yaml_repo=""
 yaml_base_branch=""
 yaml_allow_no_ci=""
-if [ -f "${CFG}" ]; then
+if [ -n "${CFG}" ] && [ -f "${CFG}" ]; then
   if ! yaml_repo=$(yq -r '.repo // ""' "${CFG}" 2>"${run_dir}/setup_error.txt"); then
     emit_failure "yq parse failed; see setup_error.txt"
   fi
@@ -376,7 +388,7 @@ else
   elif [ -n "${yaml_repo}" ]; then
     resolved_repo="${yaml_repo}"; src_repo='yaml'
   else
-    emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
+    emit_failure "no repo configured (set GH_REPO env var, populate dev_loop.config.yaml with: repo: owner/name, or run from a git repo with a github.com origin)"
   fi
 fi
 
