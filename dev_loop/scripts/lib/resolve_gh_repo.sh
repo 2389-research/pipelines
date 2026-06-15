@@ -24,18 +24,20 @@ _parse_remote_url() {
   url=$1
   # Strip trailing .git (POSIX sed).
   url=$(printf '%s' "${url}" | sed 's,\.git$,,')
-  # SSH form: git@host:owner/repo
+  # Scheme URLs first: ssh://, https://, http://. These can include a port
+  # (e.g. ssh://git@host:2222/org/repo) which would otherwise be misread as
+  # an scp-style `host:path` if the *@*:* branch ran first.
+  case ${url} in
+    ssh://*|https://*|http://*)
+      # Remove scheme, then remove host[:port] (everything up to and
+      # including the first slash of the path).
+      echo "${url}" | sed -e 's,^[a-z]*://,,' -e 's,^[^/]*/,,'
+      return 0 ;;
+  esac
+  # SCP-style SSH form: git@host:owner/repo (no scheme).
   case ${url} in
     *@*:*)
       echo "${url}" | sed 's,^[^@]*@[^:]*:,,'
-      return 0 ;;
-  esac
-  # ssh://, https://, http:// — strip scheme + host, keep path.
-  case ${url} in
-    ssh://*|https://*|http://*)
-      # Remove scheme, then remove host (everything up to and including
-      # the first slash of the path).
-      echo "${url}" | sed -e 's,^[a-z]*://,,' -e 's,^[^/]*/,,'
       return 0 ;;
   esac
   return 1

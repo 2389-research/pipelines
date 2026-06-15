@@ -164,6 +164,17 @@ GH
   [ "${RESOLVED_GH_REPO}" = "acme/widget" ]
 }
 
+@test "url form: ssh:// URL with explicit port" {
+  # ssh://git@host:2222/org/repo.git — the port (:2222) must not trick
+  # the parser into hitting the scp-style `*@*:*` branch (which would
+  # produce "2222/org/repo" instead of "org/repo").
+  unset GH_REPO
+  stub_git_remote "ssh://git@github.com:2222/acme/widget.git"
+  . "${RESOLVER}"
+  resolve_gh_repo ""
+  [ "${RESOLVED_GH_REPO}" = "acme/widget" ]
+}
+
 @test "url form: GHE host variant (custom host)" {
   unset GH_REPO
   stub_git_remote "git@github.acme-corp.com:acme/widget.git"
