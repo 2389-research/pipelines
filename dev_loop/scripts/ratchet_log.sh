@@ -24,6 +24,15 @@ set -a
 set +a
 # ---end-bootstrap-reference---
 
+# cd to repo top-level so cwd-relative paths (config files, lib helpers,
+# .dev_loop_worktree, .tracker/runs) resolve consistently when the
+# operator invoked tracker from a subdirectory. setup_run.sh publishes
+# DEV_LOOP_REPO_ROOT after its own cd; downstream nodes run in fresh
+# shells at tracker's original cwd, so re-anchor here.
+if [ -n "${DEV_LOOP_REPO_ROOT:-}" ] && [ -d "${DEV_LOOP_REPO_ROOT}" ]; then
+  cd "${DEV_LOOP_REPO_ROOT}"
+fi
+
 RATCHET="${DIP_ROOT}/ratchet.tsv"
 if [ ! -f "${RATCHET}" ]; then
   printf 'rid\tts\tissue\tbranch\toutcome\titers_used\tnotes\n' > "${RATCHET}"

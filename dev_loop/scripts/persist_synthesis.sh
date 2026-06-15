@@ -26,6 +26,15 @@ set -a
 set +a
 # ---end-bootstrap-reference---
 
+# cd to repo top-level so cwd-relative paths (config files, lib helpers,
+# .dev_loop_worktree, .tracker/runs) resolve consistently when the
+# operator invoked tracker from a subdirectory. setup_run.sh publishes
+# DEV_LOOP_REPO_ROOT after its own cd; downstream nodes run in fresh
+# shells at tracker's original cwd, so re-anchor here.
+if [ -n "${DEV_LOOP_REPO_ROOT:-}" ] && [ -d "${DEV_LOOP_REPO_ROOT}" ]; then
+  cd "${DEV_LOOP_REPO_ROOT}"
+fi
+
 # A non-zero exit anywhere routes to CleanupWorktree via the fail edge on the
 # SquadSynthesizer agent fallback; we choose abandoned as the conservative
 # default if the response can't be read.

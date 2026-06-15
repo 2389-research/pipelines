@@ -46,6 +46,7 @@ if [ -z "${_repo_top}" ]; then
   exit 0
 fi
 cd "${_repo_top}"
+DEV_LOOP_REPO_ROOT="${_repo_top}"
 unset _initial_cwd _repo_top
 
 # Best-effort early peek at YAML.runtime_state_root so DIP_ROOT can honor
@@ -129,6 +130,7 @@ write_emergency_env() {
     printf "DEV_LOOP_RUN_ID='%s'\n" "${rid}"
     printf "DEV_LOOP_RUN_DIR='%s'\n" "${run_dir}"
     printf "DIP_ARTIFACT_DIR=''\n"
+    printf "DEV_LOOP_REPO_ROOT='%s'\n" "${DEV_LOOP_REPO_ROOT:-}"
   } > "${run_dir}/env" 2>/dev/null || true
   chmod 600 "${run_dir}/env" 2>/dev/null || true
 }
@@ -335,7 +337,7 @@ fi
 # Allow-list (canonical home for both setup_run's emit and test_helpers.bash's
 # unset list — keep these two in sync):
 #   GH_REPO BASE_BRANCH DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR
-#   ALLOW_NO_CI
+#   ALLOW_NO_CI DEV_LOOP_REPO_ROOT
 # --------------------------------------------------------------------------
 # CFG was resolved at the top of the script via the YAML config cascade
 # (env DEV_LOOP_CONFIG_PATH > ./.dev_loop/config.yaml > shipped default).
@@ -439,6 +441,7 @@ reject_special "${resolved_allow_no_ci}" ALLOW_NO_CI
 reject_special "${rid}" DEV_LOOP_RUN_ID
 reject_special "${run_dir}" DEV_LOOP_RUN_DIR
 reject_special "${dip_artifact_dir}" DIP_ARTIFACT_DIR
+reject_special "${DEV_LOOP_REPO_ROOT}" DEV_LOOP_REPO_ROOT
 
 # Build env file atomically: write to env.tmp inside RUN_DIR, then mv -f to
 # env. umask 077 (set at the top of the script) ensures env.tmp inherits
@@ -446,12 +449,13 @@ reject_special "${dip_artifact_dir}" DIP_ARTIFACT_DIR
 # downstream change to umask slips in.
 env_tmp="${run_dir}/env.tmp"
 {
-  emit_env GH_REPO          "${resolved_repo}"
-  emit_env BASE_BRANCH      "${resolved_base}"
-  emit_env ALLOW_NO_CI      "${resolved_allow_no_ci}"
-  emit_env DEV_LOOP_RUN_ID  "${rid}"
-  emit_env DEV_LOOP_RUN_DIR "${run_dir}"
-  emit_env DIP_ARTIFACT_DIR "${dip_artifact_dir}"
+  emit_env GH_REPO            "${resolved_repo}"
+  emit_env BASE_BRANCH        "${resolved_base}"
+  emit_env ALLOW_NO_CI        "${resolved_allow_no_ci}"
+  emit_env DEV_LOOP_RUN_ID    "${rid}"
+  emit_env DEV_LOOP_RUN_DIR   "${run_dir}"
+  emit_env DIP_ARTIFACT_DIR   "${dip_artifact_dir}"
+  emit_env DEV_LOOP_REPO_ROOT "${DEV_LOOP_REPO_ROOT}"
 } > "${env_tmp}"
 chmod 600 "${env_tmp}"
 # Reject a pre-existing symlink at the destination (operator's UID is trusted
