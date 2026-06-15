@@ -35,6 +35,12 @@ setup_env() {
   WORKDIR="${TMPDIR}/workdir"
   mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
   cd "${WORKDIR}" || return 1
+  # Phase 1: setup_run.sh cd's to git top-level at start. Give WORKDIR a
+  # minimal git identity so the cd succeeds and tests stay self-contained.
+  # Suites that need a not-in-repo scenario explicitly rm -rf .git.
+  if command -v git >/dev/null 2>&1; then
+    ( cd "${WORKDIR}" && git init -q -b main . ) 2>/dev/null || true
+  fi
   mkdir -p "${DIP_ROOT}/runs"
 }
 

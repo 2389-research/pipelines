@@ -17,6 +17,37 @@
 set -eu
 umask 077
 
+# cd to the git top-level so every subsequent relative path (YAML config,
+# .tracker/runs discovery, .dev_loop_worktree) resolves consistently
+# regardless of which subdirectory the operator invoked tracker from.
+# Pre-Phase-1 the README explicitly warned operators against this footgun;
+# now we close it. Failure path is best-effort: setup_error.txt would land
+# at the cwd-resolved DIP_ROOT, which is still meaningful for the operator.
+_initial_cwd="$(pwd)"
+# If git itself is missing, defer to the prereq check below — it produces
+# a clearer "missing required commands: git" message than "not in a git repo".
+if command -v git >/dev/null 2>&1; then
+  _repo_top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+else
+  _repo_top="${_initial_cwd}"
+fi
+if [ -z "${_repo_top}" ]; then
+  # No state dir resolved yet; write a best-effort error to the default
+  # DIP_ROOT (XDG_CACHE_HOME) so the operator can find it.
+  _early_root="${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}"
+  _early_rid="early-$$"
+  _early_dir="${_early_root}/runs/${_early_rid}"
+  mkdir -p "${_early_dir}" 2>/dev/null || true
+  printf 'not in a git repo (cwd=%s); cd to a checkout before invoking tracker\n' \
+    "${_initial_cwd}" > "${_early_dir}/setup_error.txt" 2>/dev/null || true
+  printf '%s' "${_early_rid}" > "${_early_root}/.current_rid.tmp" 2>/dev/null || true
+  mv -Tf "${_early_root}/.current_rid.tmp" "${_early_root}/.current_rid" 2>/dev/null || true
+  printf 'setup-failed'
+  exit 0
+fi
+cd "${_repo_top}"
+unset _initial_cwd _repo_top
+
 # Best-effort early peek at YAML.runtime_state_root so DIP_ROOT can honor
 # the 3-layer precedence env > YAML > default (spec §4.6). The full YAML
 # resolver runs later with strict parse-error handling; this peek is
