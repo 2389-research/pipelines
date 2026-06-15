@@ -73,6 +73,49 @@ teardown() { rm -rf "${TMPDIR}"; }
   echo "${out}" | grep -q "SHIPPED"
 }
 
+@test "subdirectory cwd: resolves cascade against repo top-level" {
+  # AGENTS.md sits at the repo root, but the caller runs from a subdir.
+  # The cascade must still find it (via git rev-parse --show-toplevel).
+  printf 'AGENTS\n' > "${WORKDIR}/AGENTS.md"
+  mkdir -p "${WORKDIR}/sub/deeper"
+  unset DEV_LOOP_CONVENTIONS_FILE
+  ( cd "${WORKDIR}/sub/deeper" \
+    && . "${HELPER}" \
+    && load_conventions \
+    && printf '%s' "${CONVENTIONS_TEXT}" ) | grep -q "AGENTS"
+}
+
+@test "DEV_LOOP_REPO_ROOT override: resolves cascade against the override" {
+  # When DEV_LOOP_REPO_ROOT is published by setup_run, callers can run
+  # from anywhere and the cascade still anchors on the real repo root.
+  printf 'AGENTS\n' > "${WORKDIR}/AGENTS.md"
+  unset DEV_LOOP_CONVENTIONS_FILE
+  out=$( cd / \
+         && export DEV_LOOP_REPO_ROOT="${WORKDIR}" \
+         && . "${HELPER}" \
+         && load_conventions \
+         && printf '%s' "${CONVENTIONS_TEXT}" )
+  echo "${out}" | grep -q "AGENTS"
+}
+
+@test "unreadable cascade entry: falls through to next, never aborts" {
+  # AGENTS.md is chmod 000; cascade must skip it and land on CLAUDE.md
+  # rather than exiting non-zero under a `set -e` caller.
+  printf 'AGENTS\n' > "${WORKDIR}/AGENTS.md"
+  chmod 000 "${WORKDIR}/AGENTS.md"
+  printf 'CLAUDE\n' > "${WORKDIR}/CLAUDE.md"
+  unset DEV_LOOP_CONVENTIONS_FILE
+  # Run under `set -e` to assert the cascade does not abort on the
+  # unreadable file.
+  out=$( set -e
+         . "${HELPER}"
+         load_conventions
+         printf '%s' "${CONVENTIONS_TEXT}" )
+  echo "${out}" | grep -q "CLAUDE"
+  # Restore for teardown.
+  chmod 644 "${WORKDIR}/AGENTS.md"
+}
+
 @test "nothing present: empty stub" {
   unset DEV_LOOP_CONVENTIONS_FILE
   out=$(. "${HELPER}" && load_conventions; printf '%s' "${CONVENTIONS_TEXT}")
