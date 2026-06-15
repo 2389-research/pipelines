@@ -45,11 +45,14 @@ if [ "${next}" -le "${max_iters}" ]; then
 
   plan_text=$(cat "${RUN_DIR}/plan.json" 2>/dev/null || printf '{}')
   feedback_text=$(cat "${RUN_DIR}/feedback.json" 2>/dev/null || printf '[]')
-  conventions_path="dev_loop/config/repo_conventions.md"
-  if [ -f "${conventions_path}" ]; then
-    conventions_text=$(cat "${conventions_path}")
+  LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
+  if [ -f "${LIB_DIR}/load_conventions.sh" ]; then
+    # shellcheck source=lib/load_conventions.sh
+    . "${LIB_DIR}/load_conventions.sh"
+    load_conventions
+    conventions_text="${CONVENTIONS_TEXT}"
   else
-    conventions_text='(no repo_conventions.md found)'
+    conventions_text='(no conventions found)'
   fi
 
   cat <<DATA

@@ -78,11 +78,14 @@ feedback_text=$(cat "${RUN_DIR}/feedback.json" 2>/dev/null || printf '[]')
 # Locate the conventions file relative to the .dip's script dir. tracker's
 # workdir is typically the repo root, so this resolves there. Falls back to
 # a minimal stub if missing so reviewers still get a verdict.
-conventions_path="dev_loop/config/repo_conventions.md"
-if [ -f "${conventions_path}" ]; then
-  conventions_text=$(cat "${conventions_path}")
+LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
+if [ -f "${LIB_DIR}/load_conventions.sh" ]; then
+  # shellcheck source=lib/load_conventions.sh
+  . "${LIB_DIR}/load_conventions.sh"
+  load_conventions
+  conventions_text="${CONVENTIONS_TEXT}"
 else
-  conventions_text='(no repo_conventions.md found; reviewers, fall back to general programming sense and the plan + diff)'
+  conventions_text='(no conventions found; reviewers, fall back to general programming sense and the plan + diff)'
 fi
 
 cat <<DATA
