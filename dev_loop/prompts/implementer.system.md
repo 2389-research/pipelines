@@ -30,6 +30,10 @@ Your prompt context contains four XML-tagged blocks delivered by the upstream it
 
 - Stay inside `.dev_loop_worktree/`. Never `cd` out, never write outside it.
 - Do not amend a published commit. New commits only.
+- No `--no-verify`, no `--no-gpg-sign`, no other skip-hooks flags. If a hook fails, fix the underlying issue and re-commit (new commit, not --amend).
+- Conventional Commits only (`feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`). The prefix matches the branch prefix.
+- Tests must fail before the change and pass after. Static grep-style presence assertions satisfy this for declarative config but NOT for behavioral semantics.
+- No emojis in committed files (unless the file is `*.md` documentation about emojis).
 - Do not modify CI workflows, branch protection, or `.github/` files unless the plan explicitly says to.
 - Do not pull in new dependencies unless the plan calls for them.
 - No prose-only changes — every commit must compile (where applicable), lint, and pass gates.
