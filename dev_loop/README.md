@@ -31,64 +31,29 @@ SetupRun → FetchOpenIssues → PreFilter
 
 ## Quick start — run against your repo
 
-> **Step 0:** make sure Prerequisites below are installed first — especially
-> the right `yq`. Pasting steps 1–6 will fail with `setup-failed (missing
-> required commands)` otherwise.
-
-### Option A — edit YAML (persistent)
-
 ```sh
-# 1. From your target repo's ROOT (NOT a subdirectory — see "What dev_loop
-#    does NOT do" below for why):
-cd ~/code/acme/widget-service
+# 1. Install prerequisites (see Prerequisites below). The right `yq`
+#    matters: dev_loop needs mikefarah/yq v4+; the apt-shipped kislyuk/yq
+#    has different syntax and will trip setup-failed.
 
-# 2. Drop dev_loop/ into the repo root. The dev_loop/ tree ships from the
-#    pipelines repo (owner: 2389-research, repo: pipelines):
-DEV_LOOP_OWNER=2389-research
-DEV_LOOP_REPO=pipelines
-git clone --depth=1 "https://github.com/${DEV_LOOP_OWNER}/${DEV_LOOP_REPO}.git" /tmp/dl-src
-cp -r /tmp/dl-src/dev_loop ./dev_loop
-rm -rf /tmp/dl-src
+# 2. (Optional) Drop conventions in your target repo. The cascade prefers,
+#    in order: $DEV_LOOP_CONVENTIONS_FILE > ./.dev_loop/conventions.md >
+#    ./AGENTS.md > ./CLAUDE.md > ./CONVENTIONS.md > shipped template.
+#    If you already have AGENTS.md or CLAUDE.md, dev_loop uses it for free.
 
-# 3. REPLACE dev_loop/config/repo_conventions.md with your project's facts
-#    (commit style, test commands, forbidden patterns, idioms). The shipped
-#    file documents the upstream dev_loop repo's conventions — leaving it
-#    in place will steer the 5-persona squad reviewers against the wrong
-#    rules, because they read this file via `ctx.last_response` as project
-#    context.
-
-# 4. Edit dev_loop/config/dev_loop.config.yaml:
-#    repo: acme/widget-service
-#    base_branch: main         # or omit to auto-detect via gh (works for
-#                              # main, master, develop, etc.)
-#    allow_no_ci: false
-
-# 5. Run from the target repo root. This is the actual workflow run and may
-#    take a while (multiple LLM calls per iteration):
-tracker dev_loop/dev_loop.dip
-
-# 6. After setup-ok, verify the resolved config (one line per knob with
-#    source attribution: env, yaml, default, autodetect):
-RID=$(cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.current_rid")
-cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/runs/${RID}/config_resolution.txt"
+# 3. From any git repo cwd, run:
+dippin pack -o ~/dl.dipx /path/to/pipelines/dev_loop/dev_loop.dip
+tracker ~/dl.dipx
 ```
 
-> **Silent override warning:** env vars beat YAML without complaint. If
-> `config_resolution.txt` shows `(source=env)` on a knob you only set in
-> YAML, an earlier `export GH_REPO=...` (or other `DEV_LOOP_*`) is still
-> in your shell. Check `env | grep -E 'GH_REPO|DEV_LOOP_'`.
-
-### Option B — environment variables (per-run override)
+GH_REPO auto-detects from `git remote get-url origin` (HTTPS, ssh://,
+git@ SSH, GHE host variants all parsed) — no YAML edit needed for the
+common case. Pin a different target with `export GH_REPO=owner/name`.
+After setup-ok, inspect the resolved config:
 
 ```sh
-cd ~/code/acme/widget-service
-# (still cp dev_loop/ into the repo as in Option A step 2)
-# (still edit dev_loop/config/repo_conventions.md as in Option A step 3)
-
-export GH_REPO=acme/widget-service
-export DEV_LOOP_BASE_BRANCH=develop      # optional; auto-detected via gh if unset
-export DEV_LOOP_STATE_ROOT=/tmp/dl       # optional; defaults to ${XDG_CACHE_HOME}/dip/dev_loop
-tracker dev_loop/dev_loop.dip
+RID=$(cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.current_rid")
+cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/runs/${RID}/config_resolution.txt"
 ```
 
 ## Prerequisites
