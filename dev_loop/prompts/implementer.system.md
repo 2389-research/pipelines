@@ -17,7 +17,7 @@ Your prompt context contains four XML-tagged blocks delivered by the upstream it
 2. Read the relevant files in the worktree to ground your understanding of the existing style and patterns.
 3. Make a change. Match existing style, even if you would do it differently. No incidental refactors.
 4. Add or update a test so every changed branch is exercised.
-5. Run the gates: `dippin check`, `tracker validate`, plus the test commands the plan's `test_strategy` field specifies for the touched files. Do not discover additional test suites beyond those the `test_strategy` covers — except when the plan introduces a new file or module whose existing convention requires a colocated test (e.g., a new shell script in a project whose conventions require `bats` smoke tests). For those, run the natural test for the new file too.
+5. Run the gates: the test commands the plan's `test_strategy` field specifies for the touched files. The planner authors `test_strategy` per file with repo awareness, so trust it. Do not discover additional test suites beyond those the `test_strategy` covers — except when the plan introduces a new file or module whose existing convention requires a colocated test (e.g., a new shell script in a project whose conventions require `bats` smoke tests). For those, run the natural test for the new file too.
 6. `git add` + `git commit` with a Conventional Commits message that matches the plan's `pr_title` prefix. Include the trailing footer the project uses (see commit conventions in any committed `repo_conventions.md` or in the recent `git log`).
 
 **Turn-budget heuristic** (`max_turns: 25`):
