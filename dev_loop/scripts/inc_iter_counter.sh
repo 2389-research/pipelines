@@ -30,6 +30,15 @@ set -a
 set +a
 # ---end-bootstrap-reference---
 
+# cd to repo top-level so cwd-relative paths (config files, lib
+# helpers, .dev_loop_worktree, executor artifact root) resolve
+# consistently when the operator invoked tracker from a subdirectory.
+# setup_run.sh publishes DEV_LOOP_REPO_ROOT after its own cd;
+# downstream nodes run in fresh shells, so re-anchor here.
+if [ -n "${DEV_LOOP_REPO_ROOT:-}" ] && [ -d "${DEV_LOOP_REPO_ROOT}" ]; then
+  cd "${DEV_LOOP_REPO_ROOT}"
+fi
+
 if [ ! -f "${RUN_DIR}/iter.txt" ] || [ ! -f "${RUN_DIR}/max_iters.txt" ]; then
   printf 'iter-exhausted'
   exit 0
@@ -45,11 +54,37 @@ if [ "${next}" -le "${max_iters}" ]; then
 
   plan_text=$(cat "${RUN_DIR}/plan.json" 2>/dev/null || printf '{}')
   feedback_text=$(cat "${RUN_DIR}/feedback.json" 2>/dev/null || printf '[]')
-  conventions_path="dev_loop/config/repo_conventions.md"
-  if [ -f "${conventions_path}" ]; then
-    conventions_text=$(cat "${conventions_path}")
+  LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
+  if [ -f "${LIB_DIR}/load_conventions.sh" ]; then
+    # shellcheck source=lib/load_conventions.sh
+    # shellcheck disable=SC1091
+    . "${LIB_DIR}/load_conventions.sh"
+    load_conventions
+    # shellcheck disable=SC2153
+    conventions_text="${CONVENTIONS_TEXT}"
   else
-    conventions_text='(no repo_conventions.md found)'
+    # Packed-mode fallback (lib not on disk): inline minimal cascade so
+    # AGENTS.md / .dev_loop/conventions.md still reach the Implementer.
+    _conv_root="${DEV_LOOP_REPO_ROOT:-}"
+    if [ -z "${_conv_root}" ]; then
+      _conv_root=$(git rev-parse --show-toplevel 2>/dev/null || printf '.')
+    fi
+    conventions_text=""
+    for _p in \
+        "${DEV_LOOP_CONVENTIONS_FILE:-}" \
+        "${_conv_root}/.dev_loop/conventions.md" \
+        "${_conv_root}/AGENTS.md" \
+        "${_conv_root}/CLAUDE.md" \
+        "${_conv_root}/CONVENTIONS.md"; do
+      if [ -n "${_p}" ] && [ -r "${_p}" ]; then
+        conventions_text=$(cat "${_p}" 2>/dev/null || true)
+        [ -n "${conventions_text}" ] && break
+      fi
+    done
+    if [ -z "${conventions_text}" ]; then
+      conventions_text='(no conventions found)'
+    fi
+    unset _conv_root _p
   fi
 
   cat <<DATA

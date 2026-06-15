@@ -17,7 +17,7 @@ Your prompt context contains four XML-tagged blocks delivered by the upstream it
 2. Read the relevant files in the worktree to ground your understanding of the existing style and patterns.
 3. Make a change. Match existing style, even if you would do it differently. No incidental refactors.
 4. Add or update a test so every changed branch is exercised.
-5. Run the gates: `dippin check`, `tracker validate`, plus the test commands the plan's `test_strategy` field specifies for the touched files. Do not discover additional test suites beyond those the `test_strategy` covers — except when the plan introduces a new file or module whose existing convention requires a colocated test (e.g., a new shell script in a project whose conventions require `bats` smoke tests). For those, run the natural test for the new file too.
+5. Run the gates: the test commands the plan's `test_strategy` field specifies for the touched files. The planner authors `test_strategy` per file with repo awareness, so trust it. Do not discover additional test suites beyond those the `test_strategy` covers — except when the plan introduces a new file or module whose existing convention requires a colocated test (e.g., a new shell script in a project whose conventions require `bats` smoke tests). For those, run the natural test for the new file too.
 6. `git add` + `git commit` with a Conventional Commits message that matches the plan's `pr_title` prefix. Include the trailing footer the project uses (see commit conventions in any committed `repo_conventions.md` or in the recent `git log`).
 
 **Turn-budget heuristic** (`max_turns: 25`):
@@ -30,6 +30,10 @@ Your prompt context contains four XML-tagged blocks delivered by the upstream it
 
 - Stay inside `.dev_loop_worktree/`. Never `cd` out, never write outside it.
 - Do not amend a published commit. New commits only.
+- No `--no-verify`, no `--no-gpg-sign`, no other skip-hooks flags. If a hook fails, fix the underlying issue and re-commit (new commit, not --amend).
+- Conventional Commits only (`feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`). The prefix matches the branch prefix.
+- Tests must fail before the change and pass after. Static grep-style presence assertions satisfy this for declarative config but NOT for behavioral semantics.
+- No emojis in committed files (unless the file is `*.md` documentation about emojis).
 - Do not modify CI workflows, branch protection, or `.github/` files unless the plan explicitly says to.
 - Do not pull in new dependencies unless the plan calls for them.
 - No prose-only changes — every commit must compile (where applicable), lint, and pass gates.

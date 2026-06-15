@@ -31,10 +31,17 @@ setup_env() {
   unset GH_REPO GH_HOST GH_TOKEN GITHUB_TOKEN \
         GH_CONFIG_DIR XDG_CONFIG_HOME \
         DEV_LOOP_BASE_BRANCH DEV_LOOP_ALLOW_NO_CI DEV_LOOP_RUN_DIR \
+        DEV_LOOP_REPO_ROOT \
         DEV_LOOP_CI_POLL_INTERVAL DEV_LOOP_CI_POLL_TIMEOUT
   WORKDIR="${TMPDIR}/workdir"
   mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
   cd "${WORKDIR}" || return 1
+  # Phase 1: setup_run.sh cd's to git top-level at start. Give WORKDIR a
+  # minimal git identity so the cd succeeds and tests stay self-contained.
+  # Suites that need a not-in-repo scenario explicitly rm -rf .git.
+  if command -v git >/dev/null 2>&1; then
+    ( cd "${WORKDIR}" && git init -q -b main . ) 2>/dev/null || true
+  fi
   mkdir -p "${DIP_ROOT}/runs"
 }
 
@@ -52,6 +59,16 @@ stage_run() {
   RUN_DIR="${DIP_ROOT}/runs/${rid}"
   DIP_ARTIFACT_DIR="${WORKDIR}/.tracker/runs/trk-$$"
   mkdir -p "${RUN_DIR}" "${DIP_ARTIFACT_DIR}"
+  # DEV_LOOP_REPO_ROOT mirrors what setup_run.sh publishes: the git
+  # top-level of the test's current cwd. Tests that cd into a nested
+  # checkout before staging (e.g. test_worktree.bats clones into
+  # WORKDIR/work) need the staged env to anchor on THAT clone, not the
+  # outer WORKDIR. Falls back to WORKDIR when cwd isn't a git repo.
+  _stage_root=""
+  if command -v git >/dev/null 2>&1; then
+    _stage_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  fi
+  [ -n "${_stage_root}" ] || _stage_root="${WORKDIR}"
   cat > "${RUN_DIR}/env" <<EOF
 GH_REPO='test/test'
 BASE_BRANCH='main'
@@ -59,7 +76,9 @@ ALLOW_NO_CI='false'
 DEV_LOOP_RUN_ID='${rid}'
 DEV_LOOP_RUN_DIR='${RUN_DIR}'
 DIP_ARTIFACT_DIR='${DIP_ARTIFACT_DIR}'
+DEV_LOOP_REPO_ROOT='${_stage_root}'
 EOF
+  unset _stage_root
   chmod 600 "${RUN_DIR}/env"
   printf '%s' "${rid}" > "${DIP_ROOT}/.current_rid"
 }

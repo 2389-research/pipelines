@@ -17,14 +17,57 @@
 set -eu
 umask 077
 
+# cd to the git top-level so every subsequent relative path (YAML config,
+# .tracker/runs discovery, .dev_loop_worktree) resolves consistently
+# regardless of which subdirectory the operator invoked tracker from.
+# Pre-Phase-1 the README explicitly warned operators against this footgun;
+# now we close it. Failure path is best-effort: setup_error.txt would land
+# at the cwd-resolved DIP_ROOT, which is still meaningful for the operator.
+_initial_cwd="$(pwd)"
+# If git itself is missing, defer to the prereq check below — it produces
+# a clearer "missing required commands: git" message than "not in a git repo".
+if command -v git >/dev/null 2>&1; then
+  _repo_top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+else
+  _repo_top="${_initial_cwd}"
+fi
+if [ -z "${_repo_top}" ]; then
+  # No state dir resolved yet; write a best-effort error to the default
+  # DIP_ROOT (XDG_CACHE_HOME) so the operator can find it.
+  _early_root="${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}"
+  _early_rid="early-$$"
+  _early_dir="${_early_root}/runs/${_early_rid}"
+  mkdir -p "${_early_dir}" 2>/dev/null || true
+  printf 'not in a git repo (cwd=%s); cd to a checkout before invoking tracker\n' \
+    "${_initial_cwd}" > "${_early_dir}/setup_error.txt" 2>/dev/null || true
+  printf '%s' "${_early_rid}" > "${_early_root}/.current_rid.tmp" 2>/dev/null || true
+  mv -Tf "${_early_root}/.current_rid.tmp" "${_early_root}/.current_rid" 2>/dev/null || true
+  printf 'setup-failed'
+  exit 0
+fi
+cd "${_repo_top}"
+DEV_LOOP_REPO_ROOT="${_repo_top}"
+unset _initial_cwd _repo_top
+
 # Best-effort early peek at YAML.runtime_state_root so DIP_ROOT can honor
 # the 3-layer precedence env > YAML > default (spec §4.6). The full YAML
 # resolver runs later with strict parse-error handling; this peek is
 # silently lenient — if yq isn't installed yet, or the YAML is malformed,
 # the variant probe + full resolver will catch it downstream.
+# YAML config cascade: env override > operator-curated > shipped default.
+# Resolved here once and reused by the early peek + the full resolver below.
+CFG=""
+if [ -n "${DEV_LOOP_CONFIG_PATH:-}" ] && [ -f "${DEV_LOOP_CONFIG_PATH}" ]; then
+  CFG="${DEV_LOOP_CONFIG_PATH}"
+elif [ -f "./.dev_loop/config.yaml" ]; then
+  CFG="./.dev_loop/config.yaml"
+elif [ -f "dev_loop/config/dev_loop.config.yaml" ]; then
+  CFG="dev_loop/config/dev_loop.config.yaml"
+fi
+
 yaml_state_root=""
-if [ -f "dev_loop/config/dev_loop.config.yaml" ] && command -v yq >/dev/null 2>&1; then
-  yaml_state_root=$(yq -r '.runtime_state_root // ""' dev_loop/config/dev_loop.config.yaml 2>/dev/null || true)
+if [ -n "${CFG}" ] && command -v yq >/dev/null 2>&1; then
+  yaml_state_root=$(yq -r '.runtime_state_root // ""' "${CFG}" 2>/dev/null || true)
   # Newline/CR rejection (reject_special is defined later; inline this minimal
   # check). Define NL/CR via the trailing-underscore trick so command
   # substitution doesn't strip them: `$(printf '\n')` would return empty
@@ -87,6 +130,7 @@ write_emergency_env() {
     printf "DEV_LOOP_RUN_ID='%s'\n" "${rid}"
     printf "DEV_LOOP_RUN_DIR='%s'\n" "${run_dir}"
     printf "DIP_ARTIFACT_DIR=''\n"
+    printf "DEV_LOOP_REPO_ROOT='%s'\n" "${DEV_LOOP_REPO_ROOT:-}"
   } > "${run_dir}/env" 2>/dev/null || true
   chmod 600 "${run_dir}/env" 2>/dev/null || true
 }
@@ -293,13 +337,14 @@ fi
 # Allow-list (canonical home for both setup_run's emit and test_helpers.bash's
 # unset list — keep these two in sync):
 #   GH_REPO BASE_BRANCH DEV_LOOP_RUN_ID DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR
-#   ALLOW_NO_CI
+#   ALLOW_NO_CI DEV_LOOP_REPO_ROOT
 # --------------------------------------------------------------------------
-CFG="dev_loop/config/dev_loop.config.yaml"
+# CFG was resolved at the top of the script via the YAML config cascade
+# (env DEV_LOOP_CONFIG_PATH > ./.dev_loop/config.yaml > shipped default).
 yaml_repo=""
 yaml_base_branch=""
 yaml_allow_no_ci=""
-if [ -f "${CFG}" ]; then
+if [ -n "${CFG}" ] && [ -f "${CFG}" ]; then
   if ! yaml_repo=$(yq -r '.repo // ""' "${CFG}" 2>"${run_dir}/setup_error.txt"); then
     emit_failure "yq parse failed; see setup_error.txt"
   fi
@@ -327,13 +372,54 @@ reject_special "${yaml_repo}" repo
 reject_special "${yaml_base_branch}" base_branch
 reject_special "${yaml_allow_no_ci}" allow_no_ci
 
-# Resolve with precedence env > YAML > default. Track source for the log.
-if [ -n "${GH_REPO:-}" ]; then
-  resolved_repo="${GH_REPO}"; src_repo='env'
-elif [ -n "${yaml_repo}" ]; then
-  resolved_repo="${yaml_repo}"; src_repo='yaml'
+# Resolve GH_REPO with precedence env > YAML > git-remote > gh-cli.
+# The resolver lives in scripts/lib/resolve_gh_repo.sh and is sourced
+# directly so its emit_failure path re-enters this script's failure
+# machinery (the resolver references the symbol by name).
+LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
+if [ -f "${LIB_DIR}/resolve_gh_repo.sh" ]; then
+  # shellcheck source=lib/resolve_gh_repo.sh
+  # shellcheck disable=SC1091
+  . "${LIB_DIR}/resolve_gh_repo.sh"
+  resolve_gh_repo "${yaml_repo}"
+  resolved_repo="${RESOLVED_GH_REPO}"
+  src_repo="${RESOLVED_GH_REPO_SOURCE}"
 else
-  emit_failure "no repo configured (set GH_REPO env var or populate ${CFG} with: repo: owner/name)"
+  # Packed-mode fallback: the lib helper isn't on disk (typical of
+  # `tracker ~/dl.dipx` against a target repo with no dev_loop/ tree
+  # checked out). Mirror the lib's precedence inline so the headline
+  # any-cwd UX still works without the helper. Parser is intentionally
+  # minimal — covers the common GitHub forms; operators with exotic
+  # remotes can set GH_REPO env or populate YAML.
+  if [ -n "${GH_REPO:-}" ]; then
+    resolved_repo="${GH_REPO}"; src_repo='env'
+  elif [ -n "${yaml_repo}" ]; then
+    resolved_repo="${yaml_repo}"; src_repo='yaml'
+  else
+    _remote_url=$(git remote get-url origin 2>/dev/null || true)
+    _parsed=""
+    if [ -n "${_remote_url}" ]; then
+      _url=$(printf '%s' "${_remote_url}" | sed 's,\.git$,,')
+      case ${_url} in
+        ssh://*|https://*|http://*)
+          _parsed=$(printf '%s' "${_url}" \
+            | sed -e 's,^[a-z]*://,,' -e 's,^[^/]*/,,') ;;
+        *@*:*)
+          _parsed=$(printf '%s' "${_url}" | sed 's,^[^@]*@[^:]*:,,') ;;
+      esac
+    fi
+    if [ -n "${_parsed}" ]; then
+      resolved_repo="${_parsed}"; src_repo='git-remote'
+    else
+      _gh_out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+      if [ -n "${_gh_out}" ]; then
+        resolved_repo="${_gh_out}"; src_repo='gh-cli'
+      else
+        emit_failure "no repo configured (set GH_REPO env var, populate dev_loop.config.yaml with: repo: owner/name, or run from a git repo with a github.com origin)"
+      fi
+    fi
+    unset _remote_url _url _parsed _gh_out
+  fi
 fi
 
 # Resolve BASE_BRANCH with precedence env > YAML > autodetect via gh.
@@ -382,6 +468,7 @@ reject_special "${resolved_allow_no_ci}" ALLOW_NO_CI
 reject_special "${rid}" DEV_LOOP_RUN_ID
 reject_special "${run_dir}" DEV_LOOP_RUN_DIR
 reject_special "${dip_artifact_dir}" DIP_ARTIFACT_DIR
+reject_special "${DEV_LOOP_REPO_ROOT}" DEV_LOOP_REPO_ROOT
 
 # Build env file atomically: write to env.tmp inside RUN_DIR, then mv -f to
 # env. umask 077 (set at the top of the script) ensures env.tmp inherits
@@ -389,12 +476,13 @@ reject_special "${dip_artifact_dir}" DIP_ARTIFACT_DIR
 # downstream change to umask slips in.
 env_tmp="${run_dir}/env.tmp"
 {
-  emit_env GH_REPO          "${resolved_repo}"
-  emit_env BASE_BRANCH      "${resolved_base}"
-  emit_env ALLOW_NO_CI      "${resolved_allow_no_ci}"
-  emit_env DEV_LOOP_RUN_ID  "${rid}"
-  emit_env DEV_LOOP_RUN_DIR "${run_dir}"
-  emit_env DIP_ARTIFACT_DIR "${dip_artifact_dir}"
+  emit_env GH_REPO            "${resolved_repo}"
+  emit_env BASE_BRANCH        "${resolved_base}"
+  emit_env ALLOW_NO_CI        "${resolved_allow_no_ci}"
+  emit_env DEV_LOOP_RUN_ID    "${rid}"
+  emit_env DEV_LOOP_RUN_DIR   "${run_dir}"
+  emit_env DIP_ARTIFACT_DIR   "${dip_artifact_dir}"
+  emit_env DEV_LOOP_REPO_ROOT "${DEV_LOOP_REPO_ROOT}"
 } > "${env_tmp}"
 chmod 600 "${env_tmp}"
 # Reject a pre-existing symlink at the destination (operator's UID is trusted

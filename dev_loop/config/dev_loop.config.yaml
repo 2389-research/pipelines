@@ -1,4 +1,6 @@
-repo: 2389-research/pipelines
+# repo: 2389-research/pipelines    # commented so auto-detect can win; set
+                                    # via env GH_REPO or uncomment + edit to
+                                    # pin a target repo independent of cwd.
 base_branch: main
 # Per-run state lives under "<runtime_state_root>/dev_loop/runs/<rid>/".
 # Uncomment and set to an absolute path to override the built-in default of

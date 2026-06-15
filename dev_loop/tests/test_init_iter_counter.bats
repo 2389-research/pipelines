@@ -34,6 +34,20 @@ teardown() {
   printf '%s\n' "${output}" | grep -q -- "<repo_conventions>"
 }
 
+@test "packed mode (lib absent): inline cascade still loads AGENTS.md" {
+  # Simulate the packed quickstart: AGENTS.md present at the repo root
+  # but dev_loop/scripts/lib NOT on disk. The Implementer's
+  # repo_conventions block must still contain the AGENTS.md text via
+  # the inline fallback cascade.
+  printf 'PACKED-AGENTS-MARKER\n' > "${WORKDIR}/AGENTS.md"
+  DEV_LOOP_LIB_DIR="${WORKDIR}/no/such/lib"
+  export DEV_LOOP_LIB_DIR
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${lines[0]}" = "iter-init-ok" ]
+  printf '%s\n' "${output}" | grep -q "PACKED-AGENTS-MARKER"
+}
+
 @test "init without rid sentinel exits non-zero" {
   rm "${DIP_ROOT}/.current_rid"
   run sh -c "$(cat "${SCRIPT}")"
