@@ -52,8 +52,10 @@ feedback_text=$(cat "${RUN_DIR}/feedback.json" 2>/dev/null || printf '[]')
 LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
 if [ -f "${LIB_DIR}/load_conventions.sh" ]; then
   # shellcheck source=lib/load_conventions.sh
+  # shellcheck disable=SC1091
   . "${LIB_DIR}/load_conventions.sh"
   load_conventions
+  # shellcheck disable=SC2153
   conventions_text="${CONVENTIONS_TEXT}"
 else
   conventions_text='(no conventions found)'

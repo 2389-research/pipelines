@@ -377,6 +377,7 @@ reject_special "${yaml_allow_no_ci}" allow_no_ci
 LIB_DIR="${DEV_LOOP_LIB_DIR:-dev_loop/scripts/lib}"
 if [ -f "${LIB_DIR}/resolve_gh_repo.sh" ]; then
   # shellcheck source=lib/resolve_gh_repo.sh
+  # shellcheck disable=SC1091
   . "${LIB_DIR}/resolve_gh_repo.sh"
   resolve_gh_repo "${yaml_repo}"
   resolved_repo="${RESOLVED_GH_REPO}"
