@@ -69,6 +69,31 @@ YAML
   printf '%s\n' "${output}" | head -1 | grep -qE '^(filter-ok|filter-empty)$'
 }
 
+@test "packed mode (lib absent): setup_run still autodetects from git remote" {
+  # Simulate the packed quickstart: AGENTS.md present, dev_loop/ tree
+  # NOT checked out (no scripts/lib on disk). The fallback branch must
+  # try `git remote get-url origin` inline rather than failing with
+  # "no repo configured".
+  cd "${WORKDIR}"
+  git init -q
+  git config user.email t@t
+  git config user.name t
+  git remote add origin "https://github.com/packed-org/packed-repo.git"
+  mkdir -p "${WORKDIR}/.tracker/runs/trk-$$"
+  # Point LIB_DIR at a path that doesn't exist so the helper is skipped.
+  DEV_LOOP_LIB_DIR="${WORKDIR}/no/such/lib"
+  # Provide DEV_LOOP_BASE_BRANCH so the test doesn't depend on `gh auth`
+  # for autodetect; we're testing the repo-autodetect path specifically.
+  DEV_LOOP_BASE_BRANCH=main
+  export DEV_LOOP_LIB_DIR DEV_LOOP_BASE_BRANCH
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  rid="$(cat "${DIP_ROOT}/.current_rid")"
+  grep -q "^GH_REPO='packed-org/packed-repo'$" \
+    "${DIP_ROOT}/runs/${rid}/env"
+}
+
 @test "from a subdirectory: cwd is resolved to repo top-level" {
   # Initialize a real git repo in WORKDIR, stage dev_loop/ config under
   # the repo root, then run setup_run.sh from a subdirectory. The YAML

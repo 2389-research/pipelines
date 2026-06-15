@@ -385,13 +385,40 @@ if [ -f "${LIB_DIR}/resolve_gh_repo.sh" ]; then
   resolved_repo="${RESOLVED_GH_REPO}"
   src_repo="${RESOLVED_GH_REPO_SOURCE}"
 else
-  # Packed-mode / lib-not-on-disk fallback: original env > YAML cascade only.
+  # Packed-mode fallback: the lib helper isn't on disk (typical of
+  # `tracker ~/dl.dipx` against a target repo with no dev_loop/ tree
+  # checked out). Mirror the lib's precedence inline so the headline
+  # any-cwd UX still works without the helper. Parser is intentionally
+  # minimal — covers the common GitHub forms; operators with exotic
+  # remotes can set GH_REPO env or populate YAML.
   if [ -n "${GH_REPO:-}" ]; then
     resolved_repo="${GH_REPO}"; src_repo='env'
   elif [ -n "${yaml_repo}" ]; then
     resolved_repo="${yaml_repo}"; src_repo='yaml'
   else
-    emit_failure "no repo configured (set GH_REPO env var, populate dev_loop.config.yaml with: repo: owner/name, or run from a git repo with a github.com origin)"
+    _remote_url=$(git remote get-url origin 2>/dev/null || true)
+    _parsed=""
+    if [ -n "${_remote_url}" ]; then
+      _url=$(printf '%s' "${_remote_url}" | sed 's,\.git$,,')
+      case ${_url} in
+        ssh://*|https://*|http://*)
+          _parsed=$(printf '%s' "${_url}" \
+            | sed -e 's,^[a-z]*://,,' -e 's,^[^/]*/,,') ;;
+        *@*:*)
+          _parsed=$(printf '%s' "${_url}" | sed 's,^[^@]*@[^:]*:,,') ;;
+      esac
+    fi
+    if [ -n "${_parsed}" ]; then
+      resolved_repo="${_parsed}"; src_repo='git-remote'
+    else
+      _gh_out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+      if [ -n "${_gh_out}" ]; then
+        resolved_repo="${_gh_out}"; src_repo='gh-cli'
+      else
+        emit_failure "no repo configured (set GH_REPO env var, populate dev_loop.config.yaml with: repo: owner/name, or run from a git repo with a github.com origin)"
+      fi
+    fi
+    unset _remote_url _url _parsed _gh_out
   fi
 fi
 

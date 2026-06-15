@@ -63,7 +63,28 @@ if [ "${next}" -le "${max_iters}" ]; then
     # shellcheck disable=SC2153
     conventions_text="${CONVENTIONS_TEXT}"
   else
-    conventions_text='(no conventions found)'
+    # Packed-mode fallback (lib not on disk): inline minimal cascade so
+    # AGENTS.md / .dev_loop/conventions.md still reach the Implementer.
+    _conv_root="${DEV_LOOP_REPO_ROOT:-}"
+    if [ -z "${_conv_root}" ]; then
+      _conv_root=$(git rev-parse --show-toplevel 2>/dev/null || printf '.')
+    fi
+    conventions_text=""
+    for _p in \
+        "${DEV_LOOP_CONVENTIONS_FILE:-}" \
+        "${_conv_root}/.dev_loop/conventions.md" \
+        "${_conv_root}/AGENTS.md" \
+        "${_conv_root}/CLAUDE.md" \
+        "${_conv_root}/CONVENTIONS.md"; do
+      if [ -n "${_p}" ] && [ -r "${_p}" ]; then
+        conventions_text=$(cat "${_p}" 2>/dev/null || true)
+        [ -n "${conventions_text}" ] && break
+      fi
+    done
+    if [ -z "${conventions_text}" ]; then
+      conventions_text='(no conventions found)'
+    fi
+    unset _conv_root _p
   fi
 
   cat <<DATA
