@@ -82,19 +82,23 @@ elif [ -f "${RUN_DIR}/persist_selected_error.txt" ] \
   # site. When present, surface it as persist-failed-<class> so post-mortems
   # can distinguish failure modes at the marker layer. Same explicit enum as
   # the error-file chain above — synthesis is excluded for the same reason.
-  # Older runs / partial cleanup may lack the sidecar; fall back to bare
-  # persist-failed in that case. First match wins (mirrors the error-file
-  # order; in practice only one persist node fires per run).
+  #
+  # Pair each fail_class file with the SAME flavor's error file that triggered
+  # this branch — never just glob fail_class.txt sidecars. Partial cleanup or
+  # operator edits could leave a stale persist_X_fail_class.txt from an earlier
+  # run alongside a fresh persist_Y_error.txt, and a blind first-match scan
+  # would label outcome with class X (wrong flavor). Walk the same flavor list
+  # as the elif condition, first error.txt match wins, read that flavor's
+  # sidecar. Older runs / partial cleanup may lack the sidecar — fall back to
+  # bare persist-failed.
   fail_class=""
-  for fcf in "${RUN_DIR}/persist_selected_fail_class.txt" \
-             "${RUN_DIR}/persist_plan_fail_class.txt" \
-             "${RUN_DIR}/persist_pragmatism_fail_class.txt" \
-             "${RUN_DIR}/persist_yagni_fail_class.txt" \
-             "${RUN_DIR}/persist_testability_fail_class.txt" \
-             "${RUN_DIR}/persist_holistic_fail_class.txt" \
-             "${RUN_DIR}/persist_blocker_fail_class.txt"; do
-    if [ -s "${fcf}" ]; then
-      fail_class=$(cat "${fcf}" 2>/dev/null || true)
+  for flavor in selected plan pragmatism yagni testability holistic blocker; do
+    err="${RUN_DIR}/persist_${flavor}_error.txt"
+    if [ -f "${err}" ]; then
+      fcf="${RUN_DIR}/persist_${flavor}_fail_class.txt"
+      if [ -s "${fcf}" ]; then
+        fail_class=$(cat "${fcf}" 2>/dev/null || true)
+      fi
       break
     fi
   done

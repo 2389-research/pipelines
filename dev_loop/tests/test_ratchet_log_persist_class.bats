@@ -70,6 +70,27 @@ teardown() {
   grep -qE 'persist-failed($|[^-])' "${RATCHET}"
 }
 
+@test "stale fail_class from another flavor does not misclassify (copilot review)" {
+  # If partial cleanup or operator edits leave a stale persist_X_fail_class.txt
+  # from an earlier run alongside a fresh persist_Y_error.txt, the outcome must
+  # reflect the flavor that actually tripped THIS run's branch — never the
+  # leftover flavor's class. ratchet must pair the fail_class to the same
+  # flavor's error.txt, not glob fail_class files blindly.
+  printf '42' > "${RUN_DIR}/selected_issue_number.txt"
+  # Stale class from a previous selected run (no error.txt for selected).
+  printf 'validation' > "${RUN_DIR}/persist_selected_fail_class.txt"
+  # Fresh error from blocker — no fresh fail_class sidecar (e.g. crash before
+  # the write, or the sidecar got lost to partial cleanup).
+  printf 'response missing\n' > "${RUN_DIR}/persist_blocker_error.txt"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  RATCHET="${DIP_ROOT}/ratchet.tsv"
+  # Must NOT pick up the stale `validation` class from selected.
+  ! grep -q "persist-failed-validation" "${RATCHET}"
+  # Falls back to bare persist-failed because blocker has no fresh sidecar.
+  grep -qE 'persist-failed($|[^-])' "${RATCHET}"
+}
+
 @test "synthesis fail_class sidecar alone does NOT misclassify as persist-failed" {
   # persist_synthesis.sh emits synthesized-abandoned, NOT persist-failed.
   # If only the synthesis sidecar exists, ratchet must NOT swallow the run
