@@ -28,7 +28,7 @@ The tracker-pin call is a known soft spot: a forward pin breaks operators stuck 
 
 ### Enforcement
 
-Every PR that touches the SemVer surface (`*.dip` files, `dev_loop/`) must update `CHANGELOG.md` under `[Unreleased]`. The `changelog check` workflow enforces this; apply the `skip-changelog` label for PRs that legitimately don't need an entry (e.g., CI-only, infra-only, README-only).
+Every PR that touches the SemVer surface (`*.dip` files, operator-facing `dev_loop/` configuration — `dev_loop/scripts/lib/` internals are excluded) must update `CHANGELOG.md` under `[Unreleased]`. The `changelog check` workflow enforces this by diffing the `[Unreleased]` section between base and HEAD, so touching the file for an unrelated reason (e.g., an old release note) does not satisfy the gate. Apply the `skip-changelog` label only for SemVer-surface PRs that legitimately need no entry (e.g., refactor-only / formatting / comment-only). PRs that only touch CI, docs, or internal helpers don't trigger the gate at all.
 
 ## Releases
 

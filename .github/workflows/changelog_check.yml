@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Enforce CHANGELOG update for behavioral PRs
+      - name: Enforce CHANGELOG [Unreleased] update for behavioral PRs
         env:
           BASE_REF: ${{ github.base_ref }}
           SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
@@ -26,31 +26,53 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' ${files:-(none)}
 
-          behavioral=$(printf '%s\n' "$files" | grep -E '(\.dip$|^dev_loop/)' || true)
-          changelog=$(printf '%s\n' "$files" | grep -Fx 'CHANGELOG.md' || true)
+          # SemVer surface per CONTRIBUTING.md#versioning: *.dip + dev_loop/
+          # operator-facing configuration. Helper internals under
+          # dev_loop/scripts/lib/ are explicitly excluded.
+          behavioral=$(printf '%s\n' "$files" \
+            | grep -E '(\.dip$|^dev_loop/)' \
+            | grep -vE '^dev_loop/scripts/lib/' || true)
 
           if [ -z "$behavioral" ]; then
-            echo "::notice::No behavioral files (*.dip, dev_loop/) touched — CHANGELOG update not required."
+            echo "::notice::No SemVer-surface files (*.dip, dev_loop/ excluding scripts/lib/) touched — CHANGELOG update not required."
             exit 0
           fi
 
-          echo "Behavioral files touched:"
+          echo "SemVer-surface files touched:"
           printf '  %s\n' $behavioral
 
-          if [ -n "$changelog" ]; then
-            echo "::notice::CHANGELOG.md updated alongside behavioral changes."
+          # File-presence is necessary but not sufficient: a PR editing an old
+          # release note or compare-link footer would otherwise pass without
+          # adding the required [Unreleased] entry. Diff the [Unreleased]
+          # section between base and HEAD instead.
+          extract_unreleased() {
+            awk '
+              /^## \[Unreleased\]/ { f = 1; next }
+              /^## \[/             { f = 0 }
+              f                    { print }
+            '
+          }
+          if git show "origin/${BASE_REF}:CHANGELOG.md" >/tmp/changelog.base 2>/dev/null; then
+            base_unreleased=$(extract_unreleased </tmp/changelog.base)
+          else
+            base_unreleased=""
+          fi
+          head_unreleased=$(extract_unreleased <CHANGELOG.md)
+
+          if [ "$base_unreleased" != "$head_unreleased" ]; then
+            echo "::notice::CHANGELOG.md [Unreleased] section updated alongside SemVer-surface changes."
             exit 0
           fi
 
           if [ "${SKIP_LABEL}" = "true" ]; then
-            echo "::notice::skip-changelog label present — CHANGELOG update waived."
+            echo "::notice::skip-changelog label present — CHANGELOG [Unreleased] update waived."
             exit 0
           fi
 
           {
-            echo "::error::Behavioral files changed without a CHANGELOG.md update."
+            echo "::error::SemVer-surface files changed without an entry under [Unreleased] in CHANGELOG.md."
             echo "Touched the SemVer surface (see CONTRIBUTING.md#versioning):"
             printf '  %s\n' $behavioral
-            echo "Either add an entry under [Unreleased] in CHANGELOG.md, or apply the 'skip-changelog' label if this PR legitimately needs no entry (CI/docs/infra-only)."
+            echo "Either add an entry under [Unreleased] in CHANGELOG.md, or apply the 'skip-changelog' label if this SemVer-surface PR legitimately needs no entry (e.g., refactor-only / formatting / comment-only)."
           } >&2
           exit 1
