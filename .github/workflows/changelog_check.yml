@@ -20,8 +20,7 @@ jobs:
           SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
         run: |
           set -eu
-          git fetch --no-tags --depth=0 origin "${BASE_REF}" >/dev/null 2>&1 || \
-            git fetch --no-tags origin "${BASE_REF}"
+          git fetch --no-tags --quiet origin "${BASE_REF}"
           files=$(git diff --name-only "origin/${BASE_REF}...HEAD")
           echo "Changed files:"
           printf '  %s\n' ${files:-(none)}
