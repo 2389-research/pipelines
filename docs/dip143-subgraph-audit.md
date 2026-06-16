@@ -10,11 +10,13 @@ enumerated regardless.
 
 ## TL;DR
 
-All 15 subgraph call sites are SOUND. No parent sets `tool_access:` at the
+Zero LEAKs across all 15 subgraph call sites — 7 SOUND and 8
+INTENTIONAL_OPEN per the summary table. No parent sets `tool_access:` at the
 subgraph node, so DIP143's "restrictive parent intent silently dropped at the
-child boundary" scenario does not exist in this repo. Containment is delegated
-to each child workflow, which constrains its entry/exit (and lets worker agents
-keep tool access by design). No `.dip` code changes are required.
+child boundary" scenario does not exist in this repo. SOUND sites are those
+where the child locks its entry/exit; INTENTIONAL_OPEN sites are those whose
+child is an implementer/worker that needs tools by design. No `.dip` code
+changes are required.
 
 Two adjacent observations are out of scope but worth filing separately:
 
