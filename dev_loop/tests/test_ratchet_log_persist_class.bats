@@ -70,7 +70,7 @@ teardown() {
   grep -qE 'persist-failed($|[^-])' "${RATCHET}"
 }
 
-@test "stale fail_class from another flavor does not misclassify (copilot review)" {
+@test "stale fail_class from another flavor does not leak into outcome" {
   # If partial cleanup or operator edits leave a stale persist_X_fail_class.txt
   # from an earlier run alongside a fresh persist_Y_error.txt, the outcome must
   # reflect the flavor that actually tripped THIS run's branch — never the
