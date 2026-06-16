@@ -173,6 +173,7 @@ workflow IterExtract
 
   tool count_remaining_chunks
     label: "Count Remaining Chunks"
+    marker_grep: '^(all-extracted|remaining-.+)$'
     timeout: 10s
     command:
       set -euo pipefail
@@ -194,6 +195,7 @@ workflow IterExtract
 
   tool pick_next_wave
     label: "Pick Next Wave"
+    marker_grep: '^(no-more|wave-.+)$'
     timeout: 10s
     command:
       set -euo pipefail
@@ -677,17 +679,15 @@ workflow IterExtract
 
       Emit STATUS: success when all gaps are addressed (either patched or marked informational). Emit STATUS: fail when you cannot extract from a section that clearly contains requirements.
 
-  # DIP102 ack: pick_next_wave / count_remaining_chunks / validate_extraction
-  # each have conditional outgoing edges whose conditions are exhaustive over
-  # what the upstream tool emits (wave-NNN / no-more / outcome=fail for
-  # pick_next_wave; remaining-N / all-extracted for count_remaining_chunks;
-  # validation-pass / validation-fail-* for validate_extraction). Adding
-  # unconditional fallbacks would target the same node as a conditional
-  # (the same-target trap per tracker/CLAUDE.md).
-  #
-  # DIP101 ack: extract_wave, par_omission_dispatch, aggregate_results,
-  # commit_extraction are reached only along intended conditional branches —
-  # the conditional reachability IS the routing logic.
+  # DIP101/DIP102 design note: the iterative-extract loop relies on
+  # conditional routing throughout — wave selection loops back via
+  # conditionals, validation gates branch on success/fail markers, and
+  # convergence requires the conditional cascade. Per tracker/CLAUDE.md,
+  # adding unconditional fallbacks would create same-target traps. The
+  # three count / pick / validate tools in this workflow
+  # (count_remaining_chunks, pick_next_wave, validate_extraction) declare
+  # `marker_grep:` so the linter (dippin-lang#42) treats their typed
+  # routing as exhaustive and suppresses DIP101/DIP102 across the cascade.
   agent aggregate_results
     label: "Aggregate Results"
     model: claude-sonnet-4-6
@@ -752,6 +752,7 @@ workflow IterExtract
 
   tool validate_extraction
     label: "Validate Extraction"
+    marker_grep: '^(validation-pass|validation-fail-.+)$'
     timeout: 15s
     command:
       set -euo pipefail
