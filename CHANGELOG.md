@@ -17,6 +17,13 @@ convention and where to find the long-form GitHub release notes.
 
 ### Added
 
+- `dev_loop/scripts/persist_*.sh` write a `persist_<flavor>_fail_class.txt`
+  sidecar (`unset | stale | response-missing | jq-parse | validation`)
+  before each `exit 1` site; `ratchet_log.sh` surfaces the class as
+  `persist-failed-<class>` so RatchetLog and downstream dashboarding can
+  distinguish failure modes at the marker layer
+  ([#97](https://github.com/2389-research/pipelines/pull/97),
+  closes [#90](https://github.com/2389-research/pipelines/issues/90)).
 - `.github/PULL_REQUEST_TEMPLATE.md` and `.github/workflows/changelog_check.yml`
   enforce `[Unreleased]` updates on PRs that touch the SemVer surface
   (`*.dip`, operator-facing `dev_loop/`), with a `skip-changelog` label
