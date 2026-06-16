@@ -97,6 +97,74 @@ EOF
   ! grep -q "no tracker run dir" "${RUN_DIR}/persist_plan_error.txt"
 }
 
+@test "unset DIP_ARTIFACT_DIR writes fail_class=unset (#90)" {
+  # Issue #90: a structured fail_class sidecar lets ratchet_log.sh emit
+  # persist-failed-<class> instead of the bare persist-failed bucket.
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_plan_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_plan_fail_class.txt")" = "unset" ]
+}
+
+@test "stale DIP_ARTIFACT_DIR writes fail_class=stale (#90)" {
+  stale="${WORKDIR}/.tracker/runs/trk-was-here-yesterday"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+DIP_ARTIFACT_DIR='${stale}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_plan_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_plan_fail_class.txt")" = "stale" ]
+}
+
+@test "missing response writes fail_class=response-missing (#90)" {
+  rm -f "${DIP_ARTIFACT_DIR}/PlanMinimalPRs/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_plan_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_plan_fail_class.txt")" = "response-missing" ]
+}
+
+@test "jq parse failure writes fail_class=jq-parse (#90)" {
+  printf 'not json at all\n' > "${DIP_ARTIFACT_DIR}/PlanMinimalPRs/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_plan_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_plan_fail_class.txt")" = "jq-parse" ]
+}
+
+@test "validation failure (null branch_name) writes fail_class=validation (#90)" {
+  cat > "${DIP_ARTIFACT_DIR}/PlanMinimalPRs/response.md" <<'JSON'
+{
+  "issue_number": 42,
+  "branch_name": null,
+  "pr_title": "fix: thing",
+  "pr_body": "Body of the PR with enough content to pass the length check.",
+  "changes": [{"path": "x", "action": "modify", "summary": "did a thing"}],
+  "risk_class": "low",
+  "test_strategy": "ran the gates and the bats suite locally"
+}
+JSON
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_plan_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_plan_fail_class.txt")" = "validation" ]
+}
+
 @test "stale DIP_ARTIFACT_DIR surfaces the value in the breadcrumb (#73)" {
   # Issue #73: when DIP_ARTIFACT_DIR is set but points at a non-existent dir
   # (cleanup race, operator tampering, mv/rm under us), the breadcrumb must

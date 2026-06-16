@@ -61,11 +61,13 @@ trap 'rc=$?
 if [ -z "${DIP_ARTIFACT_DIR:-}" ]; then
   printf 'DIP_ARTIFACT_DIR is unset; was setup_run executed?\n' \
     > "${RUN_DIR}/persist_selected_error.txt"
+  printf 'unset' > "${RUN_DIR}/persist_selected_fail_class.txt"
   exit 1
 elif [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
   printf 'DIP_ARTIFACT_DIR=%s is not a directory; was the artifact dir cleaned up under us?\n' \
     "${DIP_ARTIFACT_DIR}" \
     > "${RUN_DIR}/persist_selected_error.txt"
+  printf 'stale' > "${RUN_DIR}/persist_selected_fail_class.txt"
   exit 1
 fi
 dip_artifact_dir="${DIP_ARTIFACT_DIR%/}/"
@@ -76,10 +78,12 @@ target="${RUN_DIR}/selected_issue.json"
 if [ ! -f "${response}" ]; then
   printf 'response missing at %s\n' "${response}" \
     > "${RUN_DIR}/persist_selected_error.txt"
+  printf 'response-missing' > "${RUN_DIR}/persist_selected_fail_class.txt"
   exit 1
 fi
 
 if ! jq '.' < "${response}" > "${target}.tmp" 2> "${RUN_DIR}/persist_selected_error.txt"; then
+  printf 'jq-parse' > "${RUN_DIR}/persist_selected_fail_class.txt"
   exit 1
 fi
 mv "${target}.tmp" "${target}"
@@ -93,6 +97,7 @@ if ! jq -e '.issue_number | type == "number" and . > 0 and . == floor' "${target
      >/dev/null 2>"${RUN_DIR}/persist_selected_error.txt"; then
   printf 'selected_issue.issue_number is missing, non-numeric, or non-positive\n' \
     >> "${RUN_DIR}/persist_selected_error.txt"
+  printf 'validation' > "${RUN_DIR}/persist_selected_fail_class.txt"
   exit 1
 fi
 jq -r '.issue_number' "${target}" > "${RUN_DIR}/selected_issue_number.txt"
