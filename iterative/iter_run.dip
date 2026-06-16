@@ -189,6 +189,7 @@ workflow IterRun
 
   tool consistency_audit
     label: "Consistency Audit"
+    marker_grep: '^(consistent|inconsistent-.+)$'
     timeout: 15s
     command:
       set -euo pipefail
@@ -258,6 +259,7 @@ workflow IterRun
 
   tool count_consistency_rounds
     label: "Count Consistency Rounds"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -401,6 +403,7 @@ workflow IterRun
 
   tool count_run_scope_rounds
     label: "Count Run Scope Review Rounds"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -541,6 +544,7 @@ workflow IterRun
 
   tool read_next_task
     label: "Read Next Task"
+    marker_grep: '^(all-tasks-done|task-.+)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -864,6 +868,7 @@ workflow IterRun
 
   tool count_spec_fix_rounds
     label: "Count Spec Fix Rounds"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -1035,6 +1040,7 @@ workflow IterRun
 
   tool count_quality_fix_rounds
     label: "Count Quality Fix Rounds"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -1167,6 +1173,7 @@ workflow IterRun
 
   tool run_sentinel_scenarios
     label: "Run Sentinel Scenarios"
+    marker_grep: '^(sentinel-pass|sentinel-regression-.+)$'
     timeout: 300s
     command:
       set -euo pipefail
@@ -1232,6 +1239,7 @@ workflow IterRun
 
   tool resolve_todos
     label: "Resolve TODOs"
+    marker_grep: '^(todos-clean|todos-unresolved-.+)$'
     timeout: 30s
     command:
       set -euo pipefail
@@ -1311,6 +1319,7 @@ workflow IterRun
 
   tool count_wrap_up_rounds
     label: "Count Wrap-Up Validation Rounds"
+    marker_grep: '^(cap-reached|continue)$'
     timeout: 5s
     command:
       set -euo pipefail
@@ -1328,6 +1337,7 @@ workflow IterRun
 
   tool validate_wrap_up
     label: "Validate Wrap-Up"
+    marker_grep: '^(wrapup-valid|wrapup-invalid-.+)$'
     timeout: 10s
     command:
       set -euo pipefail
