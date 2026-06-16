@@ -107,6 +107,10 @@ convention and where to find the long-form GitHub release notes.
   four validate/count nodes
   ([#64](https://github.com/2389-research/pipelines/pull/64),
   closes [#29](https://github.com/2389-research/pipelines/issues/29)).
+- `iter_extract` DIP101/DIP102 lint warnings cleared via `marker_grep` on the
+  three count/pick/validate tool nodes
+  ([#94](https://github.com/2389-research/pipelines/pull/94),
+  closes [#28](https://github.com/2389-research/pipelines/issues/28)).
 - `dev_loop` `persist_*.sh` no longer write the legacy `.tracker/runs`
   breadcrumb path
   ([#65](https://github.com/2389-research/pipelines/pull/65),
