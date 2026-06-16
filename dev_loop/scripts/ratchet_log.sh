@@ -76,7 +76,33 @@ elif [ -f "${RUN_DIR}/persist_selected_error.txt" ] \
   # workflow routes it via the synth_abandoned cleanup edge with that intent.
   # Lumping it into outcome=persist-failed would mismatch the marker the
   # workflow actually emitted.
-  outcome='persist-failed'
+  #
+  # Issue #90: persist_*.sh now also write a structured fail_class sidecar
+  # (unset | stale | response-missing | jq-parse | validation) at each exit-1
+  # site. When present, surface it as persist-failed-<class> so post-mortems
+  # can distinguish failure modes at the marker layer. Same explicit enum as
+  # the error-file chain above — synthesis is excluded for the same reason.
+  # Older runs / partial cleanup may lack the sidecar; fall back to bare
+  # persist-failed in that case. First match wins (mirrors the error-file
+  # order; in practice only one persist node fires per run).
+  fail_class=""
+  for fcf in "${RUN_DIR}/persist_selected_fail_class.txt" \
+             "${RUN_DIR}/persist_plan_fail_class.txt" \
+             "${RUN_DIR}/persist_pragmatism_fail_class.txt" \
+             "${RUN_DIR}/persist_yagni_fail_class.txt" \
+             "${RUN_DIR}/persist_testability_fail_class.txt" \
+             "${RUN_DIR}/persist_holistic_fail_class.txt" \
+             "${RUN_DIR}/persist_blocker_fail_class.txt"; do
+    if [ -s "${fcf}" ]; then
+      fail_class=$(cat "${fcf}" 2>/dev/null || true)
+      break
+    fi
+  done
+  if [ -n "${fail_class}" ]; then
+    outcome="persist-failed-${fail_class}"
+  else
+    outcome='persist-failed'
+  fi
 fi
 
 notes=""
