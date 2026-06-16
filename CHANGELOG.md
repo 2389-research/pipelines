@@ -2,8 +2,10 @@
 
 All notable changes to `2389-research/pipelines` are recorded here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+as defined in [`CONTRIBUTING.md#versioning`](./CONTRIBUTING.md#versioning) (the
+policy applies from `v0.2.0` forward; `v0.1.x` is not retroactively re-versioned).
 A custom `### Deferred` section type is used where in-flight scope was
 reclassified rather than landed (see v0.1.3); other sections follow the KAC
 1.1.0 enumeration.
