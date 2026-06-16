@@ -15,6 +15,16 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- `.github/PULL_REQUEST_TEMPLATE.md` and `.github/workflows/changelog_check.yml`
+  enforce `[Unreleased]` updates on PRs that touch the SemVer surface
+  (`*.dip`, operator-facing `dev_loop/`), with a `skip-changelog` label
+  escape hatch for SemVer-surface PRs that legitimately need no entry
+  (refactor-only / formatting / comment-only)
+  ([#96](https://github.com/2389-research/pipelines/pull/96),
+  closes [#68](https://github.com/2389-research/pipelines/issues/68)).
+
 ## [0.2.0] - 2026-06-16
 
 First minor release under the `CONTRIBUTING.md#versioning` SemVer policy

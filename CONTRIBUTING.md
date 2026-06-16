@@ -26,6 +26,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 The tracker-pin call is a known soft spot: a forward pin breaks operators stuck on the old tracker, which is exactly the consumer signal SemVer is meant to carry. Treating it as MAJOR would force a `1.0` discussion the project is not ready for, so it stays MINOR with a prominent changelog callout.
 
+### Enforcement
+
+Every PR that touches the SemVer surface (`*.dip` files, operator-facing `dev_loop/` configuration — `dev_loop/scripts/lib/` internals are excluded) must update `CHANGELOG.md` under `[Unreleased]`. The `changelog check` workflow enforces this by diffing the `[Unreleased]` section between base and HEAD, so touching the file for an unrelated reason (e.g., an old release note) does not satisfy the gate. Apply the `skip-changelog` label only for SemVer-surface PRs that legitimately need no entry (e.g., refactor-only / formatting / comment-only). PRs that only touch CI, docs, or internal helpers don't trigger the gate at all.
+
 ## Releases
 
 Tagged releases live on the [GitHub releases page](https://github.com/2389-research/pipelines/releases) with full forensic notes (rationale, scope counts, process notes, known gaps). The short, scannable summary lives in [`CHANGELOG.md`](./CHANGELOG.md) at repo root, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
