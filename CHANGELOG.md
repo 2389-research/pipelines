@@ -15,6 +15,13 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-16
+
+First minor release under the `CONTRIBUTING.md#versioning` SemVer policy
+(introduced by [#92](https://github.com/2389-research/pipelines/pull/92)).
+Bundles the `dev_loop/` subsystem launch, `writable_paths` fs-jail adoption,
+three `iter_*` lint cleanups, and the DIP143 subgraph audit.
+
 ### Added
 
 - `writable_paths` 5-site adoption across `sprint_exec*` agents, with the
@@ -284,7 +291,8 @@ v0.29–v0.30 era quality work.
   [dippin-lang#42](https://github.com/2389-research/dippin-lang/issues/42)'s
   suppression ([#16](https://github.com/2389-research/pipelines/pull/16)).
 
-[Unreleased]: https://github.com/2389-research/pipelines/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/2389-research/pipelines/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/2389-research/pipelines/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/2389-research/pipelines/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/2389-research/pipelines/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/2389-research/pipelines/compare/v0.1.0...v0.1.1
