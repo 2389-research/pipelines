@@ -2,8 +2,10 @@
 
 All notable changes to `2389-research/pipelines` are recorded here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+as defined in [`CONTRIBUTING.md#versioning`](./CONTRIBUTING.md#versioning) (the
+policy applies from `v0.2.0` forward; `v0.1.x` is not retroactively re-versioned).
 A custom `### Deferred` section type is used where in-flight scope was
 reclassified rather than landed (see v0.1.3); other sections follow the KAC
 1.1.0 enumeration.
@@ -40,12 +42,48 @@ convention and where to find the long-form GitHub release notes.
 - `docs/research/` reasoning-tier study + cross-module-test panel notes for
   the `spec→sprints` upstream
   ([#59](https://github.com/2389-research/pipelines/pull/59)).
+- `dev_loop` executor-compatibility contract + porting guide for running the
+  workflow under a second executor
+  ([#63](https://github.com/2389-research/pipelines/pull/63),
+  closes [#45](https://github.com/2389-research/pipelines/issues/45)).
+- `track_b` runtime smoke harness for the `tool_access: none` sweep
+  ([#66](https://github.com/2389-research/pipelines/pull/66),
+  closes [#19](https://github.com/2389-research/pipelines/issues/19)).
+- `track_b` repo-wide vs `dev_loop/`-scoped test-tree convention documented
+  ([#77](https://github.com/2389-research/pipelines/pull/77),
+  closes [#75](https://github.com/2389-research/pipelines/issues/75)).
+- `dev_loop` porting-contract smoke — bi-directional literal lock + stub
+  second-executor run-through + failure-path neutrality assertions
+  ([#81](https://github.com/2389-research/pipelines/pull/81),
+  closes [#71](https://github.com/2389-research/pipelines/issues/71)).
+- `dev_loop` Phase 1 any-cwd UX: auto-detect `GH_REPO` from `git remote`,
+  `dev_loop/` YAML cascade with operator-curated overrides, and a conventions
+  cascade so the Implementer prompt is portable across repos
+  ([#91](https://github.com/2389-research/pipelines/pull/91),
+  closes [#47](https://github.com/2389-research/pipelines/issues/47)).
 
 ### Changed
 
 - `dev_loop` setup_run sub-pipeline centralizes dip-executor coupling
   (refactor surface for [#44](https://github.com/2389-research/pipelines/issues/44))
   ([#60](https://github.com/2389-research/pipelines/pull/60)).
+- `dev_loop` README `## Anti-patterns` split into imperative don'ts plus a
+  descriptive `## Invariants` section
+  ([#78](https://github.com/2389-research/pipelines/pull/78),
+  closes [#72](https://github.com/2389-research/pipelines/issues/72) and
+  [#74](https://github.com/2389-research/pipelines/issues/74)).
+- `dev_loop` universal repo conventions (Conventional Commits, hook discipline,
+  etc.) moved from `repo_conventions.md` into `prompts/squad/task.md` and
+  `prompts/implementer.system.md`; the shipped `repo_conventions.md` shrinks to
+  a short operator-facing template
+  ([#91](https://github.com/2389-research/pipelines/pull/91)).
+- `dev_loop` Implementer prompt no longer hardcodes
+  `dippin check && tracker validate && bats`; defers to the plan's
+  `test_strategy` field
+  ([#91](https://github.com/2389-research/pipelines/pull/91)).
+- `dev_loop` YAML `repo:` field commented out by default — auto-detection via
+  `git remote` now wins unless the operator opts back in
+  ([#91](https://github.com/2389-research/pipelines/pull/91)).
 
 ### Fixed
 
@@ -60,6 +98,18 @@ convention and where to find the long-form GitHub release notes.
   via untrusted GitHub content
   ([#58](https://github.com/2389-research/pipelines/pull/58),
   closes [#50](https://github.com/2389-research/pipelines/issues/50)).
+- `iter_scope` DIP101/DIP102 lint warnings cleared via `marker_grep` on the
+  four validate/count nodes
+  ([#64](https://github.com/2389-research/pipelines/pull/64),
+  closes [#29](https://github.com/2389-research/pipelines/issues/29)).
+- `dev_loop` `persist_*.sh` no longer write the legacy `.tracker/runs`
+  breadcrumb path
+  ([#65](https://github.com/2389-research/pipelines/pull/65),
+  closes [#61](https://github.com/2389-research/pipelines/issues/61)).
+- `dev_loop` persist breadcrumb now distinguishes `unset` vs `stale`
+  `DIP_ARTIFACT_DIR` arms instead of conflating them
+  ([#80](https://github.com/2389-research/pipelines/pull/80),
+  closes [#73](https://github.com/2389-research/pipelines/issues/73)).
 
 ## [0.1.3] - 2026-05-27
 
