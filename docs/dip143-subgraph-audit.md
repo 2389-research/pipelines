@@ -200,8 +200,10 @@ Baseline `dippin doctor` per audited file (pre-audit):
 ### `sprint/sprint_runner.dip:47` — `execute_sprint` invoking `sprint_exec.dip`
 
 - **Parent tool_access at call site**: no
-- **Child agents independently constrained**: partial — only the failure agent
-  (`sprint_exec.dip:347`) is `tool_access: none`. The implementer
+- **Child agents independently constrained**: partial — only the
+  `ReviewAnalysis` verdict-synthesis agent at line 341
+  (`tool_access: none` at line 347) is locked down; there is no
+  `Start`/`Exit` constraint at the boundary. The implementer
   (`ImplementSprint`), reviewers, and critique agents are open by design.
 - **Stakes**: implementer writes code; this is the bug-4 vector class but at
   the older TSV-ledger runner.
@@ -215,7 +217,8 @@ Baseline `dippin doctor` per audited file (pre-audit):
 
 - **Parent tool_access at call site**: no
 - **Child agents independently constrained**: yes — `Start`/`Exit`
-  `tool_access: none` (lines 15/23), plus the failure agent at line 553.
+  `tool_access: none` (lines 15/23), plus the `ReviewAnalysis` verdict-
+  synthesis agent at line 548 (`tool_access: none` at line 553).
   Implementer/reviewer/critique agents are open by design.
 - **Stakes**: YAML-ledger executor; implementer writes code.
 - **Verdict**: INTENTIONAL_OPEN
@@ -226,9 +229,10 @@ Baseline `dippin doctor` per audited file (pre-audit):
 
 - **Parent tool_access at call site**: no
 - **Child agents independently constrained**: yes — `Start`/`Exit`
-  `tool_access: none` (lines 15/23); failure agent at line 875. Worker stack
-  (`PlanManager`, `ImplementSprint`, `RecoveryManager`, reviewers, critique
-  agents) intentionally open.
+  `tool_access: none` (lines 15/23), plus the `ReviewAnalysis` verdict-
+  synthesis agent at line 870 (`tool_access: none` at line 875). Worker
+  stack (`PlanManager`, `ImplementSprint`, `RecoveryManager`, reviewers,
+  critique agents) intentionally open.
 - **Stakes**: highest in the repo — this is the v2 sprint executor that ships
   real implementation. See the highest-stakes paragraph below.
 - **Verdict**: INTENTIONAL_OPEN
