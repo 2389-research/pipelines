@@ -61,6 +61,11 @@ convention and where to find the long-form GitHub release notes.
   cascade so the Implementer prompt is portable across repos
   ([#91](https://github.com/2389-research/pipelines/pull/91),
   closes [#47](https://github.com/2389-research/pipelines/issues/47)).
+- `docs/dip143-subgraph-audit.md` — per-site audit of the 15 subgraph
+  `tool_access` boundaries flagged by dippin v0.36.0's DIP143 advisory lint,
+  with verdicts (SOUND / LEAK / INTENTIONAL_OPEN), rationale, and a
+  highest-stakes paragraph on the `sprint_runner_yaml_v2.dip` boundaries
+  ([#34](https://github.com/2389-research/pipelines/issues/34)).
 
 ### Changed
 
