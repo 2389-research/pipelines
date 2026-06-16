@@ -141,6 +141,54 @@ EOF
   ! grep -qF "DIP_ARTIFACT_DIR is unset" "${RUN_DIR}/persist_pragmatism_error.txt"
 }
 
+@test "unset DIP_ARTIFACT_DIR writes fail_class=unset (#90)" {
+  stage_response SquadPragmatism verdict_pass.json
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_pragmatism_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_pragmatism_fail_class.txt")" = "unset" ]
+}
+
+@test "stale DIP_ARTIFACT_DIR writes fail_class=stale (#90)" {
+  stage_response SquadPragmatism verdict_pass.json
+  stale="${WORKDIR}/.tracker/runs/trk-was-here-yesterday"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+DIP_ARTIFACT_DIR='${stale}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_pragmatism_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_pragmatism_fail_class.txt")" = "stale" ]
+}
+
+@test "missing response writes fail_class=response-missing (#90)" {
+  mkdir -p "${DIP_ARTIFACT_DIR}/SquadPragmatism"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_pragmatism_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_pragmatism_fail_class.txt")" = "response-missing" ]
+}
+
+@test "jq parse failure writes fail_class=jq-parse (#90)" {
+  mkdir -p "${DIP_ARTIFACT_DIR}/SquadPragmatism"
+  printf 'not valid json {{{\n' > "${DIP_ARTIFACT_DIR}/SquadPragmatism/response.md"
+  run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_pragmatism_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_pragmatism_fail_class.txt")" = "jq-parse" ]
+}
+
 @test "persist embeds <verdict_*> XML block for the Synthesizer" {
   stage_response SquadPragmatism verdict_block.json
   run sh -c "$(cat "${SCRIPTS}/persist_pragmatism_verdict.sh")"

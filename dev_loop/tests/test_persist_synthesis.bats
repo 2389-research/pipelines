@@ -62,6 +62,51 @@ stage() {
   [ "${output}" = "synthesized-abandoned" ]
 }
 
+@test "unset DIP_ARTIFACT_DIR writes fail_class=unset (#90)" {
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_synthesis_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_synthesis_fail_class.txt")" = "unset" ]
+}
+
+@test "stale DIP_ARTIFACT_DIR writes fail_class=stale (#90)" {
+  stale="${WORKDIR}/.tracker/runs/trk-was-here-yesterday"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+DIP_ARTIFACT_DIR='${stale}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_synthesis_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_synthesis_fail_class.txt")" = "stale" ]
+}
+
+@test "missing response writes fail_class=response-missing (#90)" {
+  rm -f "${DIP_ARTIFACT_DIR}/SquadSynthesizer/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_synthesis_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_synthesis_fail_class.txt")" = "response-missing" ]
+}
+
+@test "jq parse failure writes fail_class=jq-parse (#90)" {
+  printf 'not valid json {{{\n' > "${DIP_ARTIFACT_DIR}/SquadSynthesizer/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_synthesis_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_synthesis_fail_class.txt")" = "jq-parse" ]
+}
+
 @test "missing rid sentinel exits non-zero" {
   # The canonical bootstrap fails closed before the trap installs that would
   # otherwise emit synthesized-abandoned. Missing rid means setup_run did not

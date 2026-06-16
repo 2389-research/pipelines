@@ -46,6 +46,71 @@ teardown() {
   [ -s "${RUN_DIR}/persist_selected_error.txt" ]
 }
 
+@test "unset DIP_ARTIFACT_DIR writes fail_class=unset (#90)" {
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_selected_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_selected_fail_class.txt")" = "unset" ]
+}
+
+@test "stale DIP_ARTIFACT_DIR writes fail_class=stale (#90)" {
+  stale="${WORKDIR}/.tracker/runs/trk-was-here-yesterday"
+  cat > "${RUN_DIR}/env" <<EOF
+GH_REPO='test/test'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='${rid}'
+DEV_LOOP_RUN_DIR='${RUN_DIR}'
+DIP_ARTIFACT_DIR='${stale}'
+EOF
+  chmod 600 "${RUN_DIR}/env"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_selected_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_selected_fail_class.txt")" = "stale" ]
+}
+
+@test "missing response writes fail_class=response-missing (#90)" {
+  rm -f "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_selected_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_selected_fail_class.txt")" = "response-missing" ]
+}
+
+@test "jq parse failure writes fail_class=jq-parse (#90)" {
+  printf 'not valid json {{{\n' > "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md"
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_selected_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_selected_fail_class.txt")" = "jq-parse" ]
+}
+
+@test "validation failure (non-numeric issue_number) writes fail_class=validation (#90)" {
+  cat > "${DIP_ARTIFACT_DIR}/SelectNextIssue/response.md" <<'JSON'
+{
+  "issue_number": "not-a-number",
+  "title": "x",
+  "url": "https://example.test/x",
+  "author": "anon",
+  "created_at": "2026-01-01T00:00:00Z",
+  "selection_rationale": "long enough rationale string"
+}
+JSON
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ -f "${RUN_DIR}/persist_selected_fail_class.txt" ]
+  [ "$(cat "${RUN_DIR}/persist_selected_fail_class.txt")" = "validation" ]
+}
+
 @test "non-numeric issue_number emits persist-failed" {
   # The validator in persist_selected_issue rejects non-positive-integer
   # issue_number so create_worktree + push_and_open_pr never interpolate the
