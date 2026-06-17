@@ -529,27 +529,41 @@ YAML
   # falls back to the built-in default just like when the sentinel is
   # absent entirely.
   mkdir -p "${XDG_CACHE_HOME}/dip/dev_loop"
-  # Plant a symlink at the sentinel path.
-  ln -sfn /nonexistent/attacker-path "${XDG_CACHE_HOME}/dip/dev_loop/.last_dip_root"
-  # Stage a run under the built-in default so the fallback resolves cleanly.
-  unset DEV_LOOP_STATE_ROOT
-  default_root="${XDG_CACHE_HOME}/dip/dev_loop"
-  mkdir -p "${default_root}/runs/test-rid"
-  printf 'test-rid' > "${default_root}/.current_rid"
-  cat > "${default_root}/runs/test-rid/env" <<EOF
-GH_REPO='test/test'
+  # Plant an attacker-controlled DIP_ROOT containing a valid .current_rid
+  # + env. If the symlink at the sentinel path were followed, bootstrap
+  # would adopt this root and cleanup_worktree.sh would emit
+  # `worktree-cleaned` (because everything resolves under the attacker
+  # root). The -L guard must reject the symlink so bootstrap falls back
+  # to the built-in default, where we deliberately leave .current_rid
+  # ABSENT — that forces the documented `no .current_rid` failure mode
+  # and proves the symlink was not followed.
+  attacker_root="${TMPDIR}/attacker-root"
+  mkdir -p "${attacker_root}/runs/attacker-rid"
+  printf 'attacker-rid' > "${attacker_root}/.current_rid"
+  cat > "${attacker_root}/runs/attacker-rid/env" <<EOF
+GH_REPO='attacker/attacker'
 BASE_BRANCH='main'
 ALLOW_NO_CI='false'
-DEV_LOOP_RUN_ID='test-rid'
-DEV_LOOP_RUN_DIR='${default_root}/runs/test-rid'
-DIP_ARTIFACT_DIR='${WORKDIR}/.tracker/runs/trk-$$'
+DEV_LOOP_RUN_ID='attacker-rid'
+DEV_LOOP_RUN_DIR='${attacker_root}/runs/attacker-rid'
+DIP_ARTIFACT_DIR='${WORKDIR}/.tracker/runs/trk-attacker-$$'
 DEV_LOOP_REPO_ROOT='${WORKDIR}'
 EOF
-  chmod 600 "${default_root}/runs/test-rid/env"
+  chmod 600 "${attacker_root}/runs/attacker-rid/env"
+  # Symlink target is a real file whose content is the attacker root.
+  printf '%s' "${attacker_root}" > "${TMPDIR}/sentinel-target"
+  ln -sfn "${TMPDIR}/sentinel-target" "${XDG_CACHE_HOME}/dip/dev_loop/.last_dip_root"
+  unset DEV_LOOP_STATE_ROOT
+  # Built-in default exists but has NO .current_rid. Refusal -> fall back
+  # to default -> exit 1 with `no .current_rid`. Follow -> attacker root
+  # -> exit 0 `worktree-cleaned`. The two outcomes are unambiguous.
+  default_root="${XDG_CACHE_HOME}/dip/dev_loop"
+  mkdir -p "${default_root}"
+  [ ! -e "${default_root}/.current_rid" ] || rm -f "${default_root}/.current_rid"
   CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
   run sh -c "$(cat "${CLEANUP}")"
-  [ "${status}" -eq 0 ]
-  [ "${output}" = "worktree-cleaned" ]
+  [ "${status}" -ne 0 ]
+  printf '%s\n' "${output}" | grep -qF 'no .current_rid'
 }
 
 @test "env DEV_LOOP_STATE_ROOT beats YAML runtime_state_root" {

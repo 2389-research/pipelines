@@ -21,7 +21,8 @@ set -eu
 STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
 if [ -n "${DEV_LOOP_STATE_ROOT:-}" ]; then
   DIP_ROOT="${DEV_LOOP_STATE_ROOT}"
-elif [ ! -L "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
+elif [ -f "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
+     && [ ! -L "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
      && [ -r "${STATE_ROOT_DEFAULT}/.last_dip_root" ]; then
   DIP_ROOT=$(cat "${STATE_ROOT_DEFAULT}/.last_dip_root" 2>/dev/null || true)
   [ -n "${DIP_ROOT}" ] && [ -d "${DIP_ROOT}" ] || DIP_ROOT="${STATE_ROOT_DEFAULT}"

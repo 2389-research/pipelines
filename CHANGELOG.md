@@ -29,11 +29,15 @@ convention and where to find the long-form GitHub release notes.
   `XDG_CACHE_HOME` no longer turns an otherwise-OK YAML-redirected run into
   `setup-failed` — and the bootstrap refuses to follow a symlinked sentinel
   (parity with the per-run env-file hardening), falling back to the default
-  when the sentinel points at a now-missing directory. Closes the silent-halt
-  where setting YAML-only `runtime_state_root` caused downstream nodes to
-  look under the default path while `.current_rid` landed under the YAML
-  path ([#100](https://github.com/2389-research/pipelines/pull/100),
-  closes [#53](https://github.com/2389-research/pipelines/issues/53)).
+  when the sentinel points at a now-missing directory. The bootstrap also
+  requires the sentinel to be a regular file (`-f`) before reading, so a
+  tampered FIFO/device at the sentinel path cannot block downstream
+  `cat`; the byte-identical preamble is propagated across all 22 reader
+  scripts and `tests/bootstrap.ref`. Closes the silent-halt where setting
+  YAML-only `runtime_state_root` caused downstream nodes to look under
+  the default path while `.current_rid` landed under the YAML path
+  ([#100](https://github.com/2389-research/pipelines/pull/100), closes
+  [#53](https://github.com/2389-research/pipelines/issues/53)).
 
 ### Added
 
