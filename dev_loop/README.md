@@ -269,9 +269,9 @@ what NOT to let drift.
   `<filtered_issues>` block, so an attacker-crafted `title` (or any other
   string) containing `</filtered_issues>` cannot break out of the block and
   inject prose into the agent's prompt. The disk-side
-  `filtered_issues.json` and `$RUN_DIR/issues.json` both keep the raw,
-  unescaped form for forensics; only the stdout channel — the one that
-  lands in agent prompts — is sanitized.
+  `$RUN_DIR/filtered_issues.json` and `$RUN_DIR/issues.json` both keep the
+  raw, unescaped form for forensics; only the stdout channel — the one
+  that lands in agent prompts — is sanitized.
 - **Single-source dip-executor discovery.** The dip executor's on-disk
   convention is discovered in exactly one place: the `--- begin
   dip-executor discovery (PORTING NOTE) ---` block in
