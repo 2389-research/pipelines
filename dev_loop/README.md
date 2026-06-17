@@ -250,6 +250,48 @@ If the target executor has no resume mechanism, an operator hitting the
 run's worktree before re-invoking — a porting target without resume
 support is usable, just less forgiving of process kills.
 
+## Invariants
+
+Descriptive truths the workflow upholds — both authoritative-source rules
+and runtime guarantees. Where to look when something seems duplicated, and
+what NOT to let drift.
+
+- **`pre_filter_issues` runtime sanitization.** `pre_filter_issues` applies
+  two defenses before feeding the filtered list into `SelectNextIssue` via
+  `${ctx.last_response}`. (1) It drops the GitHub issue `body` field
+  entirely — body is the only unbounded free-form contributor field in the
+  gh CLI shape, and SelectNextIssue's ranking rules don't need it. The
+  surviving payload is `number`, `title`, `url`, `labels`, `author`,
+  `createdAt` (of which `number`, `url`, and `createdAt` are structural
+  GitHub-issued metadata; `title`, `labels`, and `author` are
+  contributor-influenced). (2) It XML-escapes `<`, `>`, and `&` in every
+  string value of the emitted JSON payload before embedding it in the
+  `<filtered_issues>` block, so an attacker-crafted `title` (or any other
+  string) containing `</filtered_issues>` cannot break out of the block and
+  inject prose into the agent's prompt. The disk-side
+  `$RUN_DIR/filtered_issues.json` and `$RUN_DIR/issues.json` both keep the
+  raw, unescaped form for forensics; only the stdout channel — the one
+  that lands in agent prompts — is sanitized.
+- **Single-source dip-executor discovery.** The dip executor's on-disk
+  convention is discovered in exactly one place: the `--- begin
+  dip-executor discovery (PORTING NOTE) ---` block in
+  `dev_loop/scripts/setup_run.sh`. Everywhere else in `dev_loop/` reads
+  `${DIP_ARTIFACT_DIR}` from the per-run env file. Persist scripts speak
+  in env-var terms only — their error breadcrumb names `DIP_ARTIFACT_DIR`
+  (the actionable knob), never the executor's on-disk layout (#61). To
+  port dev_loop to a different dip executor, replace the discovery block
+  + the prereq tool list above it — no other LocalGates / persist logic
+  needs to change. See [Executor compatibility](#executor-compatibility)
+  above for the full contract + porting recipe. (Note: the Implementer
+  agent's pre-push gates at `dev_loop/prompts/implementer.system.md`
+  still include `tracker validate` by design — that's a separate scope
+  from LocalGates and outside the executor-decoupling refactor.)
+- **Self-review refusal.** dev_loop refuses to review its own dev_loop
+  changes via the issue filter's `excluded_title_regex`.
+- **Implementer test-authoring scope.** The Implementer writes only the
+  tests the plan calls for. Broader test-coverage gaps are out of scope
+  for a single dev_loop iteration; file them as issues.
+
 ## Failure modes
 
 - **`setup-failed`** → cleanup, exit. See `runs/<rid>/setup_error.txt`.
@@ -285,36 +327,36 @@ accessible, base-branch autodetect failure, no repo configured.
 
 ## What dev_loop does NOT do
 
-- **Run from a repo subdirectory.** Paths are resolved from `$(pwd)`
-  (`.tracker/runs`, `dev_loop/config/*`, `.dev_loop_worktree`); running from
-  anywhere except the target repo root silently writes state to the wrong
-  place. cd to the repo root first.
-- **Run on macOS or Windows.** `writable_paths` enforcement uses Linux
-  Landlock + openat2; tracker refuses to start otherwise.
+Scope-of-tool declarations — features explicitly outside dev_loop's
+remit. (See [Anti-patterns](#anti-patterns) below for operational don'ts
+and [Invariants](#invariants) above for behavioral guarantees.)
+
 - **Branch-protection bypass.** If your branch protection requires reviews,
   status checks, or signed commits, dev_loop respects them — and may emit
   `merge-blocked` if it can't merge.
 - **CODEOWNERS approval.** dev_loop doesn't impersonate code owners; if your
   repo requires owner reviews, expect `merge-blocked`.
-- **Self-review.** dev_loop refuses to review its own dev_loop changes via
-  the issue filter's `excluded_title_regex`.
-- **Test authoring beyond plan.** The Implementer writes only the tests the
-  plan calls for. If your repo needs broader test coverage, file it as an
-  issue.
 - **Secret rotation, token management.** Out of scope.
 
 ## Anti-patterns
 
-Imperative don'ts for operators and reviewers. (Descriptive truths the
-workflow upholds live under [Invariants](#invariants) below.)
+Imperative don'ts for operators and reviewers. (See
+[Invariants](#invariants) above for descriptive rules.)
 
+- **Don't run from a repo subdirectory.** Paths are resolved from `$(pwd)`
+  (`.tracker/runs`, `dev_loop/config/*`, `.dev_loop_worktree`); running from
+  anywhere except the target repo root silently writes state to the wrong
+  place. cd to the repo root first.
+- **Don't run on macOS or Windows.** `writable_paths` enforcement uses Linux
+  Landlock + openat2; tracker refuses to start otherwise.
 - **Don't commit secrets to `dev_loop/config/repo_conventions.md`.** The
   file content flows into agent prompts via `ctx.last_response` — anything
   there ends up in the LLM context for every PR review.
-- **Don't accept PRs that edit `repo_conventions.md` without review.**
+- **Don't accept PRs that edit `dev_loop/config/repo_conventions.md` without review.**
   `${ctx.last_response}` is a known cross-node prompt-injection vector; a
   malicious convention edit could steer the Implementer or reviewers. This is
-  a separate threat from accidental secret-leak (which is item 1).
+  a separate threat from accidental secret-leak (see the "Don't commit
+  secrets to `dev_loop/config/repo_conventions.md`" bullet above).
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.
@@ -324,42 +366,6 @@ workflow upholds live under [Invariants](#invariants) below.)
 - **Don't set `DEV_LOOP_STATE_ROOT` to a network mount.** Atomic rename
   guarantees (used for `.current_rid` and `env` publication) are weaker on
   NFS/SMB; lost writes can corrupt the run.
-
-## Invariants
-
-Descriptive single-source-of-truth rules the workflow upholds. Where to
-look when something seems duplicated, and what NOT to let drift.
-
-- **`pre_filter_issues` applies two defenses before feeding the filtered list
-  into `SelectNextIssue` via `${ctx.last_response}`.** (1) It drops the
-  GitHub issue `body` field entirely — body is the only unbounded
-  free-form contributor field in the gh CLI shape, and SelectNextIssue's
-  ranking rules don't need it. The surviving payload is `number`, `title`,
-  `url`, `labels`, `author`, `createdAt` (of which `number`, `url`, and
-  `createdAt` are structural GitHub-issued metadata; `title`, `labels`,
-  and `author` are contributor-influenced). (2) It XML-escapes `<`, `>`,
-  and `&` in every string value of the emitted JSON payload before
-  embedding it in the `<filtered_issues>` block, so an attacker-crafted
-  `title` (or any other string) containing `</filtered_issues>` cannot
-  break out of the block and inject prose into the agent's prompt. The
-  disk-side `filtered_issues.json` and `$RUN_DIR/issues.json` both keep
-  the raw, unescaped form for forensics; only the stdout channel — the
-  one that lands in agent prompts — is sanitized.
-- **The dip executor's on-disk convention is discovered in exactly one
-  place: the `--- begin dip-executor discovery (PORTING NOTE) ---` block
-  in `dev_loop/scripts/setup_run.sh`.** Everywhere else in `dev_loop/`
-  reads `${DIP_ARTIFACT_DIR}` from the per-run env file. Persist scripts
-  speak in env-var terms only — their error breadcrumb names
-  `DIP_ARTIFACT_DIR` (the actionable knob), never the executor's
-  on-disk layout (#61). To port dev_loop to a different dip executor,
-  replace the discovery block + the prereq tool list above it — no
-  other LocalGates / persist logic needs to change. See
-  [Executor compatibility](#executor-compatibility) above for the full
-  contract + porting recipe. (Note: the
-  Implementer agent's pre-push gates at
-  `dev_loop/prompts/implementer.system.md` still include `tracker
-  validate` by design — that's a separate scope from LocalGates and
-  outside the executor-decoupling refactor.)
 
 ## Layout
 
@@ -397,6 +403,11 @@ dev_loop/
   dev_loop_smoke.yml               — gates the dev_loop tree
 ```
 
+Repo-wide test suites live at `<repo>/tests/<name>/`, peer to `dev_loop/`;
+see `dev_loop/config/repo_conventions.md` "Testing policy". The
+`dev_loop/tests/` block above is dev_loop-specific (per-script bats +
+marker/model-ID checks) and is distinct from that repo-wide suite root.
+
 Per-run state (under `${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop}/runs/<rid>/`):
 
 - `env` — per-run env file sourced by all scripts (atomic-rename published).
@@ -404,6 +415,11 @@ Per-run state (under `${DEV_LOOP_STATE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/d
   attribution (`env` / `yaml` / `default` / `autodetect`) for every knob.
 
 ## For workflow authors
+
+Author-facing notes on the `.dip` shape — dippin parser/coverage
+constraints and the choices they forced. Read these before editing
+`dev_loop.dip` or porting the workflow shape. (Operator-facing
+guarantees live under [Invariants](#invariants) above.)
 
 - `fan_in SquadJoin` sources match the `SquadFanout` parallel target set
   (the 5 reviewer agents). Each `Persist*Verdict` runs on the explicit edge
