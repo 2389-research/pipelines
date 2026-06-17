@@ -15,6 +15,20 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- `iterative/iter_run.dip` restored to grade A (90/100, was F/30) — closed DIP115
+  goal-gate gaps on `decompose_tasks` and `wrap_up` (added `retry_target` +
+  `fallback_target`), removed the DIP125 `:` false-positive, and replaced 5
+  dynamic-suffix tool markers (`task-%s`, `todos-unresolved-%d`,
+  `sentinel-regression-%s`, `inconsistent-no-stories-found-for-%s`,
+  `inconsistent-%s`) with fixed routing tokens (`task-found`,
+  `todos-unresolved`, `sentinel-regression`, `inconsistent-no-stories`,
+  `inconsistent-stories`) plus sidecar files in `.ai/iter-run-temp/` carrying
+  the dynamic detail. Operator-visible marker rename
+  ([#101](https://github.com/2389-research/pipelines/pull/101),
+  closes [#27](https://github.com/2389-research/pipelines/issues/27)).
+
 ### Fixed
 
 - `dev_loop/`: unify YAML `runtime_state_root` resolution end-to-end.

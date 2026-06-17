@@ -139,7 +139,7 @@ workflow IterRun
       total=0
       passed=0
       # Truncate baseline from prior iteration before writing fresh results
-      : > .ai/iter-sentinel-baseline.txt
+      printf '' > .ai/iter-sentinel-baseline.txt
       # Extract sentinel rows from corpus table (pipe delimited, leading | handled)
       while IFS='|' read -r _leading col1 col2 col3 col4 col5 rest; do
         # Strip leading/trailing whitespace only (preserve internal spaces in commands)
@@ -189,10 +189,15 @@ workflow IterRun
 
   tool consistency_audit
     label: "Consistency Audit"
-    marker_grep: '^(consistent|inconsistent-.+)$'
+    marker_grep: '^(consistent|inconsistent-no-iteration-id|inconsistent-no-roadmap|inconsistent-no-stories|inconsistent-stories)$'
     timeout: 15s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      # Clear sidecars up front so filesystem state always matches the emitted marker;
+      # branches that need detail will rewrite below.
+      rm -f .ai/iter-run-temp/.consistency_no_stories_iter \
+            .ai/iter-run-temp/.consistency_story_issues
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
         printf 'inconsistent-no-iteration-id'
@@ -209,7 +214,9 @@ workflow IterRun
         in_section { match($0, /STORY-[0-9]+/); if (RSTART > 0) print substr($0, RSTART, RLENGTH) }
       ' docs/iterations/roadmap.md | sort -u)
       if [ -z "$story_ids" ]; then
-        printf 'inconsistent-no-stories-found-for-%s' "$iter_id"
+        # Persist iteration id for context; emit a fixed marker.
+        printf '%s' "$iter_id" > .ai/iter-run-temp/.consistency_no_stories_iter
+        printf 'inconsistent-no-stories'
         exit 0
       fi
       issues=""
@@ -227,7 +234,9 @@ workflow IterRun
         fi
       done
       if [ -n "$issues" ]; then
-        printf 'inconsistent-%s' "$issues"
+        # Persist issue list for context; emit a fixed marker.
+        printf '%s' "$issues" > .ai/iter-run-temp/.consistency_story_issues
+        printf 'inconsistent-stories'
       else
         printf 'consistent'
       fi
@@ -236,12 +245,14 @@ workflow IterRun
     label: "Reconcile State"
     auto_status: true
     prompt:
-      The consistency audit found inconsistencies in the iteration state. Read the consistency_audit output to understand what was found.
+      The consistency audit found inconsistencies in the iteration state. The audit emits a fixed marker (e.g. `inconsistent-no-stories`, `inconsistent-stories`) and writes actionable detail to sidecar files under `.ai/iter-run-temp/`.
 
       Read:
       1. .ai/iter-current-iteration.txt for the current iteration ID
       2. docs/iterations/roadmap.md for the current iteration section
       3. docs/iterations/requirements/ for the story files mentioned in the inconsistency report
+      4. .ai/iter-run-temp/.consistency_story_issues — present when the marker is `inconsistent-stories`; whitespace-separated list of `STORY-NNNN-<reason>` tokens (e.g. `STORY-0042-not-in-requirements`, `STORY-0043-already-done:ITER-0007`)
+      5. .ai/iter-run-temp/.consistency_no_stories_iter — present when the marker is `inconsistent-no-stories`; the iteration id whose section had no STORY- entries
 
       Fix the inconsistencies:
       - If a STORY-NNNN referenced in roadmap.md does not exist in requirements/, add a minimal placeholder story card to the appropriate epic file so the pipeline can proceed. Note this as a gap to be filled during implementation.
@@ -449,6 +460,8 @@ workflow IterRun
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    retry_target: adjust_run_scope
+    fallback_target: Exit
     goal_gate: true
     auto_status: true
     prompt:
@@ -544,19 +557,25 @@ workflow IterRun
 
   tool read_next_task
     label: "Read Next Task"
-    marker_grep: '^(all-tasks-done|task-.+)$'
+    marker_grep: '^(all-tasks-done|task-found)$'
     timeout: 5s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
       if [ ! -f .ai/iter-run-temp/task_status.txt ]; then
+        rm -f .ai/iter-run-temp/.next_task_id
         printf 'all-tasks-done'
         exit 0
       fi
       next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1 || true)
       if [ -z "$next" ]; then
+        # Clear stale sidecar so consumers never read a previous run's task id.
+        rm -f .ai/iter-run-temp/.next_task_id
         printf 'all-tasks-done'
       else
-        printf 'task-%s' "$next"
+        # Persist the selected task id; emit a fixed marker so coverage is exhaustive.
+        printf '%s' "$next" > .ai/iter-run-temp/.next_task_id
+        printf 'task-found'
       fi
 
   tool mark_task_in_progress
@@ -1173,11 +1192,13 @@ workflow IterRun
 
   tool run_sentinel_scenarios
     label: "Run Sentinel Scenarios"
-    marker_grep: '^(sentinel-pass|sentinel-regression-.+)$'
+    marker_grep: '^(sentinel-pass|sentinel-regression)$'
     timeout: 300s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
       if [ ! -f docs/iterations/behavior-corpus.md ]; then
+        rm -f .ai/iter-run-temp/.sentinel_regressions
         printf 'sentinel-pass'
         exit 0
       fi
@@ -1204,8 +1225,13 @@ workflow IterRun
         fi
       done < docs/iterations/behavior-corpus.md
       if [ -n "$regressions" ]; then
-        printf 'sentinel-regression-%s' "$(printf '%s' "$regressions" | tr ' ' ',')"
+        # Persist regression list for downstream context; emit a fixed marker.
+        # create_fix_task reads this sidecar to cite failing scenario IDs.
+        printf '%s' "${regressions# }" | tr ' ' ',' > .ai/iter-run-temp/.sentinel_regressions
+        printf 'sentinel-regression'
       else
+        # Clear sidecar so a clean marker never coexists with stale regression IDs.
+        rm -f .ai/iter-run-temp/.sentinel_regressions
         printf 'sentinel-pass'
       fi
 
@@ -1217,11 +1243,21 @@ workflow IterRun
     prompt:
       A regression or unresolved TODO was detected after the task loop completed.
 
-      Read the pipeline context to understand what regression or issue was found.
+      Read the pipeline context AND the following sidecar files (the upstream tool
+      persists exact details there so this prompt can stay short):
+
+      - .ai/iter-run-temp/.sentinel_regressions — comma-separated failing scenario IDs
+        (present only when ctx.tool_stdout == sentinel-regression; absent otherwise)
+      - .ai/iter-run-temp/.unresolved_todos_count — count of unresolved TODOs for
+        the current iteration (present only when ctx.tool_stdout == todos-unresolved;
+        absent otherwise)
+      - .ai/iter-current-iteration.txt — current iteration ID (for TODO grep pattern)
 
       Create a new fix task in .ai/iter-run-temp/tasks.md:
-      - If a sentinel regression was found: create a task to diagnose and fix the regression, citing the failing scenario IDs
-      - If unresolved TODOs exist for this iteration: create a task to resolve each TODO
+      - If .sentinel_regressions exists: create a task to diagnose and fix the
+        regression, citing the exact failing scenario IDs from that sidecar
+      - If .unresolved_todos_count exists: create a task to resolve every TODO
+        matching `TODO(<iter_id>)` in the tracked source tree
 
       Append the new task to .ai/iter-run-temp/tasks.md in the standard TASK-NN format.
 
@@ -1239,12 +1275,14 @@ workflow IterRun
 
   tool resolve_todos
     label: "Resolve TODOs"
-    marker_grep: '^(todos-clean|todos-unresolved-.+)$'
+    marker_grep: '^(todos-clean|todos-unresolved)$'
     timeout: 30s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
+        rm -f .ai/iter-run-temp/.unresolved_todos_count
         printf 'todos-clean'
         exit 0
       fi
@@ -1252,9 +1290,14 @@ workflow IterRun
       # regardless of --include, which times out under large tracker scratch trees.
       count=$(git grep -h "TODO(${iter_id})" -- '*.py' '*.ts' '*.go' '*.rs' '*.swift' '*.js' 2>/dev/null | wc -l | tr -d ' ') || count=0
       if [ "$count" -eq 0 ]; then
+        # Clear sidecar so a clean marker never coexists with a stale count.
+        rm -f .ai/iter-run-temp/.unresolved_todos_count
         printf 'todos-clean'
       else
-        printf 'todos-unresolved-%d' "$count"
+        # Persist count for downstream context; emit a fixed marker.
+        # create_fix_task reads this sidecar to know how many TODOs are unresolved.
+        printf '%d' "$count" > .ai/iter-run-temp/.unresolved_todos_count
+        printf 'todos-unresolved'
       fi
 
   # ── PHASE: Wrap-Up ───────────────────────────────────────────────────────────
@@ -1263,6 +1306,8 @@ workflow IterRun
     label: "Wrap Up"
     model: claude-sonnet-4-6
     provider: anthropic
+    retry_target: wrap_up
+    fallback_target: Exit
     goal_gate: true
     auto_status: true
     prompt:
@@ -1337,7 +1382,7 @@ workflow IterRun
 
   tool validate_wrap_up
     label: "Validate Wrap-Up"
-    marker_grep: '^(wrapup-valid|wrapup-invalid-.+)$'
+    marker_grep: '^(wrapup-valid|wrapup-invalid-no-iteration-id|wrapup-invalid-iteration-not-marked-done|wrapup-invalid-no-iteration-log|wrapup-invalid-iteration-not-in-log)$'
     timeout: 10s
     command:
       set -euo pipefail
@@ -1394,8 +1439,11 @@ workflow IterRun
     migrate_roadmap_heading -> init_consistency_counter when ctx.outcome = fail   label: tool_failed_tolerated
     init_consistency_counter -> consistency_audit
     init_consistency_counter -> consistency_audit  when ctx.outcome = fail   label: tolerated
-    consistency_audit -> init_run_scope_counter    when ctx.tool_stdout = consistent            label: consistent
-    consistency_audit -> reconcile_state           when ctx.tool_stdout startswith inconsistent  label: inconsistent
+    consistency_audit -> init_run_scope_counter    when ctx.tool_stdout = consistent                  label: consistent
+    consistency_audit -> reconcile_state           when ctx.tool_stdout = inconsistent-no-iteration-id  label: inconsistent_no_iter
+    consistency_audit -> reconcile_state           when ctx.tool_stdout = inconsistent-no-roadmap     label: inconsistent_no_roadmap
+    consistency_audit -> reconcile_state           when ctx.tool_stdout = inconsistent-no-stories     label: inconsistent_no_stories
+    consistency_audit -> reconcile_state           when ctx.tool_stdout = inconsistent-stories        label: inconsistent_stories
     init_run_scope_counter -> par_run_scope_dispatch
     init_run_scope_counter -> par_run_scope_dispatch when ctx.outcome = fail   label: tolerated
     reconcile_state -> count_consistency_rounds    when ctx.outcome = success   label: reconciled
@@ -1428,7 +1476,7 @@ workflow IterRun
     update_progress -> read_next_task
 
     # Per-task loop
-    read_next_task -> mark_task_in_progress        when ctx.tool_stdout startswith task-        label: has_task
+    read_next_task -> mark_task_in_progress        when ctx.tool_stdout = task-found            label: has_task
     read_next_task -> run_impacted_scenarios        when ctx.tool_stdout = all-tasks-done       label: tasks_done
     mark_task_in_progress -> implement_task
     mark_task_in_progress -> mark_task_failure     when ctx.outcome = fail      label: tracking_broken
@@ -1490,11 +1538,11 @@ workflow IterRun
     run_impacted_scenarios -> run_sentinel_scenarios
     run_impacted_scenarios -> run_sentinel_scenarios when ctx.outcome = fail    label: tolerated
     run_sentinel_scenarios -> resolve_todos        when ctx.tool_stdout = sentinel-pass         label: sentinel_ok
-    run_sentinel_scenarios -> create_fix_task      when ctx.tool_stdout startswith sentinel-regression  label: regression
+    run_sentinel_scenarios -> create_fix_task      when ctx.tool_stdout = sentinel-regression   label: regression
     create_fix_task -> read_next_task              restart: true
     create_fix_task -> read_next_task              when ctx.outcome = fail      restart: true   label: tolerated
     resolve_todos -> init_wrap_up_counter          when ctx.tool_stdout = todos-clean           label: todos_ok
-    resolve_todos -> create_fix_task               when ctx.tool_stdout startswith todos-unresolved  label: todos_remain
+    resolve_todos -> create_fix_task               when ctx.tool_stdout = todos-unresolved      label: todos_remain
     resolve_todos -> init_wrap_up_counter          when ctx.outcome = fail                      label: tool_failed_tolerated
     init_wrap_up_counter -> wrap_up
     init_wrap_up_counter -> wrap_up                when ctx.outcome = fail               label: tolerated
@@ -1502,8 +1550,11 @@ workflow IterRun
     # Wrap-up
     wrap_up -> validate_wrap_up                    when ctx.outcome = success   label: wrapped
     wrap_up -> Exit                                when ctx.outcome = fail      label: wrapup_failed
-    validate_wrap_up -> commit_iteration           when ctx.tool_stdout = wrapup-valid          label: valid
-    validate_wrap_up -> count_wrap_up_rounds       when ctx.tool_stdout startswith wrapup-invalid  label: invalid
+    validate_wrap_up -> commit_iteration           when ctx.tool_stdout = wrapup-valid                              label: valid
+    validate_wrap_up -> count_wrap_up_rounds       when ctx.tool_stdout = wrapup-invalid-no-iteration-id            label: invalid_no_iter
+    validate_wrap_up -> count_wrap_up_rounds       when ctx.tool_stdout = wrapup-invalid-iteration-not-marked-done  label: invalid_not_done
+    validate_wrap_up -> count_wrap_up_rounds       when ctx.tool_stdout = wrapup-invalid-no-iteration-log           label: invalid_no_log
+    validate_wrap_up -> count_wrap_up_rounds       when ctx.tool_stdout = wrapup-invalid-iteration-not-in-log       label: invalid_not_in_log
     count_wrap_up_rounds -> wrap_up                when ctx.tool_stdout = continue       restart: true   label: under_cap
     count_wrap_up_rounds -> commit_iteration       when ctx.tool_stdout = cap-reached    label: wrapup_force_accept
     count_wrap_up_rounds -> wrap_up                when ctx.outcome = fail               restart: true   label: tolerated
