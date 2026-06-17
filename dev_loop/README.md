@@ -352,7 +352,7 @@ Imperative don'ts for operators and reviewers. (See
 - **Don't commit secrets to `dev_loop/config/repo_conventions.md`.** The
   file content flows into agent prompts via `ctx.last_response` — anything
   there ends up in the LLM context for every PR review.
-- **Don't accept PRs that edit `repo_conventions.md` without review.**
+- **Don't accept PRs that edit `dev_loop/config/repo_conventions.md` without review.**
   `${ctx.last_response}` is a known cross-node prompt-injection vector; a
   malicious convention edit could steer the Implementer or reviewers. This is
   a separate threat from accidental secret-leak (see the "Don't commit
