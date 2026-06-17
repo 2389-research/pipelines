@@ -422,7 +422,12 @@ awk '
   in_loop && /^done$/ { in_loop = 0; emit = 1; next }
   emit { print }
 ' "${PATCHED}" | grep -v '^[[:space:]]*#' > "${post_prereq}" || true
-if grep -nE '\btracker\b' "${post_prereq}"; then
+# Use `grep -nwF`: fixed-string + word-boundary. `\b` in `grep -E` is a GNU
+# extension (POSIX ERE treats `\b` as backspace), so the original `\btracker\b`
+# would no-op on a BSD/POSIX grep and silently mask a real regression. `-w`
+# is portable across GNU/BSD greps and gives us the boundary semantics we want
+# (won't match `mytracker`, `tracker_foo`, etc.).
+if grep -nwF 'tracker' "${post_prereq}"; then
   fail "patched setup_run.sh still references tracker downstream of prereq loop (see lines above)"
 fi
 
