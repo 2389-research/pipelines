@@ -554,12 +554,16 @@ workflow IterRun
     timeout: 5s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
       if [ ! -f .ai/iter-run-temp/task_status.txt ]; then
+        rm -f .ai/iter-run-temp/.next_task_id
         printf 'all-tasks-done'
         exit 0
       fi
       next=$(grep '|pending' .ai/iter-run-temp/task_status.txt | head -1 | cut -d'|' -f1 || true)
       if [ -z "$next" ]; then
+        # Clear stale sidecar so consumers never read a previous run's task id.
+        rm -f .ai/iter-run-temp/.next_task_id
         printf 'all-tasks-done'
       else
         # Persist the selected task id; emit a fixed marker so coverage is exhaustive.
@@ -1185,7 +1189,9 @@ workflow IterRun
     timeout: 300s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
       if [ ! -f docs/iterations/behavior-corpus.md ]; then
+        rm -f .ai/iter-run-temp/.sentinel_regressions
         printf 'sentinel-pass'
         exit 0
       fi
@@ -1213,9 +1219,12 @@ workflow IterRun
       done < docs/iterations/behavior-corpus.md
       if [ -n "$regressions" ]; then
         # Persist regression list for downstream context; emit a fixed marker.
+        # create_fix_task reads this sidecar to cite failing scenario IDs.
         printf '%s' "$regressions" | tr ' ' ',' > .ai/iter-run-temp/.sentinel_regressions
         printf 'sentinel-regression'
       else
+        # Clear sidecar so a clean marker never coexists with stale regression IDs.
+        rm -f .ai/iter-run-temp/.sentinel_regressions
         printf 'sentinel-pass'
       fi
 
@@ -1227,11 +1236,21 @@ workflow IterRun
     prompt:
       A regression or unresolved TODO was detected after the task loop completed.
 
-      Read the pipeline context to understand what regression or issue was found.
+      Read the pipeline context AND the following sidecar files (the upstream tool
+      persists exact details there so this prompt can stay short):
+
+      - .ai/iter-run-temp/.sentinel_regressions — comma-separated failing scenario IDs
+        (present only when ctx.tool_stdout == sentinel-regression; absent otherwise)
+      - .ai/iter-run-temp/.unresolved_todos_count — count of unresolved TODOs for
+        the current iteration (present only when ctx.tool_stdout == todos-unresolved;
+        absent otherwise)
+      - .ai/iter-current-iteration.txt — current iteration ID (for TODO grep pattern)
 
       Create a new fix task in .ai/iter-run-temp/tasks.md:
-      - If a sentinel regression was found: create a task to diagnose and fix the regression, citing the failing scenario IDs
-      - If unresolved TODOs exist for this iteration: create a task to resolve each TODO
+      - If .sentinel_regressions exists: create a task to diagnose and fix the
+        regression, citing the exact failing scenario IDs from that sidecar
+      - If .unresolved_todos_count exists: create a task to resolve every TODO
+        matching `TODO(<iter_id>)` in the tracked source tree
 
       Append the new task to .ai/iter-run-temp/tasks.md in the standard TASK-NN format.
 
@@ -1253,8 +1272,10 @@ workflow IterRun
     timeout: 30s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
+        rm -f .ai/iter-run-temp/.unresolved_todos_count
         printf 'todos-clean'
         exit 0
       fi
@@ -1262,9 +1283,12 @@ workflow IterRun
       # regardless of --include, which times out under large tracker scratch trees.
       count=$(git grep -h "TODO(${iter_id})" -- '*.py' '*.ts' '*.go' '*.rs' '*.swift' '*.js' 2>/dev/null | wc -l | tr -d ' ') || count=0
       if [ "$count" -eq 0 ]; then
+        # Clear sidecar so a clean marker never coexists with a stale count.
+        rm -f .ai/iter-run-temp/.unresolved_todos_count
         printf 'todos-clean'
       else
         # Persist count for downstream context; emit a fixed marker.
+        # create_fix_task reads this sidecar to know how many TODOs are unresolved.
         printf '%d' "$count" > .ai/iter-run-temp/.unresolved_todos_count
         printf 'todos-unresolved'
       fi
