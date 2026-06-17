@@ -444,9 +444,19 @@ s4_out="${S4_DIR}/setup_run.out"
 # Marker assertion: setup-ok is the only acceptable outcome under the
 # stub-port. setup-failed / setup-resume-required / setup-lock-held all
 # indicate the porter's recipe is broken.
-s4_marker=$(cat "${s4_out}" 2>/dev/null || true)
-if [ "${s4_marker}" != "setup-ok" ]; then
-  fail "patched setup_run.sh emitted '${s4_marker}' (expected setup-ok); error:"
+#
+# Use `grep -cF` against the marker rather than equality against full stdout —
+# a future setup_run.sh that adds a debug line, warning, or trailing
+# diagnostic would break the equality form, but the marker contract only
+# requires the marker line to appear exactly once (tracker routes on first
+# match via marker_grep). Also reject the failure markers explicitly so a
+# regression that emits `setup-ok` AND `setup-failed` together (e.g., a
+# botched trap) trips here instead of silently passing on the prefix.
+s4_ok_count=$(grep -cFx "setup-ok" "${s4_out}" 2>/dev/null || true)
+s4_fail_seen=$(grep -cE '^(setup-failed|setup-resume-required|setup-lock-held)$' "${s4_out}" 2>/dev/null || true)
+if [ "${s4_ok_count}" != "1" ] || [ "${s4_fail_seen}" != "0" ]; then
+  fail "patched setup_run.sh did not emit exactly one setup-ok marker (ok=${s4_ok_count}, failure-markers=${s4_fail_seen}); stdout:"
+  cat "${s4_out}" >&2 || true
   s4_rid_for_err=$(cat "${S4_STATE}/.current_rid" 2>/dev/null || true)
   if [ -n "${s4_rid_for_err}" ] && [ -f "${S4_STATE}/runs/${s4_rid_for_err}/setup_error.txt" ]; then
     cat "${S4_STATE}/runs/${s4_rid_for_err}/setup_error.txt" >&2 || true

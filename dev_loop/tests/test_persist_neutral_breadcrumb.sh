@@ -54,23 +54,33 @@ fi
 # Lock 1. The named-file list is deliberate (not a glob) — adding a new
 # executor-neutral script to dev_loop/scripts/ must be a conscious decision
 # that updates BOTH the README porting recipe AND this list.
+#
+# Roster sourcing (post-review): README step 3 enumerates the no-change scripts
+# as "PR-ops (push/fetch-context/recheck/poll/comment/merge), the iter counters
+# [plural], the worktree manager, and the ratchet log". The list below mirrors
+# that enumeration 1:1 — `fetch_pr_context.sh` and `init_iter_counter.sh` were
+# added after PR #99 review pointed out the original 8-script list missed
+# README-documented surface (codex P2, squad-echoed). Keep this list in sync
+# with the README porting recipe; any addition/removal here MUST be paired
+# with a README edit, or the porting contract drifts in either direction.
 PR_OPS_SCRIPTS="
 push_and_open_pr.sh
+fetch_pr_context.sh
 recheck_pr_sha.sh
 poll_ci.sh
 post_squad_comment.sh
 merge_pr.sh
+init_iter_counter.sh
 inc_iter_counter.sh
 create_worktree.sh
 ratchet_log.sh
 "
-# Build the combined arg vector. Persist scripts come from "$@" (the glob
-# expansion above), PR-ops scripts are resolved explicitly so a missing file
-# trips a hard error rather than silently shrinking the scan. We pre-validate
-# each path exists before handing it to grep so a typo in PR_OPS_SCRIPTS
-# fails loud here, not as a grep "No such file" warning that "|| true" might
-# otherwise swallow.
-scan_paths=$(printf '%s\n' "$@")
+# Append PR-ops paths to "$@" directly. Each path is validated before being
+# added so a typo in PR_OPS_SCRIPTS fails loud here, not as a grep
+# "No such file" warning that "|| true" might otherwise swallow. Using
+# `set -- "$@" "${p}"` avoids IFS manipulation and keeps each path quoted —
+# a path containing a space or glob char (worktrees under /tmp/agent-*)
+# remains a single argument with no pathname expansion.
 for s in ${PR_OPS_SCRIPTS}; do
   p="${SCRIPTS_DIR}/${s}"
   if [ ! -f "${p}" ]; then
@@ -78,18 +88,8 @@ for s in ${PR_OPS_SCRIPTS}; do
       "${p}" >&2
     exit 2
   fi
-  scan_paths="${scan_paths}
-${p}"
+  set -- "$@" "${p}"
 done
-# Re-set positional params to the combined list. Newline-delimited so paths
-# with spaces stay intact (defensive — repo paths today have no spaces, but
-# a worktree under /tmp/agent-* could).
-OLDIFS=$IFS
-IFS='
-'
-# shellcheck disable=SC2086  # word-splitting on newlines is intentional here
-set -- ${scan_paths}
-IFS=$OLDIFS
 
 set +e
 hits=$(grep -nH -F "tracker/runs" "$@")
@@ -138,5 +138,5 @@ if [ "${guard_lock2_failed}" -ne 0 ]; then
   exit 1
 fi
 
-printf 'OK: persist_*.sh + PR-ops/iter/worktree/ratchet scripts breadcrumbs clean (executor-neutral + #73 phrases pinned)\n'
+printf 'OK: porting-contract clean — Lock 1 (no tracker/runs literal) across persist_*.sh + PR-ops/iter/worktree/ratchet scripts; Lock 2 (#73 unset/stale phrases pinned) across persist_*.sh\n'
 exit 0
