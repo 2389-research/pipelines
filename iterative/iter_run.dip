@@ -193,6 +193,11 @@ workflow IterRun
     timeout: 15s
     command:
       set -euo pipefail
+      mkdir -p .ai/iter-run-temp
+      # Clear sidecars up front so filesystem state always matches the emitted marker;
+      # branches that need detail will rewrite below.
+      rm -f .ai/iter-run-temp/.consistency_no_stories_iter \
+            .ai/iter-run-temp/.consistency_story_issues
       iter_id=$(cat .ai/iter-current-iteration.txt 2>/dev/null | tr -d '[:space:]' || true)
       if [ -z "$iter_id" ]; then
         printf 'inconsistent-no-iteration-id'
@@ -240,12 +245,14 @@ workflow IterRun
     label: "Reconcile State"
     auto_status: true
     prompt:
-      The consistency audit found inconsistencies in the iteration state. Read the consistency_audit output to understand what was found.
+      The consistency audit found inconsistencies in the iteration state. The audit emits a fixed marker (e.g. `inconsistent-no-stories`, `inconsistent-stories`) and writes actionable detail to sidecar files under `.ai/iter-run-temp/`.
 
       Read:
       1. .ai/iter-current-iteration.txt for the current iteration ID
       2. docs/iterations/roadmap.md for the current iteration section
       3. docs/iterations/requirements/ for the story files mentioned in the inconsistency report
+      4. .ai/iter-run-temp/.consistency_story_issues — present when the marker is `inconsistent-stories`; whitespace-separated list of `STORY-NNNN-<reason>` tokens (e.g. `STORY-0042-not-in-requirements`, `STORY-0043-already-done:ITER-0007`)
+      5. .ai/iter-run-temp/.consistency_no_stories_iter — present when the marker is `inconsistent-no-stories`; the iteration id whose section had no STORY- entries
 
       Fix the inconsistencies:
       - If a STORY-NNNN referenced in roadmap.md does not exist in requirements/, add a minimal placeholder story card to the appropriate epic file so the pipeline can proceed. Note this as a gap to be filled during implementation.
