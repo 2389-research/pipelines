@@ -25,7 +25,8 @@ convention and where to find the long-form GitHub release notes.
   through to the default. Closes the silent-halt where setting YAML-only
   `runtime_state_root` caused downstream nodes to look under the default path
   while `.current_rid` landed under the YAML path
-  (closes [#53](https://github.com/2389-research/pipelines/issues/53)).
+  ([#100](https://github.com/2389-research/pipelines/pull/100),
+  closes [#53](https://github.com/2389-research/pipelines/issues/53)).
 
 ### Added
 
