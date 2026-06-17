@@ -15,6 +15,17 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-17
+
+Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
+Bundles the `iter_run.dip` grade-A restoration (with operator-visible marker
+rename), the `dev_loop/` `runtime_state_root` resolution unification, the
+`persist_*.sh` fail-class sidecar surface, and `[Unreleased]` enforcement on
+the SemVer surface. Tests-only ([#99](https://github.com/2389-research/pipelines/pull/99))
+and README structural pass ([#98](https://github.com/2389-research/pipelines/pull/98),
+which subsumed [#84](https://github.com/2389-research/pipelines/issues/84))
+also landed in this window but carry no SemVer-surface entry.
+
 ### Changed
 
 - `iterative/iter_run.dip` restored to grade A (90/100, was F/30) — closed DIP115
@@ -349,7 +360,8 @@ v0.29–v0.30 era quality work.
   [dippin-lang#42](https://github.com/2389-research/dippin-lang/issues/42)'s
   suppression ([#16](https://github.com/2389-research/pipelines/pull/16)).
 
-[Unreleased]: https://github.com/2389-research/pipelines/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/2389-research/pipelines/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/2389-research/pipelines/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/2389-research/pipelines/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/2389-research/pipelines/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/2389-research/pipelines/compare/v0.1.1...v0.1.2
