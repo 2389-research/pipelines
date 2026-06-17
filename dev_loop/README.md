@@ -286,7 +286,7 @@ what NOT to let drift.
   agent's pre-push gates at `dev_loop/prompts/implementer.system.md`
   still include `tracker validate` by design — that's a separate scope
   from LocalGates and outside the executor-decoupling refactor.)
-- **Self-review refusal.** Dev_loop refuses to review its own dev_loop
+- **Self-review refusal.** dev_loop refuses to review its own dev_loop
   changes via the issue filter's `excluded_title_regex`.
 - **Implementer test-authoring scope.** The Implementer writes only the
   tests the plan calls for. Broader test-coverage gaps are out of scope
@@ -355,7 +355,8 @@ Imperative don'ts for operators and reviewers. (See
 - **Don't accept PRs that edit `repo_conventions.md` without review.**
   `${ctx.last_response}` is a known cross-node prompt-injection vector; a
   malicious convention edit could steer the Implementer or reviewers. This is
-  a separate threat from accidental secret-leak (which is item 3).
+  a separate threat from accidental secret-leak (see the "Don't commit
+  secrets to `dev_loop/config/repo_conventions.md`" bullet above).
 - **Don't set `allow_no_ci: true` on a repo with branch protection.**
   The combo means dev_loop will try to merge with no CI signal and get
   blocked by branch protection late in the pipeline.
