@@ -130,6 +130,17 @@ wins" — concurrent `setup_run` invocations under different `DIP_ROOT`s would
 race on it, the same constraint the `${DIP_ROOT}/.dev_loop.lock` already
 imposes for two runs sharing one root.
 
+The sentinel is published **before any `emit_failure` or EXIT-trap path** so
+the `setup-failed → CleanupWorktree` route also resolves the same `DIP_ROOT`
+that `setup_run` picked (otherwise downstream cleanup would look under the
+built-in default and miss the YAML-redirected `runs/<rid>/`). The write is
+best-effort: an unwritable `XDG_CACHE_HOME` does not turn an otherwise-OK
+YAML-redirected run into `setup-failed`; bootstraps without an env override
+simply fall back to the built-in default (the pre-#53 behavior). The bootstrap
+refuses to follow a symlinked sentinel (parity with the per-run `env` file
+hardening) and falls back to the default when the sentinel-pointed root no
+longer exists on disk.
+
 The YAML carries three additional keys that are NOT wired in v1:
 `priority_label_order` (the jq priority function does its own normalize-and-rank
 for P0..P3), `excluded_author_globs` (the filter hardcodes the `[bot]` check), and

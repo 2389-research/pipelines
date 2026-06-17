@@ -22,10 +22,17 @@ convention and where to find the long-form GitHub release notes.
   built-in default location
   (`${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.last_dip_root`); every
   downstream script's bootstrap preamble consults the sentinel before falling
-  through to the default. Closes the silent-halt where setting YAML-only
-  `runtime_state_root` caused downstream nodes to look under the default path
-  while `.current_rid` landed under the YAML path
-  ([#100](https://github.com/2389-research/pipelines/pull/100),
+  through to the default. The sentinel is published before any `emit_failure`
+  / EXIT-trap path so the `setup-failed → CleanupWorktree` route also
+  resolves the same `DIP_ROOT` (otherwise cleanup would miss the YAML-
+  redirected `runs/<rid>/`). The write is best-effort — an unwritable
+  `XDG_CACHE_HOME` no longer turns an otherwise-OK YAML-redirected run into
+  `setup-failed` — and the bootstrap refuses to follow a symlinked sentinel
+  (parity with the per-run env-file hardening), falling back to the default
+  when the sentinel points at a now-missing directory. Closes the silent-halt
+  where setting YAML-only `runtime_state_root` caused downstream nodes to
+  look under the default path while `.current_rid` landed under the YAML
+  path ([#100](https://github.com/2389-research/pipelines/pull/100),
   closes [#53](https://github.com/2389-research/pipelines/issues/53)).
 
 ### Added
