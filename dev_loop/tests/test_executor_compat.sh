@@ -491,11 +491,22 @@ else
     fi
     # Allow-list completeness — mirrors the comment block above emit_env in
     # setup_run.sh AND test_helpers.bash's unset list. A drift in any of the
-    # three trips this assertion.
+    # three trips this assertion. Each key must be emitted in single-quoted
+    # form (matches emit_env's `printf "'%s'\n"` shape); the docstring above
+    # promises this, so assert it directly instead of trusting one key
+    # (DIP_ARTIFACT_DIR's exact-line match below) to stand in for the rest.
     for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID \
                DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR DEV_LOOP_REPO_ROOT; do
       if ! grep -q "^${key}=" "${s4_env}"; then
         fail "env file missing allow-listed key: ${key}"
+      fi
+      # Single-quote shape: line starts with `KEY='` and ends with `'`.
+      # Tolerates emit_env's `'\''` escape for embedded apostrophes (the
+      # outer pair still bookends the line). A future emit_env that drops
+      # quoting (bare `KEY=value`) or double-quotes trips here.
+      if ! grep -qE "^${key}='.*'\$" "${s4_env}"; then
+        fail "env file key ${key} is not single-quoted as emit_env promises; got:"
+        grep "^${key}=" "${s4_env}" >&2 || true
       fi
     done
     # Well-formedness: the file must source cleanly under POSIX `set -a`.
