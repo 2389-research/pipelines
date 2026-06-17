@@ -8,7 +8,16 @@ set -eu
 
 # ---begin-bootstrap-reference---
 STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
-DIP_ROOT="${DEV_LOOP_STATE_ROOT:-${STATE_ROOT_DEFAULT}}"
+if [ -n "${DEV_LOOP_STATE_ROOT:-}" ]; then
+  DIP_ROOT="${DEV_LOOP_STATE_ROOT}"
+elif [ -f "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
+     && [ ! -L "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
+     && [ -r "${STATE_ROOT_DEFAULT}/.last_dip_root" ]; then
+  DIP_ROOT=$(cat "${STATE_ROOT_DEFAULT}/.last_dip_root" 2>/dev/null || true)
+  [ -n "${DIP_ROOT}" ] && [ -d "${DIP_ROOT}" ] || DIP_ROOT="${STATE_ROOT_DEFAULT}"
+else
+  DIP_ROOT="${STATE_ROOT_DEFAULT}"
+fi
 if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
   RUN_DIR="${DEV_LOOP_RUN_DIR}"
 else

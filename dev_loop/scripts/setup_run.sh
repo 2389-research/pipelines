@@ -91,6 +91,49 @@ else
 fi
 mkdir -p "${DIP_ROOT}/runs"
 
+# publish_sentinel — best-effort write of `.last_dip_root` at the built-in
+# default location so every downstream script's bootstrap preamble can follow
+# DIP_ROOT without re-parsing YAML (issue #53). Called early (before any
+# emit_failure path) so even `setup-failed` routes to CleanupWorktree resolve
+# the same DIP_ROOT that setup_run picked.
+#
+# Best-effort: an unwritable XDG_CACHE_HOME must not turn an otherwise-OK
+# YAML-redirected run into setup-failed. Bootstrap falls back to the built-in
+# default when the sentinel is missing; that matches the pre-#53 behavior for
+# operators who use only the env override.
+#
+# Symlink-refusal parity with the per-run env file (line ~492): if a prior
+# tampered sentinel exists as a symlink, unlink it before write rather than
+# follow it to an attacker-controlled destination.
+publish_sentinel() {
+  _sroot="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+  mkdir -p "${_sroot}" 2>/dev/null || { unset _sroot; return 0; }
+  # Pre-flight writability check: dash prints "cannot create ...: Permission
+  # denied" to its own stderr (bypassing the redirect target) when the `>`
+  # target's parent dir is read-only, polluting tracker's captured stream
+  # with what looks like a setup_run error. Skip the write cleanly instead.
+  # `-w` alone is insufficient: creating `.last_dip_root.tmp` also requires
+  # search/execute permission on the directory. A writable-but-not-searchable
+  # dir still triggers dash's "cannot create ...: Permission denied" noise.
+  if ! [ -w "${_sroot}" ] || ! [ -x "${_sroot}" ]; then
+    unset _sroot
+    return 0
+  fi
+  if [ -L "${_sroot}/.last_dip_root" ]; then
+    rm -f "${_sroot}/.last_dip_root" 2>/dev/null || true
+  fi
+  printf '%s' "${DIP_ROOT}" > "${_sroot}/.last_dip_root.tmp" 2>/dev/null || {
+    unset _sroot; return 0;
+  }
+  mv -Tf "${_sroot}/.last_dip_root.tmp" "${_sroot}/.last_dip_root" \
+    2>/dev/null || true
+  unset _sroot
+  return 0
+}
+# Publish the sentinel as soon as DIP_ROOT is known so failure paths
+# (emit_failure / EXIT trap) inherit the unified resolution too.
+publish_sentinel
+
 # Resume detection: if a prior run still has a worktree, signal the operator
 # to invoke `tracker --resume`. We do NOT auto-resume from setup_run — the
 # upstream pipeline routes the marker straight to Exit.
@@ -499,6 +542,10 @@ ALLOW_NO_CI=${resolved_allow_no_ci} (source=${src_allow})
 DIP_ROOT=${DIP_ROOT} (source=${src_state_root})
 EOF
 chmod 600 "${run_dir}/config_resolution.txt"
+
+# `.last_dip_root` sentinel was published early (right after DIP_ROOT
+# resolved) by publish_sentinel() so emit_failure / EXIT-trap paths inherit
+# the unified resolution. Nothing to do here.
 
 # Publish .current_rid atomically AFTER env + config_resolution are in place.
 # Order matters: downstream scripts that source $RUN_DIR/env via the bootstrap

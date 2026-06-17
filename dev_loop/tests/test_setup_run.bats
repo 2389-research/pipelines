@@ -416,6 +416,181 @@ YAML
     "${effective_root}/runs/${rid}/config_resolution.txt"
 }
 
+@test "setup_run writes .last_dip_root sentinel at the default location (#53)" {
+  # The sentinel is the unified-resolution mechanism downstream bootstraps
+  # use to follow YAML runtime_state_root without re-parsing YAML themselves.
+  # It MUST land at the built-in default path so any bootstrap that runs with
+  # no env override still finds it.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  default_root="${XDG_CACHE_HOME}/dip/dev_loop"
+  [ -f "${default_root}/.last_dip_root" ]
+  effective_root="${custom_root}/dev_loop"
+  printf '%s' "${effective_root}" | cmp -s - "${default_root}/.last_dip_root"
+}
+
+@test "downstream bootstrap honors .last_dip_root sentinel (#53)" {
+  # End-to-end smoke: drive YAML-only runtime_state_root override through to
+  # a downstream node and confirm it resolves RUN_DIR without re-reading YAML.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  # Now invoke a downstream script with NO env override. Its bootstrap must
+  # consult the sentinel (not the built-in default) to find .current_rid.
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  unset DEV_LOOP_STATE_ROOT DEV_LOOP_RUN_DIR
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+  # Sentinel content must equal the YAML-resolved DIP_ROOT (not the default).
+  effective_root="${custom_root}/dev_loop"
+  printf '%s' "${effective_root}" | cmp -s - "${XDG_CACHE_HOME}/dip/dev_loop/.last_dip_root"
+}
+
+@test "setup-failed under YAML-only root: cleanup_worktree still bootstraps (#53)" {
+  # Regression: before the sentinel was published early, setup_run would
+  # fail with YAML-redirected DIP_ROOT but leave .last_dip_root unset
+  # (or stale), so cleanup_worktree (routed from setup-failed) looked
+  # under the built-in default and died with "no .current_rid". The
+  # sentinel must be published BEFORE any emit_failure path.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  # Force setup-failed deterministically (no gh network needed): remove the
+  # tracker artifact dir so setup_run's "no dip artifact dir" path trips.
+  rm -rf "${WORKDIR}/.tracker"
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-failed" ]
+  # Sentinel must point at the YAML-resolved DIP_ROOT even on setup-failed.
+  effective_root="${custom_root}/dev_loop"
+  printf '%s' "${effective_root}" | cmp -s - "${XDG_CACHE_HOME}/dip/dev_loop/.last_dip_root"
+  # cleanup_worktree (routed from setup-failed in dev_loop.dip) must
+  # bootstrap cleanly and emit worktree-cleaned.
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  unset DEV_LOOP_STATE_ROOT DEV_LOOP_RUN_DIR
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+}
+
+@test "sentinel write is non-fatal when XDG_CACHE_HOME is unwritable (YAML root succeeds)" {
+  # If ~/.cache is read-only but the YAML-redirected DIP_ROOT is fine,
+  # setup_run must NOT fail solely because it can't drop the sentinel
+  # hint. Bootstraps without env override will fall back to the built-in
+  # default (which is what they did pre-#53).
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  # Pre-create XDG_CACHE_HOME and make it un-writable so publish_sentinel
+  # gracefully no-ops. (mkdir -p must succeed on a pre-existing read-only
+  # dir; the write itself is what we want to short-circuit.)
+  mkdir -p "${XDG_CACHE_HOME}/dip/dev_loop"
+  chmod a-w "${XDG_CACHE_HOME}/dip/dev_loop"
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  chmod u+w "${XDG_CACHE_HOME}/dip/dev_loop"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  effective_root="${custom_root}/dev_loop"
+  [ -f "${effective_root}/.current_rid" ]
+}
+
+@test "sentinel write is non-fatal when XDG_CACHE_HOME is writable-but-not-searchable" {
+  # `-w` alone is not enough: writing `.last_dip_root.tmp` also requires
+  # search/exec (`-x`) on the parent. Without the `-x` guard, dash prints
+  # "cannot create ...: Permission denied" to its own stderr (bypassing
+  # the redirect target) and pollutes the captured stream. setup_run must
+  # still succeed when only the env override is missing.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root-nox"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  # Writable but not searchable -> open() of a file inside fails.
+  mkdir -p "${XDG_CACHE_HOME}/dip/dev_loop"
+  chmod u=w,go= "${XDG_CACHE_HOME}/dip/dev_loop"
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  chmod u=rwx "${XDG_CACHE_HOME}/dip/dev_loop"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  effective_root="${custom_root}/dev_loop"
+  [ -f "${effective_root}/.current_rid" ]
+}
+
+@test "downstream bootstrap refuses symlinked .last_dip_root (parity with env-file)" {
+  # The bootstrap refuses a symlinked run-dir env file. Same hardening for
+  # the sentinel: an operator-tampered symlink at the sentinel path must
+  # not be followed to an attacker-controlled destination. Downstream
+  # falls back to the built-in default just like when the sentinel is
+  # absent entirely.
+  mkdir -p "${XDG_CACHE_HOME}/dip/dev_loop"
+  # Plant an attacker-controlled DIP_ROOT containing a valid .current_rid
+  # + env. If the symlink at the sentinel path were followed, bootstrap
+  # would adopt this root and cleanup_worktree.sh would emit
+  # `worktree-cleaned` (because everything resolves under the attacker
+  # root). The -L guard must reject the symlink so bootstrap falls back
+  # to the built-in default, where we deliberately leave .current_rid
+  # ABSENT — that forces the documented `no .current_rid` failure mode
+  # and proves the symlink was not followed.
+  attacker_root="${TMPDIR}/attacker-root"
+  mkdir -p "${attacker_root}/runs/attacker-rid"
+  printf 'attacker-rid' > "${attacker_root}/.current_rid"
+  cat > "${attacker_root}/runs/attacker-rid/env" <<EOF
+GH_REPO='attacker/attacker'
+BASE_BRANCH='main'
+ALLOW_NO_CI='false'
+DEV_LOOP_RUN_ID='attacker-rid'
+DEV_LOOP_RUN_DIR='${attacker_root}/runs/attacker-rid'
+DIP_ARTIFACT_DIR='${WORKDIR}/.tracker/runs/trk-attacker-$$'
+DEV_LOOP_REPO_ROOT='${WORKDIR}'
+EOF
+  chmod 600 "${attacker_root}/runs/attacker-rid/env"
+  # Symlink target is a real file whose content is the attacker root.
+  printf '%s' "${attacker_root}" > "${TMPDIR}/sentinel-target"
+  ln -sfn "${TMPDIR}/sentinel-target" "${XDG_CACHE_HOME}/dip/dev_loop/.last_dip_root"
+  unset DEV_LOOP_STATE_ROOT
+  # Built-in default exists but has NO .current_rid. Refusal -> fall back
+  # to default -> exit 1 with `no .current_rid`. Follow -> attacker root
+  # -> exit 0 `worktree-cleaned`. The two outcomes are unambiguous.
+  default_root="${XDG_CACHE_HOME}/dip/dev_loop"
+  mkdir -p "${default_root}"
+  [ ! -e "${default_root}/.current_rid" ] || rm -f "${default_root}/.current_rid"
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -ne 0 ]
+  printf '%s\n' "${output}" | grep -qF 'no .current_rid'
+}
+
 @test "env DEV_LOOP_STATE_ROOT beats YAML runtime_state_root" {
   mkdir -p "${WORKDIR}/dev_loop/config"
   yaml_root="${TMPDIR}/yaml-state-root"

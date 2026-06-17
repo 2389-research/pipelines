@@ -120,12 +120,26 @@ resolution via `runs/<rid>/config_resolution.txt`.
 | `DEV_LOOP_STATE_ROOT` | `runtime_state_root`†  | `${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop` | Per-run state dir. |
 | `DEV_LOOP_ALLOW_NO_CI` | `allow_no_ci` | `false` | Merge when no CI is configured. |
 
-†  YAML `runtime_state_root` is honored by `setup_run.sh`'s own resolution and
-recorded in `config_resolution.txt` as `source=yaml`, BUT downstream scripts'
-bootstrap preambles only honor the `DEV_LOOP_STATE_ROOT` env var or the
-built-in default — they don't re-read YAML. For end-to-end consistency when
-overriding the state dir, set the `DEV_LOOP_STATE_ROOT` env var instead. (See
-the follow-up issue for sentinel-based unification of this knob.)
+†  YAML `runtime_state_root` is now honored end-to-end (issue #53). `setup_run.sh`
+publishes the resolved `DIP_ROOT` to a sentinel file at the built-in default
+location (`${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.last_dip_root`); every
+downstream script's bootstrap preamble reads that sentinel before falling
+through to the default. Resolution precedence stays `DEV_LOOP_STATE_ROOT` env >
+YAML `runtime_state_root` > built-in default. The sentinel is "last writer
+wins" — concurrent `setup_run` invocations under different `DIP_ROOT`s would
+race on it, the same constraint the `${DIP_ROOT}/.dev_loop.lock` already
+imposes for two runs sharing one root.
+
+The sentinel is published **before any `emit_failure` or EXIT-trap path** so
+the `setup-failed → CleanupWorktree` route also resolves the same `DIP_ROOT`
+that `setup_run` picked (otherwise downstream cleanup would look under the
+built-in default and miss the YAML-redirected `runs/<rid>/`). The write is
+best-effort: an unwritable `XDG_CACHE_HOME` does not turn an otherwise-OK
+YAML-redirected run into `setup-failed`; bootstraps without an env override
+simply fall back to the built-in default (the pre-#53 behavior). The bootstrap
+refuses to follow a symlinked sentinel (parity with the per-run `env` file
+hardening) and falls back to the default when the sentinel-pointed root no
+longer exists on disk.
 
 The YAML carries three additional keys that are NOT wired in v1:
 `priority_label_order` (the jq priority function does its own normalize-and-rank

@@ -15,6 +15,33 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- `dev_loop/`: unify YAML `runtime_state_root` resolution end-to-end.
+  `setup_run.sh` now publishes the resolved `DIP_ROOT` to a sentinel at the
+  built-in default location
+  (`${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.last_dip_root`); every
+  downstream script's bootstrap preamble consults the sentinel before falling
+  through to the default. The sentinel is published before any `emit_failure`
+  / EXIT-trap path so the `setup-failed → CleanupWorktree` route also
+  resolves the same `DIP_ROOT` (otherwise cleanup would miss the YAML-
+  redirected `runs/<rid>/`). The write is best-effort — an unwritable or
+  not-searchable `XDG_CACHE_HOME` no longer turns an otherwise-OK YAML-
+  redirected run into `setup-failed` (pre-flight `-w` and `-x` guards skip
+  the write before dash can emit a "Permission denied" stderr line that
+  would pollute tracker's captured stream) — and the bootstrap refuses to
+  follow a symlinked sentinel
+  (parity with the per-run env-file hardening), falling back to the default
+  when the sentinel points at a now-missing directory. The bootstrap also
+  requires the sentinel to be a regular file (`-f`) before reading, so a
+  tampered FIFO/device at the sentinel path cannot block downstream
+  `cat`; the byte-identical preamble is propagated across all 22 reader
+  scripts and `tests/bootstrap.ref`. Closes the silent-halt where setting
+  YAML-only `runtime_state_root` caused downstream nodes to look under
+  the default path while `.current_rid` landed under the YAML path
+  ([#100](https://github.com/2389-research/pipelines/pull/100), closes
+  [#53](https://github.com/2389-research/pipelines/issues/53)).
+
 ### Added
 
 - `dev_loop/scripts/persist_*.sh` write a `persist_<flavor>_fail_class.txt`
