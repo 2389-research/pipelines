@@ -1227,7 +1227,7 @@ workflow IterRun
       if [ -n "$regressions" ]; then
         # Persist regression list for downstream context; emit a fixed marker.
         # create_fix_task reads this sidecar to cite failing scenario IDs.
-        printf '%s' "$regressions" | tr ' ' ',' > .ai/iter-run-temp/.sentinel_regressions
+        printf '%s' "${regressions# }" | tr ' ' ',' > .ai/iter-run-temp/.sentinel_regressions
         printf 'sentinel-regression'
       else
         # Clear sidecar so a clean marker never coexists with stale regression IDs.
