@@ -26,7 +26,8 @@ convention and where to find the long-form GitHub release notes.
   `todos-unresolved`, `sentinel-regression`, `inconsistent-no-stories`,
   `inconsistent-stories`) plus sidecar files in `.ai/iter-run-temp/` carrying
   the dynamic detail. Operator-visible marker rename
-  ([#27](https://github.com/2389-research/pipelines/issues/27)).
+  ([#101](https://github.com/2389-research/pipelines/pull/101),
+  closes [#27](https://github.com/2389-research/pipelines/issues/27)).
 
 ### Fixed
 
