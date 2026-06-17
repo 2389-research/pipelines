@@ -25,9 +25,12 @@ convention and where to find the long-form GitHub release notes.
   through to the default. The sentinel is published before any `emit_failure`
   / EXIT-trap path so the `setup-failed → CleanupWorktree` route also
   resolves the same `DIP_ROOT` (otherwise cleanup would miss the YAML-
-  redirected `runs/<rid>/`). The write is best-effort — an unwritable
-  `XDG_CACHE_HOME` no longer turns an otherwise-OK YAML-redirected run into
-  `setup-failed` — and the bootstrap refuses to follow a symlinked sentinel
+  redirected `runs/<rid>/`). The write is best-effort — an unwritable or
+  not-searchable `XDG_CACHE_HOME` no longer turns an otherwise-OK YAML-
+  redirected run into `setup-failed` (pre-flight `-w` and `-x` guards skip
+  the write before dash can emit a "Permission denied" stderr line that
+  would pollute tracker's captured stream) — and the bootstrap refuses to
+  follow a symlinked sentinel
   (parity with the per-run env-file hardening), falling back to the default
   when the sentinel points at a now-missing directory. The bootstrap also
   requires the sentinel to be a regular file (`-f`) before reading, so a

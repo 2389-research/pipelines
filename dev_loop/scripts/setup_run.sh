@@ -112,7 +112,13 @@ publish_sentinel() {
   # denied" to its own stderr (bypassing the redirect target) when the `>`
   # target's parent dir is read-only, polluting tracker's captured stream
   # with what looks like a setup_run error. Skip the write cleanly instead.
-  [ -w "${_sroot}" ] || { unset _sroot; return 0; }
+  # `-w` alone is insufficient: creating `.last_dip_root.tmp` also requires
+  # search/execute permission on the directory. A writable-but-not-searchable
+  # dir still triggers dash's "cannot create ...: Permission denied" noise.
+  if ! [ -w "${_sroot}" ] || ! [ -x "${_sroot}" ]; then
+    unset _sroot
+    return 0
+  fi
   if [ -L "${_sroot}/.last_dip_root" ]; then
     rm -f "${_sroot}/.last_dip_root" 2>/dev/null || true
   fi

@@ -522,6 +522,31 @@ YAML
   [ -f "${effective_root}/.current_rid" ]
 }
 
+@test "sentinel write is non-fatal when XDG_CACHE_HOME is writable-but-not-searchable" {
+  # `-w` alone is not enough: writing `.last_dip_root.tmp` also requires
+  # search/exec (`-x`) on the parent. Without the `-x` guard, dash prints
+  # "cannot create ...: Permission denied" to its own stderr (bypassing
+  # the redirect target) and pollutes the captured stream. setup_run must
+  # still succeed when only the env override is missing.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root-nox"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  # Writable but not searchable -> open() of a file inside fails.
+  mkdir -p "${XDG_CACHE_HOME}/dip/dev_loop"
+  chmod u=w,go= "${XDG_CACHE_HOME}/dip/dev_loop"
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  chmod u=rwx "${XDG_CACHE_HOME}/dip/dev_loop"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  effective_root="${custom_root}/dev_loop"
+  [ -f "${effective_root}/.current_rid" ]
+}
+
 @test "downstream bootstrap refuses symlinked .last_dip_root (parity with env-file)" {
   # The bootstrap refuses a symlinked run-dir env file. Same hardening for
   # the sentinel: an operator-tampered symlink at the sentinel path must
