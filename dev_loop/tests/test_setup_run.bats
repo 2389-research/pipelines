@@ -416,6 +416,51 @@ YAML
     "${effective_root}/runs/${rid}/config_resolution.txt"
 }
 
+@test "setup_run writes .last_dip_root sentinel at the default location (#53)" {
+  # The sentinel is the unified-resolution mechanism downstream bootstraps
+  # use to follow YAML runtime_state_root without re-parsing YAML themselves.
+  # It MUST land at the built-in default path so any bootstrap that runs with
+  # no env override still finds it.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  default_root="${XDG_CACHE_HOME}/dip/dev_loop"
+  [ -f "${default_root}/.last_dip_root" ]
+  effective_root="${custom_root}/dev_loop"
+  printf '%s' "${effective_root}" | cmp -s - "${default_root}/.last_dip_root"
+}
+
+@test "downstream bootstrap honors .last_dip_root sentinel (#53)" {
+  # End-to-end smoke: drive YAML-only runtime_state_root override through to
+  # a downstream node and confirm it resolves RUN_DIR without re-reading YAML.
+  mkdir -p "${WORKDIR}/dev_loop/config"
+  custom_root="${TMPDIR}/yaml-state-root"
+  cat > "${WORKDIR}/dev_loop/config/dev_loop.config.yaml" <<YAML
+repo: test-org/test-repo
+base_branch: main
+runtime_state_root: ${custom_root}
+YAML
+  unset DEV_LOOP_STATE_ROOT
+  run sh -c "$(cat "${SCRIPT}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "setup-ok" ]
+  # Now invoke a downstream script with NO env override. Its bootstrap must
+  # consult the sentinel (not the built-in default) to find .current_rid.
+  CLEANUP="${BATS_TEST_DIRNAME}/../scripts/cleanup_worktree.sh"
+  unset DEV_LOOP_STATE_ROOT DEV_LOOP_RUN_DIR
+  run sh -c "$(cat "${CLEANUP}")"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "worktree-cleaned" ]
+}
+
 @test "env DEV_LOOP_STATE_ROOT beats YAML runtime_state_root" {
   mkdir -p "${WORKDIR}/dev_loop/config"
   yaml_root="${TMPDIR}/yaml-state-root"

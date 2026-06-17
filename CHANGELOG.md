@@ -15,6 +15,18 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- `dev_loop/`: unify YAML `runtime_state_root` resolution end-to-end.
+  `setup_run.sh` now publishes the resolved `DIP_ROOT` to a sentinel at the
+  built-in default location
+  (`${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/.last_dip_root`); every
+  downstream script's bootstrap preamble consults the sentinel before falling
+  through to the default. Closes the silent-halt where setting YAML-only
+  `runtime_state_root` caused downstream nodes to look under the default path
+  while `.current_rid` landed under the YAML path
+  (closes [#53](https://github.com/2389-research/pipelines/issues/53)).
+
 ### Added
 
 - `.github/PULL_REQUEST_TEMPLATE.md` and `.github/workflows/changelog_check.yml`

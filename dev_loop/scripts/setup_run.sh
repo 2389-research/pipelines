@@ -500,6 +500,19 @@ DIP_ROOT=${DIP_ROOT} (source=${src_state_root})
 EOF
 chmod 600 "${run_dir}/config_resolution.txt"
 
+# Publish .last_dip_root sentinel at the built-in default location so every
+# downstream script's bootstrap preamble can follow DIP_ROOT without reading
+# YAML itself (issue #53). The bootstrap honors `DEV_LOOP_STATE_ROOT` env >
+# this sentinel > built-in default. Writing the sentinel unconditionally
+# (even when DIP_ROOT == default) is harmless and keeps the contract simple.
+# "Last writer wins" — concurrent setup_run invocations with different
+# DIP_ROOTs share one sentinel; that's the same constraint the lock at
+# ${DIP_ROOT}/.dev_loop.lock already enforces inside a single DIP_ROOT.
+sentinel_root="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
+mkdir -p "${sentinel_root}"
+printf '%s' "${DIP_ROOT}" > "${sentinel_root}/.last_dip_root.tmp"
+mv -Tf "${sentinel_root}/.last_dip_root.tmp" "${sentinel_root}/.last_dip_root"
+
 # Publish .current_rid atomically AFTER env + config_resolution are in place.
 # Order matters: downstream scripts that source $RUN_DIR/env via the bootstrap
 # preamble must never see a published rid pointing at an incomplete RUN_DIR.
