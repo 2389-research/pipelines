@@ -328,7 +328,176 @@ elif grep -qE 'tracker|\.tracker/runs' "${plan_err}"; then
   fail "persist_plan_error.txt names tracker on failure path: $(cat "${plan_err}")"
 fi
 
+# -------------------------------------------------------------------------
+# Section 4 — setup_run.sh end-to-end stub-port run-through (#88 Gap 1).
+#
+# Apply the README porting recipe's two edits to a copy of setup_run.sh
+# (replace the discovery block with a single-line stub assignment; drop
+# `tracker` from the prereq loop), then invoke the patched script against a
+# stub-executor layout that has NO .tracker/runs anywhere on disk. Asserts:
+#
+#   - The patched script emits `setup-ok` (the full bootstrap path works
+#     against a non-tracker layout when the porter follows the recipe).
+#   - The env file's DIP_ARTIFACT_DIR resolves to the stub path verbatim
+#     (the porter's stub assignment survives emit_env's single-quoting and
+#     atomic mv; this is the contract the persist scripts then consume).
+#   - No `command -v tracker` reference survives downstream of the prereq
+#     loop in the patched script — a stale check would silently couple the
+#     ported script to tracker again after the porter "finished".
+#   - The env file is well-formed: every key in setup_run.sh's emit allow-
+#     list (mirrored in test_helpers.bash) is present, single-quoted, and
+#     the file sources cleanly under POSIX `set -a; . env; set +a`.
+#   - Per-run state survives: rid.txt + started_at.txt + .current_rid line
+#     up (downstream cleanup/ratchet rely on this invariant).
+#
+# This is the runtime side of the porting recipe. Section 1 pins the
+# literals statically; without this section, a porter who follows the recipe
+# and silently breaks the discovery block (copy-paste error, stale tracker
+# reference, missing env var) gets a green test and a bug at first invocation.
+# -------------------------------------------------------------------------
+
+S4_DIR="${tmp}/s4"
+mkdir -p "${S4_DIR}"
+S4_WORKDIR="${S4_DIR}/workdir"
+S4_STATE="${S4_DIR}/state"
+S4_STUB_ARTIFACT_DIR="${S4_DIR}/stub-exec/run-xyz789"
+mkdir -p "${S4_WORKDIR}" "${S4_STATE}/runs" "${S4_STUB_ARTIFACT_DIR}"
+
+# setup_run.sh cd's to git top-level on entry — give WORKDIR a minimal git
+# identity so the cd resolves. Suppress any global git template hooks.
+( cd "${S4_WORKDIR}" && git init -q -b main . ) 2>/dev/null
+
+# Patch the discovery block to a single stub-assignment line, and drop
+# `tracker` from the prereq loop. The block delimiters are pinned by
+# Section 1's sentinel lock, so awk's anchor strings cannot drift without
+# tripping the static guard first.
+PATCHED="${S4_DIR}/setup_run.patched.sh"
+awk '
+  /--- begin dip-executor discovery \(PORTING NOTE\) ---/ {
+    # The porter''s replacement: a single-line read of an executor-published
+    # env var. The exact form here mirrors what tracker#323 + future
+    # executors are expected to emit.
+    print "dip_artifact_dir=\"${STUB_ARTIFACT_DIR}\""
+    in_block = 1
+    next
+  }
+  /--- end dip-executor discovery ---/ {
+    in_block = 0
+    next
+  }
+  !in_block { print }
+' "${SETUP_RUN}" > "${PATCHED}"
+
+# Drop tracker from the prereq loop. The literal is pinned by Section 1's
+# LIT_PREREQ_CODE; a drift trips that lock first, so the sed pattern here is
+# safe to harden.
+sed -i 's/for cmd in gh jq git tracker yq timeout/for cmd in gh jq git yq timeout/' "${PATCHED}"
+
+# Sanity: confirm patch landed (defense against awk/sed silently no-op'ing
+# in some weird locale). If these trip, the test is broken, not the porter.
+if grep -qF -e "${LIT_SENTINEL}" "${PATCHED}"; then
+  fail "Section 4 patcher failed to strip discovery block from setup_run.sh"
+fi
+if grep -qF 'for cmd in gh jq git tracker yq timeout' "${PATCHED}"; then
+  fail "Section 4 patcher failed to drop tracker from prereq loop"
+fi
+# shellcheck disable=SC2016  # grepping for the literal as-written in the patch
+if ! grep -qF 'dip_artifact_dir="${STUB_ARTIFACT_DIR}"' "${PATCHED}"; then
+  fail "Section 4 patcher failed to insert stub assignment"
+fi
+
+# Downstream-tracker-reference scan: after the prereq loop closes, the
+# patched script must not reference `tracker` anywhere — not in `command -v`,
+# not in a path, not in a comment that a porter might mistake for live code.
+# Comments are stripped first so the contract's documentation references
+# (e.g., "tracker#323") in the discovery block's preamble — which the patch
+# strips anyway — don't false-positive future maintenance.
+#
+# `awk` extracts everything after the prereq loop's closing `done` line, and
+# `grep -v '^[[:space:]]*#'` drops comment-only lines. The remaining body
+# (code + trailing comments on code lines) must be tracker-free.
+post_prereq="${S4_DIR}/post_prereq.body"
+awk '
+  /for cmd in gh jq git yq timeout; do/ { in_loop = 1; next }
+  in_loop && /^done$/ { in_loop = 0; emit = 1; next }
+  emit { print }
+' "${PATCHED}" | grep -v '^[[:space:]]*#' > "${post_prereq}" || true
+if grep -nE '\btracker\b' "${post_prereq}"; then
+  fail "patched setup_run.sh still references tracker downstream of prereq loop (see lines above)"
+fi
+
+# Invoke the patched script. Bypass gh/network dependencies by exporting
+# GH_REPO + DEV_LOOP_BASE_BRANCH so the resolver short-circuits to env src.
+s4_out="${S4_DIR}/setup_run.out"
+(
+  cd "${S4_WORKDIR}"
+  STUB_ARTIFACT_DIR="${S4_STUB_ARTIFACT_DIR}" \
+  DEV_LOOP_STATE_ROOT="${S4_STATE}" \
+  GH_REPO="stub-org/stub-repo" \
+  DEV_LOOP_BASE_BRANCH="main" \
+  DEV_LOOP_ALLOW_NO_CI="false" \
+  XDG_CACHE_HOME="${S4_DIR}/cache" \
+  HOME="${S4_DIR}/home" \
+  sh -c "$(cat "${PATCHED}")"
+) > "${s4_out}" 2>&1 || fail "patched setup_run.sh exited non-zero: $(cat "${s4_out}")"
+
+# Marker assertion: setup-ok is the only acceptable outcome under the
+# stub-port. setup-failed / setup-resume-required / setup-lock-held all
+# indicate the porter's recipe is broken.
+s4_marker=$(cat "${s4_out}" 2>/dev/null || true)
+if [ "${s4_marker}" != "setup-ok" ]; then
+  fail "patched setup_run.sh emitted '${s4_marker}' (expected setup-ok); error:"
+  s4_rid_for_err=$(cat "${S4_STATE}/.current_rid" 2>/dev/null || true)
+  if [ -n "${s4_rid_for_err}" ] && [ -f "${S4_STATE}/runs/${s4_rid_for_err}/setup_error.txt" ]; then
+    cat "${S4_STATE}/runs/${s4_rid_for_err}/setup_error.txt" >&2 || true
+  fi
+fi
+
+# .current_rid + RUN_DIR layout invariants.
+s4_rid=$(cat "${S4_STATE}/.current_rid" 2>/dev/null || true)
+if [ -z "${s4_rid}" ]; then
+  fail "patched setup_run.sh did not publish .current_rid"
+else
+  s4_run_dir="${S4_STATE}/runs/${s4_rid}"
+  if [ ! -f "${s4_run_dir}/env" ]; then
+    fail "patched setup_run.sh did not write ${s4_run_dir}/env"
+  fi
+  if [ ! -f "${s4_run_dir}/rid.txt" ]; then
+    fail "patched setup_run.sh did not write rid.txt"
+  fi
+  if [ ! -f "${s4_run_dir}/started_at.txt" ]; then
+    fail "patched setup_run.sh did not write started_at.txt"
+  fi
+
+  # Env file content assertions. DIP_ARTIFACT_DIR is the contract surface for
+  # downstream persist scripts; if the porter's stub assignment doesn't land
+  # here verbatim, every persist script will fail downstream.
+  s4_env="${s4_run_dir}/env"
+  if [ -f "${s4_env}" ]; then
+    expected_line="DIP_ARTIFACT_DIR='${S4_STUB_ARTIFACT_DIR}'"
+    if ! grep -qF "${expected_line}" "${s4_env}"; then
+      fail "env file does not pin DIP_ARTIFACT_DIR to stub path; got:"
+      grep DIP_ARTIFACT_DIR "${s4_env}" >&2 || true
+    fi
+    # Allow-list completeness — mirrors the comment block above emit_env in
+    # setup_run.sh AND test_helpers.bash's unset list. A drift in any of the
+    # three trips this assertion.
+    for key in GH_REPO BASE_BRANCH ALLOW_NO_CI DEV_LOOP_RUN_ID \
+               DEV_LOOP_RUN_DIR DIP_ARTIFACT_DIR DEV_LOOP_REPO_ROOT; do
+      if ! grep -q "^${key}=" "${s4_env}"; then
+        fail "env file missing allow-listed key: ${key}"
+      fi
+    done
+    # Well-formedness: the file must source cleanly under POSIX `set -a`.
+    # `sh -c` in a fresh subshell so a syntax error doesn't poison this one.
+    if ! ( sh -c "set -eu; set -a; . '${s4_env}'; set +a" ) 2>/dev/null; then
+      fail "env file is not sourceable under POSIX set -a:"
+      cat "${s4_env}" >&2 || true
+    fi
+  fi
+fi
+
 if [ "${rc}" -eq 0 ]; then
-  printf 'OK: porting-contract smoke clean (8 persist scripts + README load-bearing literals + sentinel anchor)\n'
+  printf 'OK: porting-contract smoke clean (8 persist scripts + README load-bearing literals + sentinel anchor + setup_run stub-port runtime)\n'
 fi
 exit "${rc}"
