@@ -36,7 +36,7 @@ if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
   exit 2
 fi
 
-# Lock 1 — forbidden literal (#61).
+# Lock 1 — forbidden literal (#61, extended #88 Gap 2).
 #
 # We need to distinguish grep's three exit codes here:
 #   0 → match(es) found     → forbidden literal present, FAIL (lock tripped)
@@ -45,17 +45,63 @@ fi
 #                             pass on permission/IO errors)
 # A bare `grep ... || true` would collapse 1 and 2 into the same "empty hits,
 # print OK" branch — a false-positive for a regression lock.
+#
+# Coverage extension (#88 Gap 2): the README porting recipe claims the
+# PR-ops / iter / worktree / ratchet scripts "need no changes" for a second
+# executor. That claim lives or dies on the same `tracker/runs` literal —
+# if any of those scripts ever grows a tracker-coupled path string, the
+# README lies to the porter. Scan them alongside persist_*.sh under the same
+# Lock 1. The named-file list is deliberate (not a glob) — adding a new
+# executor-neutral script to dev_loop/scripts/ must be a conscious decision
+# that updates BOTH the README porting recipe AND this list.
+#
+# Roster sourcing (post-review): README step 3 enumerates the no-change scripts
+# as "PR-ops (push/fetch-context/recheck/poll/comment/merge), the iter counters
+# [plural], the worktree manager, and the ratchet log". The list below mirrors
+# that enumeration 1:1 — `fetch_pr_context.sh` and `init_iter_counter.sh` were
+# added after PR #99 review pointed out the original 8-script list missed
+# README-documented surface (codex P2, squad-echoed). Keep this list in sync
+# with the README porting recipe; any addition/removal here MUST be paired
+# with a README edit, or the porting contract drifts in either direction.
+PR_OPS_SCRIPTS="
+push_and_open_pr.sh
+fetch_pr_context.sh
+recheck_pr_sha.sh
+poll_ci.sh
+post_squad_comment.sh
+merge_pr.sh
+init_iter_counter.sh
+inc_iter_counter.sh
+create_worktree.sh
+ratchet_log.sh
+"
+# Append PR-ops paths to "$@" directly. Each path is validated before being
+# added so a typo in PR_OPS_SCRIPTS fails loud here, not as a grep
+# "No such file" warning that "|| true" might otherwise swallow. Using
+# `set -- "$@" "${p}"` avoids IFS manipulation and keeps each path quoted —
+# a path containing a space or glob char (worktrees under /tmp/agent-*)
+# remains a single argument with no pathname expansion.
+for s in ${PR_OPS_SCRIPTS}; do
+  p="${SCRIPTS_DIR}/${s}"
+  if [ ! -f "${p}" ]; then
+    printf 'FAIL: porting-contract scan target missing: %s (guard cannot run)\n' \
+      "${p}" >&2
+    exit 2
+  fi
+  set -- "$@" "${p}"
+done
+
 set +e
 hits=$(grep -nH -F "tracker/runs" "$@")
 grep_rc=$?
 set -e
 
 if [ "${grep_rc}" -eq 0 ]; then
-  printf 'FAIL: persist_*.sh must not reference executor-specific path strings (see #61):\n%s\n' \
+  printf 'FAIL: persist_*.sh + PR-ops/iter/worktree/ratchet scripts must not reference executor-specific path strings (see #61, #88):\n%s\n' \
     "${hits}" >&2
   exit 1
 elif [ "${grep_rc}" -ne 1 ]; then
-  printf 'FAIL: grep exited %d while scanning persist_*.sh (guard cannot run)\n' \
+  printf 'FAIL: grep exited %d while scanning porting-contract files (guard cannot run)\n' \
     "${grep_rc}" >&2
   exit 2
 fi
@@ -70,8 +116,13 @@ fi
 UNSET_PHRASE='DIP_ARTIFACT_DIR is unset; was setup_run executed?'
 STALE_PHRASE='DIP_ARTIFACT_DIR=%s is not a directory; was the artifact dir cleaned up under us?'
 
+# Lock 2 is persist-only: the unset/stale arms surface DIP_ARTIFACT_DIR for
+# operators when persist scripts can't find their input. PR-ops/iter/worktree/
+# ratchet scripts don't consume DIP_ARTIFACT_DIR — extending Lock 2 to them
+# would be a coverage error, not a hardening. Re-glob the persist set here
+# (cheap; the glob already validated upstream).
 guard_lock2_failed=0
-for f in "$@"; do
+for f in "${SCRIPTS_DIR}"/persist_*.sh; do
   if ! grep -qF "${UNSET_PHRASE}" "${f}"; then
     printf 'FAIL: %s is missing the #73 unset-arm phrase: %s\n' \
       "${f}" "${UNSET_PHRASE}" >&2
@@ -87,5 +138,5 @@ if [ "${guard_lock2_failed}" -ne 0 ]; then
   exit 1
 fi
 
-printf 'OK: persist_*.sh breadcrumbs clean (executor-neutral + #73 phrases pinned)\n'
+printf 'OK: porting-contract clean — Lock 1 (no tracker/runs literal) across persist_*.sh + PR-ops/iter/worktree/ratchet scripts; Lock 2 (#73 unset/stale phrases pinned) across persist_*.sh\n'
 exit 0
