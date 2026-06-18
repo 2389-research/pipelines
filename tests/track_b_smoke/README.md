@@ -81,14 +81,18 @@ tests/track_b_smoke/smoke.sh verify-greenfield
 ```
 
 Required: `tracker` on `$PATH`, valid `ANTHROPIC_API_KEY` (or whichever
-provider `tracker setup` selected). Observed per-invocation cost against
-Claude Sonnet **assuming tracker#366 is fixed** (while the regression is
-live, the converted agent runs with full tool access and the observed cost
-per probe may exceed these):
+provider `tracker setup` selected). The sprint families
+(`verify-sprint-exec`, `verify-sprint-runner`) additionally require `yq` on
+`$PATH` — the sprint pipelines preflight-check yq and `smoke.sh` fails fast
+with exit code 2 if it's missing rather than letting the probe exercise the
+wrong (`CheckYq → YqMissing → Exit`) short-circuit. Observed per-invocation
+cost against Claude Sonnet **assuming tracker#366 is fixed** (while the
+regression is live, the converted agent runs with full tool access and the
+observed cost per probe may exceed these):
 
 - `verify` / `verify-runner`: ~$0.001 (Exit-only, one LLM call)
-- `verify-sprint-exec`: ~$0.005 (Start + Exit, two LLM calls)
-- `verify-greenfield`: ~$0.003 (Start + Exit, two LLM calls)
+- `verify-sprint-exec`: $0.0024-$0.0052 (Start + Exit, two LLM calls)
+- `verify-greenfield`: $0.0030-$0.0050 (Start + Exit, two LLM calls)
 - `verify-sprint-runner`: ~$0.07 — the no_ledger_exit node is a
   tool-enabled agent on the short-circuit path and dominates the cost;
   Start + Exit themselves stay in the cheap band
@@ -96,24 +100,34 @@ per probe may exceed these):
 Each probe hermetically copies the pipeline into a temp workdir and asserts
 on the resulting `.tracker/runs/<rid>/` artifacts.
 
-### Heavier probes (not implemented as auto-runners)
+### Heavier operator procedures (full-pipeline runs)
 
-The remaining families need a real seed (a sprint to execute, a spec to
-synthesize) and run to completion across many LLM nodes. They are NOT
-implemented in `smoke.sh` because:
+The auto-runnable smoke probes above exercise the converted `Start` + `Exit`
+agents via cheap short-circuit edges (no implementation lane, no synthesis
+lane). The heavier procedures below run the same pipelines to completion
+across many LLM nodes with a real seed — they catch regressions in the
+non-short-circuit paths that the auto-probes deliberately skip. They are
+NOT implemented in `smoke.sh` because:
 
-- The smoke value is in exercising the converted agent under a realistic
-  catalog, not in re-running expensive pipelines.
 - Per-family seeds belong to the operator's environment, not this repo.
+- Full runs cost $0.10-$10 per pipeline and run for many minutes; gating
+  PR CI on them is impractical.
+
+The sprint-exec, sprint-runner, and greenfield families have BOTH an
+auto-runnable smoke probe (above) AND a manual heavier procedure (below).
+Operators run the heavier procedure when changing the implementation lane
+or synthesis lane of those pipelines — the auto-probe alone won't catch
+those regressions.
 
 Documented operator procedure per family:
 
-| Family | Pipeline | Seed | Converted nodes to assert |
-|---|---|---|---|
-| sprint (exec) | `sprint/sprint_exec-cheap.dip` | `.ai/sprints/SPRINT-001.md` + `.ai/ledger.tsv` (sprint with trivial DoD) | `Start`, `Exit`, `GateCheap` |
-| sprint (runner) | `sprint/sprint_runner_yaml_v2.dip` | `.ai/sprints/` populated | `Start`, `Exit` |
-| greenfield | `greenfield/greenfield_synthesis.dip` | `workspace/raw/`, `workspace/public/` populated | `Start`, `Exit` |
-| greenfield (orchestrator) | `greenfield/greenfield.dip` | greenfield discovery output | `Start`, `Exit` |
+| Family | Pipeline | Seed | Converted nodes to assert | Auto-probe? |
+|---|---|---|---|---|
+| sprint (exec) | `sprint/sprint_exec-cheap.dip` | `.ai/sprints/SPRINT-001.md` + `.ai/ledger.tsv` (sprint with trivial DoD) | `Start`, `Exit`, `GateCheap` | no |
+| sprint (exec, v2) | `sprint/sprint_exec_yaml_v2.dip` | `.ai/sprints/` + `.ai/ledger.yaml` with an executable sprint | `Start`, `Exit`, `ReviewAnalysis` | yes (`verify-sprint-exec`, short-circuit only) |
+| sprint (runner) | `sprint/sprint_runner_yaml_v2.dip` | `.ai/sprints/` populated | `Start`, `Exit` | yes (`verify-sprint-runner`, short-circuit only) |
+| greenfield | `greenfield/greenfield_synthesis.dip` | `workspace/raw/`, `workspace/public/` populated | `Start`, `Exit` | yes (`verify-greenfield`, short-circuit only) |
+| greenfield (orchestrator) | `greenfield/greenfield.dip` | greenfield discovery output | `Start`, `Exit` | no |
 
 After the operator runs one of these by hand, the same `lib.sh` helpers
 apply against the resulting `.tracker/runs/<rid>/`:

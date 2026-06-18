@@ -163,6 +163,24 @@ if ! command -v tracker >/dev/null 2>&1; then
   exit 2
 fi
 
+# yq preflight for sprint families. sprint_exec_yaml_v2 / sprint_runner_yaml_v2
+# both gate on a `CheckYq` tool node that routes to `YqMissing → Exit` when yq
+# is absent. That's a real short-circuit edge the pipeline supports, but it is
+# NOT the converged-end-state path these probes are meant to exercise; passing
+# via the yq-missing edge would silently weaken the converted-node coverage
+# claim (the wrong Exit, reached via the wrong route). Fail fast here instead.
+# verify-greenfield's `ReadL1Summary` short-circuit prints `no-l1-summary`
+# *before* invoking yq, so the greenfield probe doesn't need yq on PATH.
+case "${family}" in
+  verify-sprint-exec|verify-sprint-runner)
+    if ! command -v yq >/dev/null 2>&1; then
+      printf 'setup error: yq not installed; sprint probes require yq\n' >&2
+      printf '  install: brew install yq  (macOS) | snap install yq (Linux)\n' >&2
+      exit 2
+    fi
+    ;;
+esac
+
 workdir=$(mktemp -d -t track_b_smoke.XXXXXX)
 
 # Cleanup contract: remove the workdir only when the smoke run passed *and*

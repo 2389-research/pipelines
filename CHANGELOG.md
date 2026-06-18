@@ -22,10 +22,15 @@ convention and where to find the long-form GitHub release notes.
   (`verify-sprint-exec`, `verify-sprint-runner`, `verify-greenfield`). Each
   fail-fasts past a short-circuit edge so the converted `tool_access: none`
   Start + Exit agents are exercised under a realistic catalog without
-  entering the implementation lane. Observed cost per probe:
-  `verify-sprint-exec` ~$0.005, `verify-sprint-runner` ~$0.07 (the
-  no_ledger_exit agent is tool-enabled and dominates), `verify-greenfield`
-  ~$0.003 ([#106](https://github.com/2389-research/pipelines/pull/106),
+  entering the implementation lane. Observed per-family cost bands:
+  `verify-sprint-exec` $0.0024-$0.0052, `verify-greenfield` $0.0030-$0.0050,
+  `verify-sprint-runner` ~$0.07 (the no_ledger_exit agent on the
+  short-circuit path is tool-enabled and dominates the cost; Start + Exit
+  themselves stay in the cheap band). Sprint families now preflight `yq`
+  on `PATH` and fail-fast if absent, so the probe can't silently pass via
+  the `CheckYq → YqMissing → Exit` short-circuit instead of the intended
+  converged-end-state path
+  ([#106](https://github.com/2389-research/pipelines/pull/106),
   closes [#76](https://github.com/2389-research/pipelines/issues/76)).
 
 ### Changed
