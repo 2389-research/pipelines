@@ -29,7 +29,7 @@ jobs:
             echo "  (none)"
           fi
 
-          # SemVer surface per CONTRIBUTING.md#versioning: *.dip + dev_loop/
+          # SemVer surface per RELEASING.md#versioning: *.dip + dev_loop/
           # operator-facing configuration. Helper internals under
           # dev_loop/scripts/lib/ are explicitly excluded.
           behavioral=$(printf '%s\n' "$files" \
@@ -74,7 +74,7 @@ jobs:
 
           {
             echo "::error::SemVer-surface files changed without an entry under [Unreleased] in CHANGELOG.md."
-            echo "Touched the SemVer surface (see CONTRIBUTING.md#versioning):"
+            echo "Touched the SemVer surface (see RELEASING.md#versioning):"
             printf '%s\n' "$behavioral" | sed 's/^/  /'
             echo "Either add an entry under [Unreleased] in CHANGELOG.md, or apply the 'skip-changelog' label if this SemVer-surface PR legitimately needs no entry (e.g., refactor-only / formatting / comment-only)."
           } >&2

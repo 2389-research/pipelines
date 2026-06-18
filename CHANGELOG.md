@@ -4,14 +4,13 @@ All notable changes to `2389-research/pipelines` are recorded here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-as defined in [`CONTRIBUTING.md#versioning`](./CONTRIBUTING.md#versioning) (the
+as defined in [`RELEASING.md#versioning`](./RELEASING.md#versioning) (the
 policy applies from `v0.2.0` forward; `v0.1.x` is not retroactively re-versioned).
 A custom `### Deferred` section type is used where in-flight scope was
 reclassified rather than landed (see v0.1.3); other sections follow the KAC
-1.1.0 enumeration.
-
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md#releases) for the release-cut
-convention and where to find the long-form GitHub release notes.
+1.1.0 enumeration. Long-form release notes are published on the
+[GitHub releases page](https://github.com/2389-research/pipelines/releases);
+maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention.
 
 ## [Unreleased]
 
@@ -23,6 +22,13 @@ convention and where to find the long-form GitHub release notes.
   helpers colocate with auto-runners under the same `tests/<name>/`, with
   each entry-point labeled `auto` or `manual` in the suite README
   ([#83](https://github.com/2389-research/pipelines/issues/83)).
+- Renamed root `CONTRIBUTING.md` → `RELEASING.md` to match its scope: the file
+  is a maintainer release-cut + SemVer playbook with no external-contributor
+  content. README and CHANGELOG anchors updated; `.github/PULL_REQUEST_TEMPLATE.md`
+  and `.github/workflows/changelog_check.yml` comments repointed at the new path.
+  Operator-visible doc rename; not a SemVer-surface change
+  ([#104](https://github.com/2389-research/pipelines/pull/104),
+  closes [#86](https://github.com/2389-research/pipelines/issues/86)).
 
 ## [0.3.0] - 2026-06-17
 
