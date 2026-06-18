@@ -1,4 +1,4 @@
-# Contributing
+# Releasing
 
 ## Versioning
 
