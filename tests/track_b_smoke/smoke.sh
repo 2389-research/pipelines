@@ -163,14 +163,16 @@ if ! command -v tracker >/dev/null 2>&1; then
   exit 2
 fi
 
-# yq preflight for sprint families. sprint_exec_yaml_v2 / sprint_runner_yaml_v2
-# both gate on a `CheckYq` tool node that routes to `YqMissing → Exit` when yq
-# is absent. That's a real short-circuit edge the pipeline supports, but it is
-# NOT the converged-end-state path these probes are meant to exercise; passing
-# via the yq-missing edge would silently weaken the converted-node coverage
-# claim (the wrong Exit, reached via the wrong route). Fail fast here instead.
-# verify-greenfield's `ReadL1Summary` short-circuit prints `no-l1-summary`
-# *before* invoking yq, so the greenfield probe doesn't need yq on PATH.
+# yq preflight for sprint families. Without yq on PATH, sprint_exec_yaml_v2
+# routes CheckYq -> YqMissing -> Exit, and sprint_runner_yaml_v2 routes
+# check_yq -> yq_missing -> Exit (the .dip files use different casing for
+# the same gating pattern). That's a real short-circuit edge the pipeline
+# supports, but it is NOT the converged-end-state path these probes are meant
+# to exercise; passing via the yq-missing edge would silently weaken the
+# converted-node coverage claim (the wrong Exit, reached via the wrong route).
+# Fail fast here instead. verify-greenfield's `ReadL1Summary` short-circuit
+# prints `no-l1-summary` *before* invoking yq, so the greenfield probe doesn't
+# need yq on PATH.
 case "${family}" in
   verify-sprint-exec|verify-sprint-runner)
     if ! command -v yq >/dev/null 2>&1; then
@@ -251,6 +253,8 @@ printf 'run dir: %s\n' "${run_dir}" >&2
 # copy-paste-per-probe discipline: each assertion still reads as a flat,
 # greppable line in the harness, and a single node's failure under set -e
 # halts the whole run with the workdir retained.
+# shellcheck disable=SC2086
+# ^ intentional word-splitting: converted_nodes is a space-separated list.
 for converted_node in ${converted_nodes}; do
   # Assertion 1: the converted node was actually exercised. Without this the
   # rest pass vacuously when the pipeline shape changed and the node was

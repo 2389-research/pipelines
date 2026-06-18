@@ -109,6 +109,81 @@ exit 0
   rm -rf "${wd}"
 }
 
+@test "verify-sprint-exec fast-fails with exit 2 when yq is missing" {
+  # Mask yq off PATH by pointing PATH at only the shim dir + a curated minimal
+  # path. The shim dir has no `yq`, so `command -v yq` returns non-zero and
+  # the preflight should exit 2 with a setup-error message.
+  write_tracker_shim 'exit 0'
+  # Provide the basic POSIX utilities smoke.sh needs but omit yq.
+  for tool in mktemp cp basename dirname sed printf find ls head cat rm mkdir chmod cd; do
+    : # built-ins or already on PATH via /bin /usr/bin below
+  done
+  PATH="${SHIM}:/usr/bin:/bin" run "${SMOKE}" verify-sprint-exec
+  [ "${status}" -eq 2 ]
+  case "${output}" in
+    *"setup error: yq not installed"*) ;;
+    *) printf 'expected setup-error message, got: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
+@test "verify-sprint-runner fast-fails with exit 2 when yq is missing" {
+  write_tracker_shim 'exit 0'
+  PATH="${SHIM}:/usr/bin:/bin" run "${SMOKE}" verify-sprint-runner
+  [ "${status}" -eq 2 ]
+  case "${output}" in
+    *"setup error: yq not installed"*) ;;
+    *) printf 'expected setup-error message, got: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
+@test "verify-sprint-exec invokes tracker shim when yq is present" {
+  # Provide a fake yq on PATH (just `exit 0` is enough for `command -v`).
+  cat > "${SHIM}/yq" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "${SHIM}/yq"
+  # Tracker shim emits clean Start + Exit artifacts so both converted nodes
+  # pass the 4-assertion battery.
+  write_tracker_shim '
+mkdir -p ./.tracker/runs/r1/Start ./.tracker/runs/r1/Exit
+printf "start agent text\n" > ./.tracker/runs/r1/Start/response.md
+printf "exit agent text\n"  > ./.tracker/runs/r1/Exit/response.md
+{
+  printf "%s\n" "{\"type\":\"stage_started\",\"node_id\":\"Start\"}"
+  printf "%s\n" "{\"type\":\"stage_started\",\"node_id\":\"Exit\"}"
+} > ./.tracker/runs/r1/activity.jsonl
+exit 0
+'
+  run "${SMOKE}" verify-sprint-exec
+  [ "${status}" -eq 0 ]
+  # Multi-node assertion: PASS line should name both converted nodes.
+  case "${output}" in
+    *"Start Exit"*) ;;
+    *) printf 'expected both Start and Exit in PASS line: %s\n' "${output}" >&2; return 1 ;;
+  esac
+}
+
+@test "multi-node family fails if only one converted node has artifacts" {
+  # Provide yq so the preflight passes; then drop only Start's artifacts. The
+  # Exit assertions must fail, proving the loop actually runs the battery for
+  # *every* node in converted_nodes (not just the first).
+  cat > "${SHIM}/yq" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "${SHIM}/yq"
+  write_tracker_shim '
+mkdir -p ./.tracker/runs/r1/Start
+printf "start agent text\n" > ./.tracker/runs/r1/Start/response.md
+printf "%s\n" "{\"type\":\"stage_started\",\"node_id\":\"Start\"}" \
+  > ./.tracker/runs/r1/activity.jsonl
+exit 0
+'
+  run "${SMOKE}" verify-sprint-exec
+  [ "${status}" -ne 0 ]
+}
+
 @test "TRACK_B_SMOKE_KEEP=1 retains workdir even on success" {
   write_tracker_shim '
 mkdir -p ./.tracker/runs/r1/Exit
