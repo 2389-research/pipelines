@@ -23,7 +23,8 @@ convention and where to find the long-form GitHub release notes.
   fail-fasts past a short-circuit edge so the converted `tool_access: none`
   Start + Exit agents are exercised under a realistic catalog without
   entering the implementation lane. ~$0.003-$0.005 per probe on observed
-  runs. Closes [#76](https://github.com/2389-research/pipelines/issues/76).
+  runs ([#106](https://github.com/2389-research/pipelines/pull/106),
+  closes [#76](https://github.com/2389-research/pipelines/issues/76)).
 
 ### Changed
 
