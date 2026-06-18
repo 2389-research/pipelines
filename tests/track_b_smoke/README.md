@@ -81,12 +81,20 @@ tests/track_b_smoke/smoke.sh verify-greenfield
 ```
 
 Required: `tracker` on `$PATH`, valid `ANTHROPIC_API_KEY` (or whichever
-provider `tracker setup` selected). Per-invocation cost: <$0.01 against
-Claude Sonnet on observed runs **assuming tracker#366 is fixed**; while the
-regression is live, the converted agent runs with full tool access and the
-observed cost per probe may exceed this. Each probe hermetically copies the
-pipeline into a temp workdir and asserts on the resulting
-`.tracker/runs/<rid>/` artifacts.
+provider `tracker setup` selected). Observed per-invocation cost against
+Claude Sonnet **assuming tracker#366 is fixed** (while the regression is
+live, the converted agent runs with full tool access and the observed cost
+per probe may exceed these):
+
+- `verify` / `verify-runner`: ~$0.001 (Exit-only, one LLM call)
+- `verify-sprint-exec`: ~$0.005 (Start + Exit, two LLM calls)
+- `verify-greenfield`: ~$0.003 (Start + Exit, two LLM calls)
+- `verify-sprint-runner`: ~$0.07 — the no_ledger_exit node is a
+  tool-enabled agent on the short-circuit path and dominates the cost;
+  Start + Exit themselves stay in the cheap band
+
+Each probe hermetically copies the pipeline into a temp workdir and asserts
+on the resulting `.tracker/runs/<rid>/` artifacts.
 
 ### Heavier probes (not implemented as auto-runners)
 

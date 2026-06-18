@@ -54,7 +54,8 @@ repo_root=$(cd "${script_dir}/../.." && pwd)
 
 # Each branch sets:
 #   pipeline        — absolute path to the .dip to copy into the temp workdir
-#   converted_node  — node ID of the `tool_access: none` agent under test
+#   converted_nodes — space-separated list of node IDs of the `tool_access: none`
+#                     agents under test (each gets the full 4-assertion battery)
 #   extra_files     — positional-args list of extra files to copy (use `set --`)
 #   seed_workdir    — name of a shell function to run inside the workdir after
 #                     pipeline copy, to pre-seed any state the probe needs to
@@ -65,14 +66,18 @@ case "${family}" in
     pipeline="${repo_root}/sprint/verify_sprint.dip"
     # Exit is the converted `tool_access: none` agent in verify_sprint.dip.
     # Without .ai/current_verify_id.txt the Start tool exits 1 and routes to Exit.
-    converted_node=Exit
+    # Start in verify_sprint.dip is NOT a `tool_access: none` agent (it's the
+    # tool node that fails to short-circuit), so we only assert on Exit here.
+    converted_nodes=Exit
     set --
     ;;
   verify-runner)
     pipeline="${repo_root}/sprint/verify_sprints_runner.dip"
     # Exit is the converted `tool_access: none` agent in verify_sprints_runner.dip.
     # Without .ai/ledger.yaml the FindCompletedSprints tool fails and routes to Exit.
-    converted_node=Exit
+    # Start in verify_sprints_runner.dip is the tool-running entry node, not a
+    # converted Cat-B/-C agent, so we only assert on Exit here.
+    converted_nodes=Exit
     # verify_sprints_runner.dip references verify_sprint.dip as a subgraph; the
     # tracker loader resolves it relative to the runner's directory, so both
     # files must land side-by-side in the temp workdir.
@@ -85,9 +90,8 @@ case "${family}" in
     # all-completed ledger so EnsureLedger skips creation, FindNextSprint
     # reports `all-done`, and the workflow routes Start -> ...tools... -> Exit
     # without ever entering the implementation lane. Exercises both converted
-    # Start and Exit agents in one run; we assert on Exit to match the
-    # convention of verify / verify-runner.
-    converted_node=Exit
+    # Start and Exit agents in one run; we assert on both.
+    converted_nodes="Start Exit"
     set --
     seed_workdir() {
       mkdir -p .ai
@@ -122,13 +126,13 @@ YAML
     # Without .ai/ledger.yaml the check_ledger tool prints `no_ledger`, routes
     # to no_ledger_exit (a tool-access-allowed agent that reports the missing
     # ledger), then -> Exit (converted). Exercises both converted Start and
-    # Exit agents.
+    # Exit agents; we assert on both.
     #
     # sprint_runner_yaml_v2.dip declares two subgraphs (execute_sprint ->
     # sprint_exec_yaml_v2.dip, redecompose_sprint -> spec_to_sprints_yaml_v2.dip)
     # which tracker resolves at load time. Both must land in the temp workdir
     # even though the no-ledger path never enters them.
-    converted_node=Exit
+    converted_nodes="Start Exit"
     set -- \
       "${repo_root}/sprint/sprint_exec_yaml_v2.dip" \
       "${repo_root}/sprint/spec_to_sprints_yaml_v2.dip"
@@ -138,8 +142,8 @@ YAML
     # Exit is the converted `tool_access: none` agent in greenfield_synthesis.
     # Without workspace/raw/l1-summary.yaml the ReadL1Summary tool prints
     # `no-l1-summary`, which routes directly to Exit. Exercises both converted
-    # Start and Exit agents.
-    converted_node=Exit
+    # Start and Exit agents; we assert on both.
+    converted_nodes="Start Exit"
     set --
     ;;
   *)
@@ -224,22 +228,29 @@ if ! run_dir=$(track_b_run_dir "${workdir}"); then
 fi
 printf 'run dir: %s\n' "${run_dir}" >&2
 
-# Assertion 1: the converted node was actually exercised. Without this the
-# rest pass vacuously when the pipeline shape changed and the node was
-# skipped.
-track_b_assert_node_reached "${run_dir}" "${converted_node}"
+# Run the 4-assertion battery against every converted node listed by the
+# family branch. Looping (rather than extracting a helper) preserves the
+# copy-paste-per-probe discipline: each assertion still reads as a flat,
+# greppable line in the harness, and a single node's failure under set -e
+# halts the whole run with the workdir retained.
+for converted_node in ${converted_nodes}; do
+  # Assertion 1: the converted node was actually exercised. Without this the
+  # rest pass vacuously when the pipeline shape changed and the node was
+  # skipped.
+  track_b_assert_node_reached "${run_dir}" "${converted_node}"
 
-# Assertion 2: a response.md was produced (the converted agent emitted text).
-track_b_assert_response_exists "${run_dir}" "${converted_node}"
+  # Assertion 2: a response.md was produced (the converted agent emitted text).
+  track_b_assert_response_exists "${run_dir}" "${converted_node}"
 
-# Assertion 3: the response.md contains no TOOL CALL transcript markers.
-# This is what `tool_access: none` is supposed to guarantee.
-track_b_assert_no_tool_calls_in_response "${run_dir}" "${converted_node}"
+  # Assertion 3: the response.md contains no TOOL CALL transcript markers.
+  # This is what `tool_access: none` is supposed to guarantee.
+  track_b_assert_no_tool_calls_in_response "${run_dir}" "${converted_node}"
 
-# Assertion 4: activity.jsonl shows zero tool_call_start events on this node.
-# Stricter than the response.md check — catches the case where tracker
-# dispatched a tool but the transcript formatting elided it.
-track_b_assert_no_tool_events_in_activity "${run_dir}" "${converted_node}"
+  # Assertion 4: activity.jsonl shows zero tool_call_start events on this node.
+  # Stricter than the response.md check — catches the case where tracker
+  # dispatched a tool but the transcript formatting elided it.
+  track_b_assert_no_tool_events_in_activity "${run_dir}" "${converted_node}"
+done
 
-printf 'PASS: %s smoke — %s ran without dispatching tools\n' "${family}" "${converted_node}"
+printf 'PASS: %s smoke — %s ran without dispatching tools\n' "${family}" "${converted_nodes}"
 pass=1
