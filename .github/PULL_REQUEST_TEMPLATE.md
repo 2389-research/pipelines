@@ -8,4 +8,4 @@
 
 ## Checklist
 
-- [ ] Updated `CHANGELOG.md` `[Unreleased]` (or applied `skip-changelog` label if N/A — see [RELEASING.md#enforcement](RELEASING.md#enforcement))
+- [ ] Updated `CHANGELOG.md` `[Unreleased]` (or applied `skip-changelog` label if N/A — see [RELEASING.md#enforcement](/RELEASING.md#enforcement))
