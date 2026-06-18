@@ -134,45 +134,55 @@ fi
 # If the heading drifts or the section is folded into a sibling, the README
 # checks below would silently widen scope to neighboring sections; pin the
 # heading directly so a rename trips here with an actionable message.
-if ! grep -qF "${LIT_PORTING_HEADING}" "${README}"; then
+# `-x` forces full-line match so a substring hit (heading text embedded in
+# a sentence, or a trailing-space drift) does NOT half-succeed here while
+# the awk extractor — which requires `$0 == heading` exactly — produces an
+# empty window. Aligning both checks on full-line equality keeps the
+# failure mode singular and actionable.
+if ! grep -qxF "${LIT_PORTING_HEADING}" "${README}"; then
   fail "README no longer contains the porting-recipe heading: ${LIT_PORTING_HEADING}"
 fi
 
 # Extract the porting-recipe window: lines from the porting heading
-# (exclusive) up to but not including the next `### ` heading. Both README
-# literals MUST appear inside this window — a refactor that moves the
-# literal into a CHANGELOG entry, a historical-context stub, or any other
-# section trips the lock even though `grep -qF` against the whole README
-# would still match. The awk pattern reads the heading verbatim via -v to
-# avoid quoting hazards; literal `### ` opens any other H3 (including the
-# next sibling, `### Resume contract`) and closes the window.
+# (exclusive) up to but not including the next H1/H2/H3 boundary. Both
+# README literals MUST appear inside this window — a refactor that moves
+# the literal into a CHANGELOG entry, a historical-context stub, or any
+# other section trips the lock even though `grep -qF` against the whole
+# README would still match. The awk pattern reads the heading verbatim via
+# -v to avoid quoting hazards. The terminator is ANY heading at H1, H2, or
+# H3 level: a sibling H3 closes the window normally, but a parent H2/H1
+# (which also closes an H3 in markdown's nesting) must close it too — else
+# a refactor that promotes the next sibling to H2 or deletes it outright
+# would let the window engulf neighboring sections. We also reset
+# in_section at the terminator and `exit` so a second occurrence of the
+# heading text later in the README cannot reopen and concatenate.
 porting_window="${tmp}/porting_window"
-# NOTE: terminator matches any `### ` to bound the porting-recipe window.
-# If the recipe is later split into H3 subsections (e.g. `### Discovery`,
-# `### Prereqs`), update this test to anchor on the known sibling
-# `### Resume contract` instead, or expand the window scope.
 awk -v heading="${LIT_PORTING_HEADING}" '
   $0 == heading { in_section = 1; next }
-  in_section && /^### / { in_section = 0 }
+  in_section && /^#{1,3} / { in_section = 0; exit }
   in_section { print }
 ' "${README}" > "${porting_window}"
 
 if [ ! -s "${porting_window}" ]; then
   fail "README porting-recipe window is empty (heading present but no body extracted)"
-fi
-
-if ! grep -qF "${LIT_DISCOVERY}" "${porting_window}"; then
-  fail "README porting-recipe section no longer quotes the discovery literal: ${LIT_DISCOVERY}"
-fi
-# README form: collapse any run of whitespace (incl. newlines) inside the
-# extracted porting-recipe window to a single space, then look for the
-# literal. tr to a single-line stream first; grep -F on the collapsed form.
-# This is intentionally resilient to markdown reflow but strict on content
-# drift (rename or reorder the tools and the assertion trips), AND scoped to
-# the porting-recipe section so a literal that escapes into a CHANGELOG or
-# historical stub trips the lock.
-if ! tr '\n' ' ' < "${porting_window}" | tr -s ' ' | grep -qF "${LIT_PREREQ_DOC}"; then
-  fail "README porting-recipe section no longer quotes the prereq loop literal: ${LIT_PREREQ_DOC}"
+else
+  # Gate the literal checks on a non-empty window: when the window IS empty,
+  # the empty-window failure above is the actionable signal; running the
+  # literal greps against /dev/null-equivalent input would only emit
+  # cascading "no longer quotes ..." failures that obscure the root cause.
+  if ! grep -qF "${LIT_DISCOVERY}" "${porting_window}"; then
+    fail "README porting-recipe section no longer quotes the discovery literal: ${LIT_DISCOVERY}"
+  fi
+  # README form: collapse any run of whitespace (incl. newlines) inside the
+  # extracted porting-recipe window to a single space, then look for the
+  # literal. tr to a single-line stream first; grep -F on the collapsed form.
+  # This is intentionally resilient to markdown reflow but strict on content
+  # drift (rename or reorder the tools and the assertion trips), AND scoped to
+  # the porting-recipe section so a literal that escapes into a CHANGELOG or
+  # historical stub trips the lock.
+  if ! tr '\n' ' ' < "${porting_window}" | tr -s ' ' | grep -qF "${LIT_PREREQ_DOC}"; then
+    fail "README porting-recipe section no longer quotes the prereq loop literal: ${LIT_PREREQ_DOC}"
+  fi
 fi
 
 # -------------------------------------------------------------------------
