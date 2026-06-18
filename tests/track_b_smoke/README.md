@@ -62,6 +62,22 @@ tests/track_b_smoke/smoke.sh verify
 # Cheap probe — exercises the converted Exit agent in
 # sprint/verify_sprints_runner.dip via a no-ledger fail-fast. ~1 LLM call.
 tests/track_b_smoke/smoke.sh verify-runner
+
+# Sprint-exec family — exercises the converted Start + Exit agents in
+# sprint/sprint_exec_yaml_v2.dip. Pre-seeds an all-completed .ai/ledger.yaml so
+# FindNextSprint short-circuits to `all-done` and the workflow exits without
+# entering the implementation lane. ~2 LLM calls.
+tests/track_b_smoke/smoke.sh verify-sprint-exec
+
+# Sprint-runner family — exercises the converted Start + Exit agents in
+# sprint/sprint_runner_yaml_v2.dip via a no-ledger fail-fast. Routes through
+# no_ledger_exit -> Exit. ~3 LLM calls.
+tests/track_b_smoke/smoke.sh verify-sprint-runner
+
+# Greenfield family — exercises the converted Start + Exit agents in
+# greenfield/greenfield_synthesis.dip via a no-l1-summary fail-fast (no
+# workspace/raw/l1-summary.yaml seeded). ~2 LLM calls.
+tests/track_b_smoke/smoke.sh verify-greenfield
 ```
 
 Required: `tracker` on `$PATH`, valid `ANTHROPIC_API_KEY` (or whichever
