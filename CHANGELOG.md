@@ -15,6 +15,15 @@ convention and where to find the long-form GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- `dev_loop/config/repo_conventions.md` "Testing policy" category bullet now
+  names the second axis (auto-runnable harness vs. operator runbook) and
+  states the template's default — runbooks that depend on in-tree assertion
+  helpers colocate with auto-runners under the same `tests/<name>/`, with
+  each entry-point labeled `auto` or `manual` in the suite README
+  ([#83](https://github.com/2389-research/pipelines/issues/83)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
