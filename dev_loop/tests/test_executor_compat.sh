@@ -147,6 +147,10 @@ fi
 # avoid quoting hazards; literal `### ` opens any other H3 (including the
 # next sibling, `### Resume contract`) and closes the window.
 porting_window="${tmp}/porting_window"
+# NOTE: terminator matches any `### ` to bound the porting-recipe window.
+# If the recipe is later split into H3 subsections (e.g. `### Discovery`,
+# `### Prereqs`), update this test to anchor on the known sibling
+# `### Resume contract` instead, or expand the window scope.
 awk -v heading="${LIT_PORTING_HEADING}" '
   $0 == heading { in_section = 1; next }
   in_section && /^### / { in_section = 0 }
