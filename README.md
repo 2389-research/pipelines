@@ -121,7 +121,11 @@ Tracker reads the `.dip` file, builds the execution graph, and orchestrates LLM 
 
 ## Releases & Changelog
 
-[`CHANGELOG.md`](CHANGELOG.md) carries the per-version summary in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format; long-form release notes live on the [GitHub releases page](https://github.com/2389-research/pipelines/releases). [Semantic Versioning](https://semver.org/spec/v2.0.0.html) applies from `v0.2.0` forward, scoped to the operator surface: the set of `*.dip` workflows plus the operator-facing `dev_loop/` configuration shape (`dev_loop/scripts/lib/` helper internals are explicitly excluded). PRs that touch the SemVer surface must add an entry under `CHANGELOG.md#[Unreleased]` — enforced by the `changelog check` workflow, with a `skip-changelog` label as the escape hatch. Maintainers: see [`RELEASING.md`](RELEASING.md) for the release-cut convention.
+[`CHANGELOG.md`](CHANGELOG.md) carries the per-version summary in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format; long-form release notes live on the [GitHub releases page](https://github.com/2389-research/pipelines/releases).
+
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html) applies from `v0.2.0` forward, scoped to the operator surface: the set of `*.dip` workflows plus the operator-facing `dev_loop/` configuration shape (`dev_loop/scripts/lib/` helper internals are explicitly excluded).
+
+PRs that touch the SemVer surface must add an entry under [`CHANGELOG.md#unreleased`](CHANGELOG.md#unreleased) — enforced by the `changelog check` workflow, with a `skip-changelog` label as the escape hatch. Maintainers: see [`RELEASING.md`](RELEASING.md) for the release-cut convention.
 
 ## Related Projects
 
