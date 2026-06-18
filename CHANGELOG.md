@@ -27,7 +27,7 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   content. README and CHANGELOG anchors updated; `.github/PULL_REQUEST_TEMPLATE.md`
   and `.github/workflows/changelog_check.yml` comments repointed at the new path.
   Operator-visible doc rename; not a SemVer-surface change
-  ([#PR](https://github.com/2389-research/pipelines/pull/PR),
+  ([#104](https://github.com/2389-research/pipelines/pull/104),
   closes [#86](https://github.com/2389-research/pipelines/issues/86)).
 
 ## [0.3.0] - 2026-06-17
