@@ -466,9 +466,10 @@ workflow SprintExecYamlV2
         exit 0
       fi
       # Toolchain fallback: first marker present wins (each branch exits 0).
-      # Canonical sprint-family order is swift -> python -> node -> rust -> go;
-      # order is behavior on polyglot repos, so keep it consistent and do not
-      # reorder without intent (issue #108).
+      # This ValidateBuild fallback ladder uses swift -> python -> node -> rust -> go;
+      # order is behavior on polyglot repos, so keep this ladder consistent and do
+      # not reorder without intent. Other detection ladders intentionally differ
+      # (issue #108).
       if [ -f Package.swift ]; then
         swift build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
         swift test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
