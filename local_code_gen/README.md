@@ -2,7 +2,7 @@
 
 End-to-end pipeline for taking a product `spec.md` and producing a working codebase using a local LLM (qwen3.6:35b-a3b) for the bulk of generation, with cloud agents (Opus + Sonnet) for architectural design and surgical fix-up. Cloud handles the parts that benefit from frontier reasoning (cross-sprint architecture, audit, dependency resolution); local handles the parts that benefit from cheap throughput (per-file code generation, in-loop test/fix iteration).
 
-> **Why this exists vs. the root [`spec_to_sprints.dip`](../spec_to_sprints.dip):** Harper's pipeline at the repo root is the generic spec-to-sprints workflow, designed for cloud-only code generation downstream. This variant is tuned for *local* code generation — sprint specs need to be more rigorous (the local model is a transcriber, not a designer), the file ownership model is different (front-loaded foundation + auto-discovery to avoid cross-sprint patches), and the runner has its own SR-block-based fix loop. The two pipelines share the upstream decomposition tournament; only the architect step + downstream runner differ.
+> **Why this exists vs. the upstream [`spec_to_sprints.dip`](../sprint/spec_to_sprints.dip):** Harper's pipeline in [`sprint/`](../sprint/) is the generic spec-to-sprints workflow, designed for cloud-only code generation downstream. This variant is tuned for *local* code generation — sprint specs need to be more rigorous (the local model is a transcriber, not a designer), the file ownership model is different (front-loaded foundation + auto-discovery to avoid cross-sprint patches), and the runner has its own SR-block-based fix loop. The two pipelines share the upstream decomposition tournament; only the architect step + downstream runner differ.
 
 > **📊 Research — reasoning-tier study:** [`research/reasoning-tiers/`](research/reasoning-tiers/README.md) measures how much `reasoning_effort` each upstream stage actually needs. Headline: the decomposition tournament is **reasoning-insensitive** (run it `low`), a higher FR count does **not** mean worse faithfulness, and a judge panel finds all reasoning tiers roughly equally faithful — so the cost-optimal config is **`analyze_spec: medium` + tournament `: low`** (more faithful *and* cheaper than the default all-`high`). The real quality lever is the `analyze_spec` prompt, not the reasoning knob. Includes the stage-decomposition (microservice) dips, the faithfulness-panel harness, and reproducible artifacts.
 
@@ -179,7 +179,7 @@ When `sprint_runner_qwen.dip` (or `sprint_exec_qwen.dip`) runs against an archit
 
 ### Why SR/REPLACE for the local fix loop?
 
-The bench at [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) measured this empirically (full data in [`DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md`](../../DS-scratch/local_llm_patch_bench/EDITING_STRATEGY.md), which reasons about it in depth):
+The bench at [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) measured this empirically:
 
 - Full-file rewrite: qwen can drift on any unchanged line. On a 13KB file, a one-bug fix produced a 15-test regression because qwen drifted on `back_populates` declarations across 5 unrelated classes. Rewriting whole files scales output cost with file size, not change size.
 - SEARCH/REPLACE: output volume scales with the change size. Failed merges fail loudly (block doesn't match) — never silently corrupts. Auditable: each block is a tiny diff. Empirically converges 9/10 breaks in 1 round, 3-6× faster than full-rewrite.
@@ -422,7 +422,7 @@ The split is intentional: **frontier models design the architecture**, **the loc
 | [`smoke_scaffolding/`](smoke_scaffolding/) | Tiny smoke test for `dispatch_scaffolding` (Haiku per-file scaffolding writer). | Haiku 4.5 | n/a |
 | [`principles/`](principles/) | Architecture documentation, pattern references, exemplars, structural-fix journey docs. The `principles/README.md` is the index. None of these are loaded at runtime — they're human maintenance material. | — | — |
 | [`merge_sr.py`](merge_sr.py) | Aider-style SEARCH/REPLACE block merger with 4 fallback strategies (exact / indent-preserving / whitespace-insensitive / fuzzy). Used by `sprint_runner_qwen.dip` and `sprint_exec_qwen.dip`'s LocalFix step. Same matching strategies mirrored in tracker's `applySRBlocks` (Go) for the architect-side audit pass. | — | — |
-| [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) | Bench harness — exercises the SR LocalFix tool body in isolation against deterministic pre-broken fixtures from `DS-scratch/local_llm_patch_bench/`. No Generate, no ledger, no Audit. The bench's purpose is to A/B prompt designs and validate rollback layers without spending the cost of a full sprint run. | qwen3.6:35b-a3b-q8_0 only | Same as `sprint_runner_qwen.dip` |
+| [`bench_local_fix_sr.dip`](bench_local_fix_sr.dip) | Bench harness — exercises the SR LocalFix tool body in isolation against deterministic pre-broken fixtures. No Generate, no ledger, no Audit. The bench's purpose is to A/B prompt designs and validate rollback layers without spending the cost of a full sprint run. | qwen3.6:35b-a3b-q8_0 only | Same as `sprint_runner_qwen.dip` |
 
 ## Configuration
 
@@ -511,4 +511,4 @@ The v11 run is the canonical baseline for the current toolchain (post the SR + m
 - [`principles/README.md`](principles/README.md) — index of all design docs and patterns
 - [`principles/SPEEDRUN-SPEC-FORMAT.md`](principles/SPEEDRUN-SPEC-FORMAT.md) — what a "good" sprint spec looks like for local-LLM consumption
 - [`principles/exemplars/`](principles/exemplars/) — reference shapes for the architect's inputs (`notebook_spec_analysis.md`, `notebook_sprint_plan.md`) and outputs (three validated `SPRINT-NNN.md` specs from a successful NIFB v7 run, 61 cumulative tests passing)
-- [`../spec_to_sprints.dip`](../spec_to_sprints.dip) — Harper's original cloud-only pipeline (the source we forked from)
+- [`../sprint/spec_to_sprints.dip`](../sprint/spec_to_sprints.dip) — Harper's original cloud-only pipeline (the source we forked from)
