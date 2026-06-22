@@ -24,6 +24,29 @@ teardown() {
   rm -rf "${TMPDIR}"
 }
 
+# curated_bin_without_yq -- build a bin dir that symlinks only the coreutils
+# smoke.sh needs and DELIBERATELY omits yq, then echo its path. Used by the
+# yq-missing probes: GitHub's ubuntu runner ships `yq` in /usr/bin, so masking
+# via PATH="${SHIM}:/usr/bin:/bin" lets yq leak through and the exit-2 setup
+# path is never exercised. Pointing PATH at this curated dir masks yq robustly
+# regardless of where the host installed it. Tools are resolved via the ambient
+# PATH (not hardcoded /usr/bin) so this works on any runner; a tool that isn't
+# found is simply skipped (smoke.sh exits 2 before invoking most of them).
+curated_bin_without_yq() {
+  curated="${TMPDIR}/curated_bin"
+  mkdir -p "${curated}"
+  for tool in mktemp cp basename dirname sed printf find ls head cat rm mkdir chmod; do
+    src=$(command -v "${tool}") || continue
+    # Only link tools that resolve to a real binary path; shell builtins (e.g.
+    # `printf`) resolve to a bare name and need no symlink (smoke.sh runs under
+    # /bin/sh where they are builtins anyway).
+    case "${src}" in
+      /*) ln -sf "${src}" "${curated}/${tool}" ;;
+    esac
+  done
+  printf '%s' "${curated}"
+}
+
 # write_tracker_shim <body> -- emit a fake `tracker` on PATH whose body runs
 # inside the workdir smoke.sh cd'd into.
 write_tracker_shim() {
@@ -110,15 +133,17 @@ exit 0
 }
 
 @test "verify-sprint-exec fast-fails with exit 2 when yq is missing" {
-  # Mask yq off PATH by pointing PATH at only the shim dir + a curated minimal
-  # path. The shim dir has no `yq`, so `command -v yq` returns non-zero and
-  # the preflight should exit 2 with a setup-error message.
+  # Mask yq off PATH by pointing PATH at only the shim dir + a curated bin dir
+  # that omits yq. The curated dir has no `yq`, so `command -v yq` returns
+  # non-zero and the preflight should exit 2 with a setup-error message.
   write_tracker_shim 'exit 0'
-  # Provide the basic POSIX utilities smoke.sh needs but omit yq.
-  for tool in mktemp cp basename dirname sed printf find ls head cat rm mkdir chmod cd; do
-    : # built-ins or already on PATH via /bin /usr/bin below
-  done
-  PATH="${SHIM}:/usr/bin:/bin" run "${SMOKE}" verify-sprint-exec
+  curated=$(curated_bin_without_yq)
+  # Precondition: the mask must genuinely hide yq, or the exit-2 setup path is
+  # never exercised (the bug this test guards against — see issue #117). Assert
+  # it loudly so a leak fails the test instead of silently weakening it.
+  PATH="${SHIM}:${curated}" command -v yq >/dev/null 2>&1 \
+    && { printf 'precondition failed: yq leaked into the masked PATH\n' >&2; return 1; }
+  PATH="${SHIM}:${curated}" run "${SMOKE}" verify-sprint-exec
   [ "${status}" -eq 2 ]
   case "${output}" in
     *"setup error: yq not installed"*) ;;
@@ -128,7 +153,10 @@ exit 0
 
 @test "verify-sprint-runner fast-fails with exit 2 when yq is missing" {
   write_tracker_shim 'exit 0'
-  PATH="${SHIM}:/usr/bin:/bin" run "${SMOKE}" verify-sprint-runner
+  curated=$(curated_bin_without_yq)
+  PATH="${SHIM}:${curated}" command -v yq >/dev/null 2>&1 \
+    && { printf 'precondition failed: yq leaked into the masked PATH\n' >&2; return 1; }
+  PATH="${SHIM}:${curated}" run "${SMOKE}" verify-sprint-runner
   [ "${status}" -eq 2 ]
   case "${output}" in
     *"setup error: yq not installed"*) ;;
