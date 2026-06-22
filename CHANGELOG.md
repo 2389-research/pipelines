@@ -61,6 +61,18 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   body into the `.dipx` bundle, which does not ship `scripts/lib/`. The smoke
   workflow runs the new identity gate
   ([#107](https://github.com/2389-research/pipelines/issues/107)).
+- Audited the 10 read-bounded agent nodes flagged by
+  [#110](https://github.com/2389-research/pipelines/issues/110) as
+  "prose-guarded read-only reporters." All 10 (`already_complete_exit`,
+  `FindNextSprint`, `ReadSprint`, `deps_blocked_exit`, `SemanticReview` across
+  `iterative/iter_dev.dip` and the `sprint/` workflows) read files via the
+  native `Read` tool, so `tool_access: none` — which is all-or-nothing on the
+  native backend — would strip the read access they need and break them. Each
+  is now tagged with an inline `# CAT-C READ-BOUNDED (issue #110)` marker, and
+  `docs/agent-node-safety.md` gains a section documenting the waiver so future
+  audits recognize these as reviewed exceptions rather than missed instances.
+  No `.dip` behavior change (comment-only); the write-bounding prose stays as
+  the only available guard until a scoped read-only primitive lands upstream.
 
 ## [0.3.0] - 2026-06-17
 

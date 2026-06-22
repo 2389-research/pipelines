@@ -132,6 +132,9 @@ workflow SprintExecYamlV2
       fi
       printf 'all-done'
 
+  # CAT-C READ-BOUNDED (issue #110): reads the SPRINT-<id>.yaml + .md docs;
+  # needs native Read, so tool_access: none (all-or-nothing on native) would
+  # break it. See docs/agent-node-safety.md.
   agent ReadSprint
     label: "Read Sprint"
     model: gemini-3-flash-preview

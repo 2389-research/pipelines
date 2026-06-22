@@ -116,6 +116,9 @@ workflow SprintRunnerYaml
 
       To create one, run spec_to_sprints_yaml.dip with a spec file.
 
+  # CAT-C READ-BOUNDED (issue #110): reads .ai/ledger.yaml and reports blocked
+  # state; needs native Read, so tool_access: none (all-or-nothing on native)
+  # would break it. See docs/agent-node-safety.md.
   agent deps_blocked_exit
     label: "Dependencies Blocked"
     max_turns: 1
