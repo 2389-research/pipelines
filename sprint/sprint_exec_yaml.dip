@@ -306,6 +306,18 @@ workflow SprintExecYaml
         printf 'validation-pass-yaml'
         exit 0
       fi
+      # Toolchain fallback: first marker present wins; that branch builds+tests,
+      # exiting 0 on success or 1 on failure.
+      # This ValidateBuild fallback ladder uses swift -> python -> node -> rust -> go;
+      # order is behavior on polyglot repos, so keep this ladder consistent and do
+      # not reorder without intent. Other detection ladders intentionally differ
+      # (issue #108).
+      if [ -f Package.swift ]; then
+        swift build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
+        swift test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
+        printf 'validation-pass-swift'
+        exit 0
+      fi
       if [ -f pyproject.toml ]; then
         uv run pytest -v >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
         uv run ruff check . >/tmp/sprint-lint.log 2>&1 || { cat /tmp/sprint-lint.log; exit 1; }
@@ -315,12 +327,6 @@ workflow SprintExecYaml
       if [ -f package.json ]; then
         npm test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
         printf 'validation-pass-node'
-        exit 0
-      fi
-      if [ -f Package.swift ]; then
-        swift build >/tmp/sprint-build.log 2>&1 || { cat /tmp/sprint-build.log; exit 1; }
-        swift test >/tmp/sprint-test.log 2>&1 || { cat /tmp/sprint-test.log; exit 1; }
-        printf 'validation-pass-swift'
         exit 0
       fi
       if [ -f Cargo.toml ]; then

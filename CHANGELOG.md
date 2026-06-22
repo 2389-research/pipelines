@@ -74,6 +74,22 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   No `.dip` behavior change (comment-only); the write-bounding prose stays as
   the only available guard until a scoped read-only primitive lands upstream.
 
+### Fixed
+
+- `sprint/sprint_exec_yaml.dip`, `sprint/sprint_exec_yaml_v2.dip`: the
+  `ValidateBuild` toolchain-fallback ladder detected `pyproject.toml` /
+  `package.json` before `Package.swift`, so a Swift repo carrying an
+  incidental Python/Node manifest would have run `pytest`/`npm test` instead
+  of `swift build`/`swift test`. `Package.swift` is now detected first, matching
+  the swift-first order the rest of the sprint family
+  (`sprint_exec.dip`, `*-cheap.dip`) already uses. New
+  `docs/build-system-detection-audit.md` records why the broader build-system
+  detection duplication (issue #108) is reconciled-and-documented rather than
+  extracted into a shared helper (no lib/subgraph survives `dippin pack`
+  inlining under the tracker/dippin pin) and why the remaining order
+  differences are waived as behavior contracts rather than reordered
+  ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
