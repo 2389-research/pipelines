@@ -168,7 +168,8 @@ access in general — the agent legitimately needs read access to function.
 tool catalog, including `Read` — see "The native backend always ships the full tool
 catalog" above). Applying it to a read-bounded node would remove the very `Read` tool
 the node needs, breaking it. The native backend has no working scoped-allowlist
-primitive (`allowed_tools` / `disallowed_tools` are silently dropped — Pattern 3),
+primitive (`allowed_tools` / `disallowed_tools` are silently dropped on the native
+backend — see "The native backend always ships the full tool catalog" above),
 and the `backend: claude-code` fallback (Pattern 3) is incompatible here because these
 nodes are pinned to specific providers/models (e.g. `gemini-3-flash-preview`,
 `claude-opus-4-7`) that the claude-code backend cannot honor.
@@ -181,11 +182,11 @@ own "Category C" exclusion ("agents that legitimately read files ... keep as-is"
 
 | File | Agent | Reads |
 |---|---|---|
-| `iterative/iter_dev.dip` | `already_complete_exit` | `docs/iterations/final-progress.md`, `roadmap.md` |
+| `iterative/iter_dev.dip` | `already_complete_exit` | `docs/iterations/final-progress.md`, `docs/iterations/roadmap.md` |
 | `sprint/sprint_exec-cheap.dip` | `FindNextSprint` | `.ai/ledger.tsv` |
 | `sprint/sprint_exec-cheap.dip` | `ReadSprint` | `.ai/current_sprint_id.txt`, `.ai/sprints/SPRINT-<id>.md` |
 | `sprint/sprint_exec.dip` | `FindNextSprint` | `.ai/ledger.tsv` |
-| `sprint/sprint_exec.dip` | `ReadSprint` | sprint doc |
+| `sprint/sprint_exec.dip` | `ReadSprint` | `.ai/current_sprint_id.txt`, `.ai/sprints/SPRINT-<id>.md` |
 | `sprint/sprint_exec_yaml.dip` | `ReadSprint` | SPRINT-<id>.yaml + .md |
 | `sprint/sprint_exec_yaml_v2.dip` | `ReadSprint` | SPRINT-<id>.yaml + .md |
 | `sprint/sprint_runner_yaml.dip` | `deps_blocked_exit` | `.ai/ledger.yaml` |
