@@ -189,8 +189,11 @@ check_node_cluster "progress-counter" "printf 'progress-%s-of-%s-%spct'" \
 # Cluster 6 — validate_output ledger/JSONL three-way consistency sub-block.
 # The enclosing nodes differ (architect_only carries a distinct label and exit
 # contract; see the audit), but this sub-block is shared verbatim.
+# The start anchor is a single-quoted fixed string: it is matched literally
+# (grep -F / awk index), so the `$(` must NOT expand — SC2016 is the intent.
+# shellcheck disable=SC2016
 check_range_cluster "validate-jsonl" \
-  "ledger_ids=\$(awk -F" \
+  'ledger_ids=$(awk -F' \
   "ledger-file-mismatch" \
   local_code_gen/spec_to_sprints.dip \
   local_code_gen/spec_to_sprints_lowreason.dip \
