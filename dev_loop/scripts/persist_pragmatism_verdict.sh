@@ -32,12 +32,16 @@ set +a
 
 # ---begin-persist-verdict-reference---
 # This block is BYTE-IDENTICAL across all five persist_*_verdict.sh scripts
-# except the two `squad`/`squad_node` declarations below. Like the bootstrap
-# preamble above, the duplication is intentional and enforced — see
-# tests/test_persist_verdict_identical.sh, which normalizes the two decl lines
-# and asserts every copy matches tests/persist_verdict.ref (issue #107). The
-# scripts cannot share a sourced lib: tracker inlines each `command_file:` body
-# into the .dipx bundle, which does not ship scripts/lib/.
+# except the two `squad`/`squad_node` declarations below and the literal
+# success marker `printf 'persisted-<slug>'` near the end. The marker stays a
+# static literal (not `printf 'persisted-%s'`) because `dippin coverage`/`doctor`
+# statically extract printf tokens to verify each tool output has a routing
+# edge — a format string would surface as the uncovered output `persisted-%s`.
+# Like the bootstrap preamble above, the duplication is intentional and enforced
+# — see tests/test_persist_verdict_identical.sh, which normalizes those three
+# per-squad lines and asserts every copy matches tests/persist_verdict.ref
+# (issue #107). The scripts cannot share a sourced lib: tracker inlines each
+# `command_file:` body into the .dipx bundle, which does not ship scripts/lib/.
 squad='pragmatism'
 squad_node='SquadPragmatism'
 
@@ -110,7 +114,7 @@ if ! jq '.' < "${response}" > "${target}.tmp" 2> "${error_sidecar}"; then
 fi
 mv "${target}.tmp" "${target}"
 
-printf 'persisted-%s' "${squad}"
+printf 'persisted-pragmatism'
 verdict_text=$(cat "${target}")
 cat <<DATA
 

@@ -1,15 +1,18 @@
 #!/bin/sh
 # test_persist_verdict_identical.sh — assert every persist_*_verdict.sh carries
-# a byte-identical persist body, modulo the per-squad `squad`/`squad_node`
-# declarations. The five scripts are intentional inline copies: tracker inlines
-# each `command_file:` body into the .dipx bundle, which does NOT ship
-# scripts/lib/, so the shared logic cannot be sourced at runtime. This gate
-# (mirroring test_bootstrap_identical.sh) keeps the copies from drifting
-# silently — issue #107.
+# a byte-identical persist body, modulo three per-squad lines: the
+# `squad`/`squad_node` declarations and the `printf 'persisted-<slug>'` success
+# marker. The five scripts are intentional inline copies: tracker inlines each
+# `command_file:` body into the .dipx bundle, which does NOT ship scripts/lib/,
+# so the shared logic cannot be sourced at runtime. This gate (mirroring
+# test_bootstrap_identical.sh) keeps the copies from drifting silently —
+# issue #107.
 #
 # Reference block lives in tests/persist_verdict.ref (no markers; the file IS
-# the reference, with the two decl lines blanked to `squad=` / `squad_node=`).
-# Each script inlines the same content between
+# the reference, with the three per-squad lines blanked: the `squad=` /
+# `squad_node=` decls and the `printf 'persisted-<slug>'` marker — the marker
+# stays a static literal so dippin coverage sees a routable output, not a
+# `persisted-%s` format string). Each script inlines the same content between
 # `# ---begin-persist-verdict-reference---` and
 # `# ---end-persist-verdict-reference---` markers.
 set -eu
@@ -38,12 +41,13 @@ fi
 fail=0
 for f in "$@"; do
   # Extract the inlined block between the markers, strip the marker lines, and
-  # blank the two per-squad decl lines so the comparison sees only the shared
-  # body. The blanking is anchored to the exact decl form (`squad='...'`) so a
-  # stray `squad=...` elsewhere in the body would not be masked.
+  # blank the three per-squad lines so the comparison sees only the shared body.
+  # The blanking is anchored to the exact line forms (`squad='...'`,
+  # `squad_node='...'`, `printf 'persisted-...'`) so a stray occurrence of those
+  # tokens elsewhere in the body would not be masked.
   awk '/^# ---begin-persist-verdict-reference---$/,/^# ---end-persist-verdict-reference---$/' "${f}" \
     | sed '1d;$d' \
-    | sed -E "s/^squad='[a-z0-9_]+'\$/squad=/; s/^squad_node='[A-Za-z0-9_]+'\$/squad_node=/" \
+    | sed -E "s/^squad='[a-z0-9_]+'\$/squad=/; s/^squad_node='[A-Za-z0-9_]+'\$/squad_node=/; s/^printf 'persisted-[a-z0-9_]+'\$/printf persisted-/" \
     > "${tmp}"
   if [ ! -s "${tmp}" ]; then
     printf 'persist-verdict markers missing (or empty body) in %s\n' "${f}" >&2
