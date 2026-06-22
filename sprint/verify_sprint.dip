@@ -283,6 +283,9 @@ workflow VerifySprint
           ;;
       esac
 
+  # CAT-C READ-BOUNDED (issue #110): reads SPRINT-<id>.yaml + .md plus the
+  # source files under review; needs native Read, so tool_access: none
+  # (all-or-nothing on native) would break it. See docs/agent-node-safety.md.
   agent SemanticReview
     label: "Semantic Review"
     model: claude-opus-4-7

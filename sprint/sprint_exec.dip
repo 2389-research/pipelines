@@ -37,6 +37,8 @@ workflow SprintExec
       fi
       printf 'ledger-ready'
 
+  # CAT-C READ-BOUNDED (issue #110): reads .ai/ledger.tsv; needs native Read,
+  # so tool_access: none (all-or-nothing on native) would break it.
   agent FindNextSprint
     label: "Find Next Sprint"
     model: gemini-3-flash-preview
@@ -63,6 +65,8 @@ workflow SprintExec
       printf '%s' "$target" > .ai/current_sprint_id.txt
       printf 'current-%s' "$target"
 
+  # CAT-C READ-BOUNDED (issue #110): reads .ai/current_sprint_id.txt and the
+  # SPRINT-<id>.md doc; needs native Read, so tool_access: none would break it.
   agent ReadSprint
     label: "Read Sprint"
     model: gemini-3-flash-preview

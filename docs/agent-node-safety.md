@@ -155,6 +155,48 @@ When reviewing or authoring a `.dip` file, scan for:
 4. `max_turns:` missing or > 30 on an agent — set explicitly per node based on actual work.
 5. Tool nodes routing on `ctx.tool_stdout` substring (TRK101) — use `marker_grep:` or `_TRACKER_ROUTE=` sentinel.
 
+## Read-bounded agents: why `tool_access: none` does NOT apply (issue #110)
+
+[Issue #110](https://github.com/2389-research/pipelines/issues/110) flagged 10 agent
+nodes as "pure read-only reporters guarded by prose" and proposed adding
+`tool_access: none`. On audit, all 10 are **Category C — read-bounded**: their job is
+to *read* one or more files (via the agent's native `Read` tool) and report on them.
+Their `HARD CONSTRAINT` / `Do NOT modify any files` prose bounds **writes**, not tool
+access in general — the agent legitimately needs read access to function.
+
+`tool_access: none` is **all-or-nothing on the native backend** (it strips the entire
+tool catalog, including `Read` — see "The native backend always ships the full tool
+catalog" above). Applying it to a read-bounded node would remove the very `Read` tool
+the node needs, breaking it. The native backend has no working scoped-allowlist
+primitive (`allowed_tools` / `disallowed_tools` are silently dropped — Pattern 3),
+and the `backend: claude-code` fallback (Pattern 3) is incompatible here because these
+nodes are pinned to specific providers/models (e.g. `gemini-3-flash-preview`,
+`claude-opus-4-7`) that the claude-code backend cannot honor.
+
+So these 10 sites are **intentionally waived** from the `tool_access: none` sweep and
+carry an inline `# CAT-C READ-BOUNDED (issue #110)` marker so future audits recognize
+them as reviewed exceptions rather than missed instances. This matches the
+[`tool_access: none` sweep plan](superpowers/plans/2026-05-27-tool-access-none-sweep.md)'s
+own "Category C" exclusion ("agents that legitimately read files ... keep as-is").
+
+| File | Agent | Reads |
+|---|---|---|
+| `iterative/iter_dev.dip` | `already_complete_exit` | `docs/iterations/final-progress.md`, `roadmap.md` |
+| `sprint/sprint_exec-cheap.dip` | `FindNextSprint` | `.ai/ledger.tsv` |
+| `sprint/sprint_exec-cheap.dip` | `ReadSprint` | `.ai/current_sprint_id.txt`, `.ai/sprints/SPRINT-<id>.md` |
+| `sprint/sprint_exec.dip` | `FindNextSprint` | `.ai/ledger.tsv` |
+| `sprint/sprint_exec.dip` | `ReadSprint` | sprint doc |
+| `sprint/sprint_exec_yaml.dip` | `ReadSprint` | SPRINT-<id>.yaml + .md |
+| `sprint/sprint_exec_yaml_v2.dip` | `ReadSprint` | SPRINT-<id>.yaml + .md |
+| `sprint/sprint_runner_yaml.dip` | `deps_blocked_exit` | `.ai/ledger.yaml` |
+| `sprint/sprint_runner_yaml_v2.dip` | `deps_blocked_exit` | `.ai/ledger.yaml` |
+| `sprint/verify_sprint.dip` | `SemanticReview` | SPRINT-<id>.yaml + .md + source files |
+
+The lasting remediation for the prompt-vs-language gap on read-bounded nodes lives
+upstream: a scoped read-only tool primitive on the native backend (tracked in
+dippin-lang). Until that exists, prose remains the only available bound for these
+nodes, and the marker comments make the audit decision explicit and re-checkable.
+
 ## See also
 
 - [tracker CLAUDE.md](https://github.com/2389-research/tracker) — engine-level gotchas.

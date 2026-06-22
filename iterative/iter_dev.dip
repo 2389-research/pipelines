@@ -220,6 +220,9 @@ workflow IterDev
       printf '%s\n' "$audit_result" >> docs/iterations/final-progress.md
       printf 'final-progress-written'
 
+  # CAT-C READ-BOUNDED (issue #110): reads docs/iterations/*.md and reports;
+  # needs native Read, so tool_access: none (all-or-nothing on native) would
+  # break it. See docs/agent-node-safety.md.
   agent already_complete_exit
     label: "Already Complete"
     max_turns: 1
