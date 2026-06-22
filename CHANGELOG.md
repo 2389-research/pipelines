@@ -16,6 +16,24 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `dev_loop/tests/test_ledger_roadmap_identical.sh` +
+  `docs/ledger-roadmap-state-machine-audit.md`: a drift-prevention gate and
+  audit for the ledger/roadmap state-machine shell logic issue #109 flagged as
+  duplicated across the sprint pipeline family. The gate asserts the five
+  blocks that are byte-identical *and meant to stay so* (the Group-A and
+  Group-B next-sprint scanners, the `in_progress` row-status update, the
+  progress counter, and the `validate_output` ledger/JSONL sub-block) stay
+  identical via content-anchored `cmp` — no markers are added to the `.dip`
+  files, so tracker's shell/coverage parsing is untouched. It is shellcheck-clean
+  and wired into `dev_loop_smoke.yml` next to the bootstrap and persist-verdict
+  identity gates. The audit records why a single shared helper/subgraph is not
+  viable under the `dippin pack` → `.dipx` distribution model (the #107/#108
+  precedent) and waives the per-node-intent variation the issue over-counted
+  (Group-A vs Group-B wrappers, status-literal differences, megaplan's distinct
+  ops, the `iter_dev` path-variable/subset differences, the `iter_run`
+  heading-match asymmetry, the `architect_only` node envelope). No `.dip`
+  workflow logic changed; no behavior change
+  ([#109](https://github.com/2389-research/pipelines/issues/109)).
 - `tests/track_b_smoke/smoke.sh`: per-family auto-runnable smoke probes for
   the sprint-exec, sprint-runner, and greenfield families
   (`verify-sprint-exec`, `verify-sprint-runner`, `verify-greenfield`). Each

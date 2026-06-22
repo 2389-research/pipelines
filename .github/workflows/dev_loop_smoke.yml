@@ -112,12 +112,16 @@ jobs:
           shellcheck --shell=sh dev_loop/tests/test_persist_neutral_breadcrumb.sh
           shellcheck --shell=sh dev_loop/tests/test_executor_compat.sh
           shellcheck --shell=sh dev_loop/tests/test_persist_verdict_identical.sh
+          shellcheck --shell=sh dev_loop/tests/test_ledger_roadmap_identical.sh
 
       - name: Bootstrap identity gate
         run: sh dev_loop/tests/test_bootstrap_identical.sh
 
       - name: Persist-verdict identity gate
         run: sh dev_loop/tests/test_persist_verdict_identical.sh
+
+      - name: Ledger/roadmap state-machine identity gate
+        run: sh dev_loop/tests/test_ledger_roadmap_identical.sh
 
       - name: Repo-slug grep gate
         run: |
