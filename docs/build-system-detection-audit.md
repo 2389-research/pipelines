@@ -68,7 +68,7 @@ instead.
 
 | Claimed drift | Reality | Action |
 | --- | --- | --- |
-| `uv` vs `pip` | Stale. Every Python branch already uses `uv run`; no `pip` anywhere. | none |
+| `uv` vs `pip` | Stale. Every Python branch in the `.dip` toolchain-detection ladders already uses `uv run`; no `pip` in these ladders. (A separate `pip install` fallback lives in `local_code_gen/lib/lang_profile.sh`, outside the audited ladders.) | none |
 | `tail -40` vs `tail -5` | Not drift. Per-node intent (verbose log vs short summary vs single-line result) inside one file. | none |
 | `Package.swift` inclusion | Real, but scoped: swift is the sprint family's contract, absent by design elsewhere. Two YAML execs had swift at branch position 3 instead of 1. | **fixed** (see below) |
 | detection **order** across families | Real, but order is behavior. Reordering flips the winner on polyglot repos. | waived (see below) |
