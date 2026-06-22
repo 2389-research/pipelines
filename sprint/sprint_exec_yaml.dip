@@ -306,7 +306,8 @@ workflow SprintExecYaml
         printf 'validation-pass-yaml'
         exit 0
       fi
-      # Toolchain fallback: first marker present wins (each branch exits 0).
+      # Toolchain fallback: first marker present wins; that branch builds+tests,
+      # exiting 0 on success or 1 on failure.
       # This ValidateBuild fallback ladder uses swift -> python -> node -> rust -> go;
       # order is behavior on polyglot repos, so keep this ladder consistent and do
       # not reorder without intent. Other detection ladders intentionally differ
