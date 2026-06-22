@@ -19,10 +19,11 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 - `dev_loop/tests/test_ledger_roadmap_identical.sh` +
   `docs/ledger-roadmap-state-machine-audit.md`: a drift-prevention gate and
   audit for the ledger/roadmap state-machine shell logic issue #109 flagged as
-  duplicated across the sprint pipeline family. The gate asserts the five
+  duplicated across the sprint pipeline family. The gate asserts the six
   blocks that are byte-identical *and meant to stay so* (the Group-A and
-  Group-B next-sprint scanners, the `in_progress` row-status update, the
-  progress counter, and the `validate_output` ledger/JSONL sub-block) stay
+  Group-B next-sprint scanners, the `in_progress` and `completed` row-status
+  updates, the progress counter, and the `validate_output` ledger/JSONL
+  sub-block) stay
   identical via content-anchored `cmp` — no markers are added to the `.dip`
   files, so tracker's shell/coverage parsing is untouched. It is shellcheck-clean
   and wired into `dev_loop_smoke.yml` next to the bootstrap and persist-verdict

@@ -119,6 +119,15 @@ check_range_cluster() {
       fail=1
       continue
     fi
+    # End anchor must also be unique: a duplicate end anchor inserted before the
+    # real one would truncate extract_range's output and could pass silently if
+    # done identically across members. Requiring exactly 1 forecloses that.
+    m=$(count_anchor "$f" "$end")
+    if [ "$m" != "1" ]; then
+      printf '[%s] expected exactly 1 occurrence of end-anchor in %s, found %s\n' "$name" "$f" "$m" >&2
+      fail=1
+      continue
+    fi
     if [ -z "$first" ]; then
       first=$f
       rc=0; extract_range "$f" "$start" "$end" > "$tmp_ref" || rc=$?

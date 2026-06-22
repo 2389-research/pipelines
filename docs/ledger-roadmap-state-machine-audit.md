@@ -18,7 +18,7 @@ single-source sharing is not viable under the distribution model (same gate as
 issue #108 / #107), so the applied change is:
 
 1. A drift-prevention gate — `dev_loop/tests/test_ledger_roadmap_identical.sh` —
-   asserting the five genuinely-identical clusters stay identical, mirroring the
+   asserting the six genuinely-identical clusters stay identical, mirroring the
    `test_bootstrap_identical.sh` / `test_persist_verdict_identical.sh` precedent.
 2. This audit, documenting the reconcile/waive decision per block.
 
@@ -75,10 +75,10 @@ keeps the copies in sync, which is exactly the property being protected.
 | Cluster | Members | What stays identical |
 | --- | --- | --- |
 | `scanner-A` | `sprint_exec.dip`, `sprint_exec-cheap.dip` | 3-tier next-sprint scanner that writes `.ai/current_sprint_id.txt` and emits `current-<id>` (`SetCurrentSprint`) |
-| `scanner-B` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | guarded single-tier scanner with `no_ledger`/`all_done` sentinels, emits `next-<id>` (`check_ledger`) |
-| `row-in_progress` | `sprint_exec.dip`, `sprint_exec-cheap.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | row-status `in_progress` update (`awk` rewrite of `$3`/`$5` + `mv .tmp`) |
-| `row-completed` | `sprint_exec.dip`, `sprint_exec-cheap.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | row-status `completed` update (`awk` rewrite of `$3`/`$5` + `mv .tmp`) |
-| `progress-counter` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | total + `completed\|\|skipped` progress tally (`report_progress`) |
+| `scanner-B` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `local_code_gen/sprint_runner_qwen.dip` | guarded single-tier scanner with `no_ledger`/`all_done` sentinels, emits `next-<id>` (`check_ledger`) |
+| `row-in_progress` | `sprint_exec.dip`, `sprint_exec-cheap.dip`, `sprint_runner-cheap.dip`, `local_code_gen/sprint_runner_qwen.dip` | row-status `in_progress` update (`awk` rewrite of `$3`/`$5` + `mv .tmp`) |
+| `row-completed` | `sprint_exec.dip`, `sprint_exec-cheap.dip`, `sprint_runner-cheap.dip`, `local_code_gen/sprint_runner_qwen.dip` | row-status `completed` update (`awk` rewrite of `$3`/`$5` + `mv .tmp`) |
+| `progress-counter` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `local_code_gen/sprint_runner_qwen.dip` | total + `completed\|\|skipped` progress tally (`report_progress`) |
 | `validate-jsonl` | `local_code_gen/spec_to_sprints.dip`, `local_code_gen/spec_to_sprints_lowreason.dip`, `local_code_gen/architect_only.dip` | `validate_output` ledger/JSONL three-way consistency sub-block |
 
 The gate intentionally does **not** assert identity across the per-node-intent
@@ -135,7 +135,7 @@ with the #108 rule that detection/match *breadth* is behavior, not drift.
 
 ## Acceptance criteria
 
-- **Remediation applied so the pattern no longer recurs** — the five
+- **Remediation applied so the pattern no longer recurs** — the six
   meant-to-be-identical clusters are now gated; future drift fails CI.
 - **All instances resolved or waived with rationale** — see the table above;
   every cited instance is either gated or waived with a reason.
