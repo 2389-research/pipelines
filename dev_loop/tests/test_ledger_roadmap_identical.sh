@@ -91,6 +91,7 @@ check_node_cluster() {
       if [ "$rc" -ne 0 ]; then
         printf '[%s] could not extract reference block from %s (rc=%s)\n' "$name" "$f" "$rc" >&2
         fail=1
+        first=""   # don't compare later members against a failed extraction
       fi
       continue
     fi
@@ -124,6 +125,7 @@ check_range_cluster() {
       if [ "$rc" -ne 0 ]; then
         printf '[%s] end-anchor not found after start in reference %s (rc=%s)\n' "$name" "$f" "$rc" >&2
         fail=1
+        first=""   # don't compare later members against a failed extraction
       fi
       continue
     fi
@@ -160,14 +162,22 @@ check_node_cluster "row-in_progress" "printf 'in_progress-%s' \"\$target\"" \
   sprint/sprint_runner-cheap.dip \
   local_code_gen/sprint_runner_qwen.dip
 
-# Cluster 4 — ledger progress counter (total + completed||skipped).
+# Cluster 4 — row-status completed update (awk rewrite $3 + mv .tmp), the
+# CompleteSprint/mark_complete twin of cluster 3 across the same four files.
+check_node_cluster "row-completed" "printf 'completed-%s' \"\$target\"" \
+  sprint/sprint_exec.dip \
+  sprint/sprint_exec-cheap.dip \
+  sprint/sprint_runner-cheap.dip \
+  local_code_gen/sprint_runner_qwen.dip
+
+# Cluster 5 — ledger progress counter (total + completed||skipped).
 # report_progress node.
 check_node_cluster "progress-counter" "printf 'progress-%s-of-%s-%spct'" \
   sprint/sprint_runner.dip \
   sprint/sprint_runner-cheap.dip \
   local_code_gen/sprint_runner_qwen.dip
 
-# Cluster 5 — validate_output ledger/JSONL three-way consistency sub-block.
+# Cluster 6 — validate_output ledger/JSONL three-way consistency sub-block.
 # The enclosing nodes differ (architect_only carries a distinct label and exit
 # contract; see the audit), but this sub-block is shared verbatim.
 check_range_cluster "validate-jsonl" \

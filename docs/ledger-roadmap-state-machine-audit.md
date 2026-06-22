@@ -67,14 +67,18 @@ cluster against the first. It is shellcheck-clean (`--shell=sh`) and wired into
 `dev_loop_smoke.yml` next to the other identity gates. A member whose start/end
 anchor is missing, duplicated, or out of order is a hard fail (non-zero exit
 with a per-cluster message), so the gate cannot be silently defeated by renaming
-an anchor, deleting a node, or coordinating the same drift across every member.
+an anchor or deleting a node. Its invariant is that a cluster's copies stay
+byte-identical to *each other*: any member that diverges from the rest fails the
+`cmp`. An edit applied uniformly to every member is intentionally allowed — that
+keeps the copies in sync, which is exactly the property being protected.
 
 | Cluster | Members | What stays identical |
 | --- | --- | --- |
 | `scanner-A` | `sprint_exec.dip`, `sprint_exec-cheap.dip` | 3-tier next-sprint scanner that writes `.ai/current_sprint_id.txt` and emits `current-<id>` (`SetCurrentSprint`) |
 | `scanner-B` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | guarded single-tier scanner with `no_ledger`/`all_done` sentinels, emits `next-<id>` (`check_ledger`) |
 | `row-in_progress` | `sprint_exec.dip`, `sprint_exec-cheap.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | row-status `in_progress` update (`awk` rewrite of `$3`/`$5` + `mv .tmp`) |
-| `progress-counter` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | total + `completed||skipped` progress tally (`report_progress`) |
+| `row-completed` | `sprint_exec.dip`, `sprint_exec-cheap.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | row-status `completed` update (`awk` rewrite of `$3`/`$5` + `mv .tmp`) |
+| `progress-counter` | `sprint_runner.dip`, `sprint_runner-cheap.dip`, `sprint_runner_qwen.dip` | total + `completed\|\|skipped` progress tally (`report_progress`) |
 | `validate-jsonl` | `local_code_gen/spec_to_sprints.dip`, `local_code_gen/spec_to_sprints_lowreason.dip`, `local_code_gen/architect_only.dip` | `validate_output` ledger/JSONL three-way consistency sub-block |
 
 The gate intentionally does **not** assert identity across the per-node-intent
@@ -86,13 +90,13 @@ cleanup (the #108 lesson on golden tests over legitimately-divergent blocks).
 | Claim | Reality | Action |
 | --- | --- | --- |
 | Next-sprint scanner copied across the sprint family | Two **non-interchangeable** wrapper variants. Group A (3-tier fallback → `current-<id>`, writes the id file) is for the single-sprint executors; Group B (`no_ledger`/`all_done` guards → `next-<id>`) is for the looping runners. Within each group the bodies are byte-identical. | Group A + Group B each gated (`scanner-A`, `scanner-B`); the A↔B difference is per-node intent and **waived** |
-| Row-status update copied across the sprint family | Byte-identical bodies; the only differences are the status literal written to `$3` (`in_progress` / `completed` / `failed`) and the trailing `printf` marker — per-node intent. | `in_progress` family gated (`row-in_progress`); the status-literal differences are **waived** |
+| Row-status update copied across the sprint family | Byte-identical bodies; the only differences are the status literal written to `$3` (`in_progress` / `completed` / `failed`) and the trailing `printf` marker — per-node intent. | `in_progress` and `completed` families each gated (`row-in_progress`, `row-completed`); the `failed` variant exists only in `sprint_exec.dip` (no cross-family duplicate), so there is nothing to gate there |
 | Progress counter copied across the runners | Byte-identical across all three runners. | gated (`progress-counter`) |
 | `megaplan.dip` ledger blocks are the same scanner / row-update | Different operations. `DetermineSprintId` computes the next **new** id (`max + 1`), not the next *incomplete* sprint; `SyncLedger` rewrites `$2` + sets status `planned` with an append-if-absent fallback. Neither matches the sprint-family shapes. | **waived** (distinct intent) |
 | `iter_dev.dip` reuses one `grep -c Status` trio across 4 nodes | The full pending/in_progress/done trio appears in `check_resume` (45–47) and `report_loop_progress` (112–114); these differ only in the path *variable* (`$iter_dir/roadmap.md` vs `$roadmap`) which resolves to the same path — local-variable naming, not behavior drift. `check_termination` (81–82) is a 2-line subset (no `done` line, computed downstream) and `update_final_progress` (208–209) is a distinct done+bare-total pair. Each reflects its node's job. | **waived** (per-node intent; no behavior difference) |
 | `iter_run.dip` reimplements the same state-machine block | Lines 64 and 527 are an `awk` next-pending scanner and an `awk` pending→in_progress mutator — not the `grep -c` trio. They are different operations from the sprint-family `ledger.tsv` blocks (they target `docs/iterations/roadmap.md` markdown, not a TSV). | **waived** (different data model + operation); see heading-match note below |
 | `iter_audit.dip` / `iter_scope.dip` reimplement the counter | Over-counted: neither contains the pending/in_progress/done counting trio. `iter_scope.dip` has `grep -c '^### ITER-'` (counts headings) and a `grep -q '\*\*Status:\*\*'` existence check — different shapes. | **waived** (no matching block exists) |
-| A `done` row status is part of the ledger state machine | No `.dip` writes `$3="done"` to `.ai/ledger.tsv`; the statuses written are `in_progress`, `completed`, `failed` (and `planned` in megaplan). The `done` token only appears as a shell tally variable for `completed||skipped` rows and in roadmap-side markdown. | n/a (clarification) |
+| A `done` row status is part of the ledger state machine | No `.dip` writes `$3="done"` to `.ai/ledger.tsv`; the statuses written are `in_progress`, `completed`, `failed` (and `planned` in megaplan). The `done` token only appears as a shell tally variable for `completed\|\|skipped` rows and in roadmap-side markdown. | n/a (clarification) |
 | `validate_output` ledger block copied across spec_to_sprints + architect_only | `sprint/spec_to_sprints.dip` is the legacy two-way (ledger-vs-files) check with no JSONL branch. The JSONL three-way sub-block is byte-identical across `local_code_gen/spec_to_sprints.dip`, `…_lowreason.dip`, and `architect_only.dip`. The architect_only *enclosing node* genuinely differs (label `Validate Sprint Files`, 10s timeout, no `marker_grep`, no empty-ledger/bad-cols checks, `validate-pass`/`validate-fail` exit contract). | shared sub-block gated (`validate-jsonl`); the legacy two-way variant and the architect_only node envelope are **waived** |
 
 ## Files the detection command surfaces but that carry no executable block
