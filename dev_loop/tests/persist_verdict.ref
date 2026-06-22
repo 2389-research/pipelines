@@ -1,36 +1,3 @@
-#!/bin/sh
-# persist_holistic_verdict.sh — capture SquadHolistic's JSON verdict to disk.
-# Emits: persisted-holistic | persist-failed (issue #48).
-set -eu
-
-# ---begin-bootstrap-reference---
-STATE_ROOT_DEFAULT="${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop"
-if [ -n "${DEV_LOOP_STATE_ROOT:-}" ]; then
-  DIP_ROOT="${DEV_LOOP_STATE_ROOT}"
-elif [ -f "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
-     && [ ! -L "${STATE_ROOT_DEFAULT}/.last_dip_root" ] \
-     && [ -r "${STATE_ROOT_DEFAULT}/.last_dip_root" ]; then
-  DIP_ROOT=$(cat "${STATE_ROOT_DEFAULT}/.last_dip_root" 2>/dev/null || true)
-  [ -n "${DIP_ROOT}" ] && [ -d "${DIP_ROOT}" ] || DIP_ROOT="${STATE_ROOT_DEFAULT}"
-else
-  DIP_ROOT="${STATE_ROOT_DEFAULT}"
-fi
-if [ -n "${DEV_LOOP_RUN_DIR:-}" ]; then
-  RUN_DIR="${DEV_LOOP_RUN_DIR}"
-else
-  rid=$(cat "${DIP_ROOT}/.current_rid" 2>/dev/null || true)
-  [ -n "${rid}" ] || { printf 'no .current_rid; was setup_run executed?\n' >&2; exit 1; }
-  RUN_DIR="${DIP_ROOT}/runs/${rid}"
-fi
-[ -f "${RUN_DIR}/env" ] || { printf 'missing env at %s\n' "${RUN_DIR}/env" >&2; exit 1; }
-[ ! -L "${RUN_DIR}/env" ] || { printf 'env is a symlink; refusing\n' >&2; exit 1; }
-set -a
-# shellcheck disable=SC1091
-. "${RUN_DIR}/env"
-set +a
-# ---end-bootstrap-reference---
-
-# ---begin-persist-verdict-reference---
 # This block is BYTE-IDENTICAL across all five persist_*_verdict.sh scripts
 # except the two `squad`/`squad_node` declarations below and the literal
 # success marker `printf 'persisted-<slug>'` near the end. The marker stays a
@@ -42,8 +9,8 @@ set +a
 # per-squad lines and asserts every copy matches tests/persist_verdict.ref
 # (issue #107). The scripts cannot share a sourced lib: tracker inlines each
 # `command_file:` body into the .dipx bundle, which does not ship scripts/lib/.
-squad='holistic'
-squad_node='SquadHolistic'
+squad=
+squad_node=
 
 # cd to repo top-level so cwd-relative paths (config files, lib
 # helpers, .dev_loop_worktree, executor artifact root) resolve
@@ -114,7 +81,7 @@ if ! jq '.' < "${response}" > "${target}.tmp" 2> "${error_sidecar}"; then
 fi
 mv "${target}.tmp" "${target}"
 
-printf 'persisted-holistic'
+printf persisted-
 verdict_text=$(cat "${target}")
 cat <<DATA
 
@@ -122,4 +89,3 @@ cat <<DATA
 ${verdict_text}
 </verdict_${squad}>
 DATA
-# ---end-persist-verdict-reference---

@@ -30,6 +30,21 @@ set -a
 set +a
 # ---end-bootstrap-reference---
 
+# ---begin-persist-verdict-reference---
+# This block is BYTE-IDENTICAL across all five persist_*_verdict.sh scripts
+# except the two `squad`/`squad_node` declarations below and the literal
+# success marker `printf 'persisted-<slug>'` near the end. The marker stays a
+# static literal (not `printf 'persisted-%s'`) because `dippin coverage`/`doctor`
+# statically extract printf tokens to verify each tool output has a routing
+# edge — a format string would surface as the uncovered output `persisted-%s`.
+# Like the bootstrap preamble above, the duplication is intentional and enforced
+# — see tests/test_persist_verdict_identical.sh, which normalizes those three
+# per-squad lines and asserts every copy matches tests/persist_verdict.ref
+# (issue #107). The scripts cannot share a sourced lib: tracker inlines each
+# `command_file:` body into the .dipx bundle, which does not ship scripts/lib/.
+squad='blocker'
+squad_node='SquadBlocker'
+
 # cd to repo top-level so cwd-relative paths (config files, lib
 # helpers, .dev_loop_worktree, executor artifact root) resolve
 # consistently when the operator invoked tracker from a subdirectory.
@@ -39,8 +54,11 @@ if [ -n "${DEV_LOOP_REPO_ROOT:-}" ] && [ -d "${DEV_LOOP_REPO_ROOT}" ]; then
   cd "${DEV_LOOP_REPO_ROOT}"
 fi
 
+error_sidecar="${RUN_DIR}/persist_${squad}_error.txt"
+fail_class="${RUN_DIR}/persist_${squad}_fail_class.txt"
+
 # Post-bootstrap failure trap (issue #48). Every exit-1 site below already
-# writes an actionable line to $RUN_DIR/persist_blocker_error.txt; the trap
+# writes an actionable line to ${error_sidecar}; the trap
 # converts the non-zero exit into ctx.tool_marker=persist-failed so the .dip
 # can route through CleanupWorktree + RatchetLog rather than halt mid-flight.
 # Installed AFTER the bootstrap preamble: a bootstrap exit-1 (no .current_rid /
@@ -50,9 +68,9 @@ fi
 # shellcheck disable=SC2154  # rc is assigned inside the single-quoted trap body
 trap 'rc=$?
       if [ "${rc}" -ne 0 ]; then
-        [ -s "${RUN_DIR}/persist_blocker_error.txt" ] \
+        [ -s "${error_sidecar}" ] \
           || printf "unexpected non-zero exit (rc=%s)\n" "${rc}" \
-             > "${RUN_DIR}/persist_blocker_error.txt" 2>/dev/null || true
+             > "${error_sidecar}" 2>/dev/null || true
         printf "persist-failed"
         exit 0
       fi' EXIT
@@ -68,30 +86,30 @@ trap 'rc=$?
 # (reject_special in setup_run.sh strips NL/CR before the env file write).
 if [ -z "${DIP_ARTIFACT_DIR:-}" ]; then
   printf 'DIP_ARTIFACT_DIR is unset; was setup_run executed?\n' \
-    > "${RUN_DIR}/persist_blocker_error.txt"
-  printf 'unset' > "${RUN_DIR}/persist_blocker_fail_class.txt"
+    > "${error_sidecar}"
+  printf 'unset' > "${fail_class}"
   exit 1
 elif [ ! -d "${DIP_ARTIFACT_DIR}" ]; then
   printf 'DIP_ARTIFACT_DIR=%s is not a directory; was the artifact dir cleaned up under us?\n' \
     "${DIP_ARTIFACT_DIR}" \
-    > "${RUN_DIR}/persist_blocker_error.txt"
-  printf 'stale' > "${RUN_DIR}/persist_blocker_fail_class.txt"
+    > "${error_sidecar}"
+  printf 'stale' > "${fail_class}"
   exit 1
 fi
 dip_artifact_dir="${DIP_ARTIFACT_DIR%/}/"
 
-response="${dip_artifact_dir}SquadBlocker/response.md"
-target="${RUN_DIR}/verdict_blocker.json"
+response="${dip_artifact_dir}${squad_node}/response.md"
+target="${RUN_DIR}/verdict_${squad}.json"
 
 if [ ! -f "${response}" ]; then
   printf 'response missing at %s\n' "${response}" \
-    > "${RUN_DIR}/persist_blocker_error.txt"
-  printf 'response-missing' > "${RUN_DIR}/persist_blocker_fail_class.txt"
+    > "${error_sidecar}"
+  printf 'response-missing' > "${fail_class}"
   exit 1
 fi
 
-if ! jq '.' < "${response}" > "${target}.tmp" 2> "${RUN_DIR}/persist_blocker_error.txt"; then
-  printf 'jq-parse' > "${RUN_DIR}/persist_blocker_fail_class.txt"
+if ! jq '.' < "${response}" > "${target}.tmp" 2> "${error_sidecar}"; then
+  printf 'jq-parse' > "${fail_class}"
   exit 1
 fi
 mv "${target}.tmp" "${target}"
@@ -100,7 +118,8 @@ printf 'persisted-blocker'
 verdict_text=$(cat "${target}")
 cat <<DATA
 
-<verdict_blocker>
+<verdict_${squad}>
 ${verdict_text}
-</verdict_blocker>
+</verdict_${squad}>
 DATA
+# ---end-persist-verdict-reference---
