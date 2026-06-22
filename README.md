@@ -56,7 +56,7 @@ Sprint pipeline that uses Opus/Sonnet for architecture and a local **qwen3.6:35b
 |----------|-------------|
 | [`architect_only.dip`](local_code_gen/architect_only.dip) | Just the architect step — produces contract, sprint plan JSONL, and `SPRINT-*.md` files. Skips upstream decomposition tournament. |
 | [`spec_to_sprints.dip`](local_code_gen/spec_to_sprints.dip) | Full upstream tournament + the architect step end-to-end. |
-| [`sprint_runner.dip`](local_code_gen/sprint_runner.dip) | Per-sprint loop: qwen Generate → SR-block LocalFix → CloudFix escalation → Audit → Commit. |
+| [`sprint_runner_qwen.dip`](local_code_gen/sprint_runner_qwen.dip) | Per-sprint loop: qwen Generate → SR-block LocalFix → CloudFix escalation → Audit → Commit. |
 
 See [`local_code_gen/README.md`](local_code_gen/README.md) for setup, model config, and the design principles in [`local_code_gen/principles/`](local_code_gen/principles/).
 
