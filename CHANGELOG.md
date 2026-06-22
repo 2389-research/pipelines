@@ -47,6 +47,20 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   Operator-visible doc rename; not a SemVer-surface change
   ([#104](https://github.com/2389-research/pipelines/pull/104),
   closes [#86](https://github.com/2389-research/pipelines/issues/86)).
+- `dev_loop/scripts/persist_*_verdict.sh`: deduplicated the five byte-identical
+  squad-verdict persisters. The shared body is now interpolated from two
+  per-squad declarations (`squad`/`squad_node`) and bracketed by
+  `# ---begin/end-persist-verdict-reference---` markers; the only other
+  per-squad line is the literal success marker `printf 'persisted-<slug>'`,
+  kept a static literal (not `printf 'persisted-%s'`) so `dippin coverage`/
+  `doctor` still see a routable tool output. The duplication is enforced
+  against the new `dev_loop/tests/persist_verdict.ref` by
+  `dev_loop/tests/test_persist_verdict_identical.sh` (mirroring the existing
+  bootstrap-preamble gate). Runtime behavior and tool markers are unchanged —
+  the scripts stay self-contained because tracker inlines each `command_file:`
+  body into the `.dipx` bundle, which does not ship `scripts/lib/`. The smoke
+  workflow runs the new identity gate
+  ([#107](https://github.com/2389-research/pipelines/issues/107)).
 
 ## [0.3.0] - 2026-06-17
 
