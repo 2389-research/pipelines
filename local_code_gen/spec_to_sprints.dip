@@ -943,9 +943,9 @@ workflow SpecToSprintsForLocalCodegen
         # inbound edge. A mismatch (faked/omitted mandate) routes back through
         # the invalid-* edge to re-dispatch the sprint. Legacy mode: skip when
         # the contract has no `### Edge:` headings (pre-issue-#8 contract shape).
-        if [ -f .ai/contract.md ] && grep -qE '^### Edge: Sprint [0-9]{3} ' .ai/contract.md; then
+        if [ -f .ai/contract.md ] && grep -qE '^### Edge: Sprint [0-9]{3} → Sprint [0-9]{3}' .ai/contract.md; then
           sid=$(printf '%s' "$base" | sed 's/^SPRINT-//;s/\.md$//')
-          edge_count=$(grep -cE "^### Edge: Sprint ${sid} " .ai/contract.md 2>/dev/null || true)
+          edge_count=$(grep -cE "^### Edge: Sprint ${sid} → Sprint [0-9]{3}" .ai/contract.md 2>/dev/null || true)
           [ -z "$edge_count" ] && edge_count=0
           mandate_count=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`[^`]+`/{c++} END{print c+0}' "$f")
           if [ "$mandate_count" -ne "$edge_count" ]; then

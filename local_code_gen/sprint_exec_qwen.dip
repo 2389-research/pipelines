@@ -772,10 +772,14 @@ workflow SprintExecLocalGenQwen
           *)                      printf 'NEVER_MATCHES_ANYTHING' ;;
         esac
       }
-      mandate_names=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m{print}' "$sprint" \
-        | grep -oE '`[^`]+`' | head -200 | tr -d '`' | sort -u)
+      # First backtick token per mandate bullet is the test name; names may
+      # contain spaces (Node string-literal tests), so split on newlines only.
+      mandate_names=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`/{line=$0; sub(/^[^`]*`/,"",line); sub(/`.*/,"",line); if(line!="")print line}' "$sprint" | head -200 | sort -u)
       missing=""
+      oldifs=$IFS
+      IFS=$(printf '\n.'); IFS=${IFS%.}
       for tname in $mandate_names; do
+        IFS=$oldifs
         [ -z "$tname" ] && continue
         decl_pat=$(grep_test_decl "$tname")
         # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
@@ -785,6 +789,7 @@ workflow SprintExecLocalGenQwen
           missing="${missing}${tname} "
         fi
       done
+      IFS=$oldifs
       if [ -n "$missing" ]; then
         echo "CROSS-MODULE MANDATE: missing mandated test(s): $missing" \
           >> .ai/last_audit_output.txt
