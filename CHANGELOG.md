@@ -109,6 +109,20 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
 
+### Security
+
+- `greenfield/greenfield_synthesis.dip`: scoped the 13 writer agents
+  (`FeatureDiscoverer`, `ArchitectureAnalyst`, `ApiExtractor`, `ModuleMapper`,
+  `Synthesizer`, `DeepDiveAnalyzer`, `BehaviorDocumenter`, `UserJourneyAnalyzer`,
+  `ContractExtractor`, `Gate1Remediation`, `Gate1AgentReview`, `Gate1bAgent`,
+  `JourneyContractRemediation`) to `writable_paths: workspace/**`, enforcing the
+  "ONLY create or modify files under workspace/" WRITE BOUNDARY each prompt
+  already states so the read-only target repo is unwritable in fact, not just by
+  instruction. `Gate1Failed` keeps its narrower `workspace/.synthesis-failed`
+  breadcrumb scope; the `tool_access: none` Start/Exit agents are unchanged. No
+  model, provider, or routing changes
+  ([#32](https://github.com/2389-research/pipelines/issues/32)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
