@@ -109,6 +109,21 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
 
+### Security
+
+- `greenfield/greenfield_review.dip`: scoped the eleven write-capable review,
+  verdict, remediation, and fidelity-validation agents
+  (`StructuralLeakageReviewer`, `ContentContaminationReviewer`,
+  `BehavioralCompletenessReviewer`, `DeepReadAuditor`, `L6AgentVerdict`,
+  `RemediateL6`, `FidelityValidatorSpecs`, `FidelityValidatorTestVectors`,
+  `FidelityValidatorAcceptanceCriteria`, `L7AgentVerdict`, `RemediateL7`) to
+  `writable_paths: workspace/**`, enforcing the existing prose "WRITE BOUNDARY:
+  ... ONLY ... workspace/" contract as a structural least-privilege guard so the
+  target repo stays read-only to these agents. The `tool_access: none`
+  Start/Exit nodes and the already-scoped `L6Failed`/`L7Failed` breadcrumb
+  writers are unchanged
+  ([#32](https://github.com/2389-research/pipelines/issues/32)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
