@@ -59,8 +59,9 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   `writable_paths` + DIP140 + per-branch overrides v0.35, DIP143 subgraph
   containment v0.36). `docs/agent-node-safety.md` gains a "Structural bound
   tiers" section noting the v0.28.2 runaway-agent vector is now structurally
-  bounded and explaining when to reach for `tool_access: none` vs.
-  `writable_paths` vs. the read-bounded waiver. Docs-only; no `.dip` change
+  bounded on an enforcing runtime (top-level `tool_access` needs tracker
+  ≥ v0.39.0, the repo's floor) and explaining when to reach for `tool_access:
+  none` vs. `writable_paths` vs. the read-bounded waiver. Docs-only; no `.dip` change
   ([#20](https://github.com/2389-research/pipelines/issues/20),
   [#38](https://github.com/2389-research/pipelines/issues/38)).
 

@@ -22,7 +22,11 @@ in dippin v0.32.0, `writable_paths:` in v0.35.0.)
 
 The v0.28.2 runaway-agent vector documented in the analysis below was
 **prompt-only** when this doc was written at v0.27.0. It is now structurally
-bounded. Two language-level fields exist, and they are not interchangeable —
+bounded **on a runtime that enforces these fields** — the top-level `tool_access`
+form requires tracker ≥ v0.39.0 (this repo's floor; on v0.31–v0.38 it parses but
+silently no-ops at runtime — [tracker#366](https://github.com/2389-research/tracker/issues/366),
+see [the migration note](migrations/0.32-tool-access-none.md#compatibility)). Two
+language-level fields exist, and they are not interchangeable —
 pick the tightest tier that still lets the node do its job:
 
 - **`tool_access: none` (v0.32.0)** — strips the *entire* tool catalog
