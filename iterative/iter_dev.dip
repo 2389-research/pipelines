@@ -126,6 +126,7 @@ workflow IterDev
     provider: anthropic
     auto_status: true
     max_turns: 15
+    writable_paths: .ai/iter-loop-context.txt
     prompt:
       An iteration has failed. Your job is to assess the failure type and decide whether to retry or stop.
 
@@ -159,6 +160,7 @@ workflow IterDev
     fidelity: full
     auto_status: true
     max_turns: 20
+    writable_paths: .ai/iter-audit-result.txt, docs/iterations/**
     prompt:
       You are performing the FINAL behavior-evidence audit before declaring the project complete.
 

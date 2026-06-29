@@ -101,6 +101,7 @@ workflow IterRun
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       Read the current iteration from docs/iterations/roadmap.md.
 
@@ -244,6 +245,7 @@ workflow IterRun
   agent reconcile_state
     label: "Reconcile State"
     auto_status: true
+    writable_paths: docs/iterations/**
     prompt:
       The consistency audit found inconsistencies in the iteration state. The audit emits a fixed marker (e.g. `inconsistent-no-stories`, `inconsistent-stories`) and writes actionable detail to sidecar files under `.ai/iter-run-temp/`.
 
@@ -433,6 +435,7 @@ workflow IterRun
   agent adjust_run_scope
     label: "Adjust Run Scope"
     auto_status: true
+    writable_paths: docs/iterations/**, .ai/iter-run-temp/**
     prompt:
       The PAR scope review found issues with the iteration scope. Read the aggregated findings from par_run_scope_aggregate.
 
@@ -464,6 +467,7 @@ workflow IterRun
     fallback_target: Exit
     goal_gate: true
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       You are decomposing an iteration into TDD-sized tasks.
 
@@ -693,6 +697,7 @@ workflow IterRun
   agent provide_context
     label: "Provide Context"
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       The implementer reported NEEDS_CONTEXT or is blocked.
 
@@ -720,6 +725,7 @@ workflow IterRun
   agent escalate_task
     label: "Escalate Task"
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       The task implementation has failed repeatedly or is stuck. Assess the situation and determine how to unblock it.
 
@@ -865,6 +871,7 @@ workflow IterRun
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       Read both PAR spec reviewer outputs from par_spec_reviewer_a and par_spec_reviewer_b.
 
@@ -1036,6 +1043,7 @@ workflow IterRun
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       Read both PAR quality reviewer outputs from par_quality_reviewer_a and par_quality_reviewer_b.
 
@@ -1240,6 +1248,7 @@ workflow IterRun
     model: gpt-5.5
     provider: openai
     auto_status: true
+    writable_paths: .ai/iter-run-temp/**
     prompt:
       A regression or unresolved TODO was detected after the task loop completed.
 
@@ -1310,6 +1319,7 @@ workflow IterRun
     fallback_target: Exit
     goal_gate: true
     auto_status: true
+    writable_paths: docs/iterations/**
     prompt:
       The iteration implementation loop is complete. Wrap up all artifacts.
 

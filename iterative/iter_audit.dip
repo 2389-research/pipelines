@@ -272,6 +272,7 @@ workflow IterAudit
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-audit-temp/**
     prompt:
       Read both Tier 1 PAR reviewer outputs from par_tier1_auditor_a and par_tier1_auditor_b.
 
@@ -433,6 +434,7 @@ workflow IterAudit
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-audit-temp/**
     prompt:
       Read both Tier 2 PAR reviewer outputs from par_tier2_auditor_a and par_tier2_auditor_b.
 
@@ -611,6 +613,7 @@ workflow IterAudit
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-audit-temp/**
     prompt:
       Read both Tier 3 PAR reviewer outputs from par_tier3_auditor_a and par_tier3_auditor_b.
 
@@ -675,6 +678,7 @@ workflow IterAudit
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    writable_paths: docs/iterations/**
     prompt:
       Read the audit synthesis from synthesize_audit. Create gap stories for every failing finding.
 
