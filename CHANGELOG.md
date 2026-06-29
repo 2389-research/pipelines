@@ -16,6 +16,27 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `local_code_gen/architect_only.dip`, `local_code_gen/spec_to_sprints.dip`,
+  `local_code_gen/spec_to_sprints_lowreason.dip`,
+  `local_code_gen/sprint_runner_qwen.dip`,
+  `local_code_gen/sprint_exec_qwen.dip`: machine-checkable cross-module
+  test-mandate validator — converts PR #7's prompt-only mandate into a
+  structural invariant enforced at two existing checkpoints (no new LLM calls,
+  no new nodes). The architect prompt now pins a deterministic, grep-able marker
+  format (`### Edge: Sprint NNN → Sprint MMM` + `` - Required test: `<name>` ``
+  in contract §7, and a per-sprint `## Cross-Module Test Mandate` section with
+  one backticked test name per inbound edge), with language-aware test-name
+  guidance. Layer A: the existing `validate_output` tool node now counts each
+  sprint's inbound `### Edge:` headings against its mandate bullets and emits the
+  existing `invalid-`/`validate-fail` marker on mismatch, re-dispatching the
+  failing sprint through the existing fix loop. Layer B: the existing `Audit`
+  tool node greps generated source for each mandated test as a name-exact,
+  per-language declaration and emits the existing `audit-fail` marker (routing to
+  `LocalFix → CloudFix`) when a mandated test is missing or renamed. Both checks
+  are shellcheck-clean POSIX `sh`, run in legacy mode (no-op) against pre-issue-#8
+  contracts that lack the markers, and pass cleanly for sprints with zero inbound
+  edges. Resolves PR #7's deferred CodeRabbit findings 2 + 4
+  ([#8](https://github.com/2389-research/pipelines/issues/8)).
 - `dev_loop/tests/test_ledger_roadmap_identical.sh` +
   `docs/ledger-roadmap-state-machine-audit.md`: a drift-prevention gate and
   audit for the ledger/roadmap state-machine shell logic issue #109 flagged as
