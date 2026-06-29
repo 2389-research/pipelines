@@ -76,6 +76,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Source Code Analyzer for Greenfield reverse engineering.
 
@@ -108,6 +109,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Documentation Researcher for Greenfield reverse engineering.
 
@@ -137,6 +139,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the SDK Analyzer for Greenfield reverse engineering.
 
@@ -166,6 +169,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Community Intelligence Analyst for Greenfield reverse engineering.
 
@@ -195,6 +199,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Runtime Observer for Greenfield reverse engineering.
 
@@ -228,6 +233,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Binary Analyzer for Greenfield reverse engineering.
 
@@ -257,6 +263,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Git Archaeologist for Greenfield reverse engineering.
 
@@ -287,6 +294,7 @@ workflow GreenfieldDiscovery
     provider: gemini
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Test Suite Analyzer for Greenfield reverse engineering.
 
@@ -352,6 +360,7 @@ workflow GreenfieldDiscovery
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Coverage Review Agent. You are invoked because fewer than 2 non-community intelligence sources produced results.
 

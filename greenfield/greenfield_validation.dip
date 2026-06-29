@@ -53,6 +53,7 @@ workflow GreenfieldValidation
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Test Vector Generator for Greenfield reverse engineering.
 
@@ -77,6 +78,7 @@ workflow GreenfieldValidation
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Test Spec Generator for Greenfield reverse engineering.
 
@@ -94,6 +96,7 @@ workflow GreenfieldValidation
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Acceptance Criteria Writer for Greenfield reverse engineering.
 
@@ -121,6 +124,7 @@ workflow GreenfieldValidation
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Gate 2 Remediation agent. Gate 2 found quality issues with test vectors and acceptance criteria.
 
@@ -177,6 +181,7 @@ workflow GreenfieldValidation
     max_retries: 3
     retry_target: Gate2Remediation
     fallback_target: Gate2Failed
+    writable_paths: workspace/**
     prompt:
       You are the Gate 2 quality reviewer. Review test vectors and acceptance criteria in workspace/raw/specs/.
 
@@ -210,6 +215,7 @@ workflow GreenfieldValidation
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are a Sanitizer worker for Greenfield. Rewrite raw behavioral specs to output form.
 
@@ -231,6 +237,7 @@ workflow GreenfieldValidation
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are a Sanitizer worker for Greenfield. Sanitize test vectors.
 
@@ -247,6 +254,7 @@ workflow GreenfieldValidation
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are a Sanitizer worker for Greenfield. Sanitize acceptance criteria.
 
@@ -263,6 +271,7 @@ workflow GreenfieldValidation
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are a Sanitizer worker for Greenfield. Sanitize dependency contracts and protocol specs.
 

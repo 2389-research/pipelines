@@ -54,6 +54,7 @@ workflow GreenfieldReview
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Structural Leakage Reviewer. Look for code structure bleeding through in workspace/output/.
 
@@ -77,6 +78,7 @@ workflow GreenfieldReview
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Content Contamination Reviewer. Look for variable names, file paths, identifiers, and minified symbols in workspace/output/.
 
@@ -92,6 +94,7 @@ workflow GreenfieldReview
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Behavioral Completeness Reviewer. Compare workspace/output/ spec count and coverage against workspace/raw/specs/.
 
@@ -109,6 +112,7 @@ workflow GreenfieldReview
     provider: openai
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Deep Read Auditor. Line-by-line audit of workspace/output/specs/ for subtle contamination that pattern-based reviewers miss.
 
@@ -160,6 +164,7 @@ workflow GreenfieldReview
     max_retries: 3
     retry_target: RemediateL6
     fallback_target: L6Failed
+    writable_paths: workspace/**
     prompt:
       You are the L6 verdict agent. Review the findings in workspace/review/l6-*.md.
 
@@ -174,6 +179,7 @@ workflow GreenfieldReview
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: workspace/**
     prompt:
       You are the L6 Remediation agent. Fix contamination flagged by L6 reviewers.
 
@@ -203,6 +209,7 @@ workflow GreenfieldReview
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Fidelity Validator for specs. Compare workspace/raw/specs/ against workspace/output/specs/.
 
@@ -224,6 +231,7 @@ workflow GreenfieldReview
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Fidelity Validator for test vectors. Compare workspace/raw/specs/test-vectors/ against workspace/output/test-vectors/.
 
@@ -239,6 +247,7 @@ workflow GreenfieldReview
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Fidelity Validator for acceptance criteria. Compare workspace/raw/specs/validation/ against workspace/output/validation/acceptance-criteria/.
 
@@ -294,6 +303,7 @@ workflow GreenfieldReview
     max_retries: 3
     retry_target: RemediateL7
     fallback_target: L7Failed
+    writable_paths: workspace/**
     prompt:
       You are the L7 fidelity verdict agent. Review workspace/review/l7-*.md.
 
@@ -308,6 +318,7 @@ workflow GreenfieldReview
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: workspace/**
     prompt:
       You are the L7 Remediation agent. Restore behavioral detail that was over-sanitized.
 
