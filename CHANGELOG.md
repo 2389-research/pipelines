@@ -109,6 +109,16 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
 
+### Security
+
+- `greenfield/greenfield.dip`: the orchestrator-level failure-breadcrumb
+  reporters `DiscoveryFailed` and `L1Failed` write only `workspace/.l1-failed`
+  but ran with full default tool access. Both now carry
+  `writable_paths: workspace/.l1-failed`, structurally bounding their write
+  scope to the single path their prompts touch — matching the sibling
+  breadcrumb-writers in the review/synthesis/validation subgraphs
+  ([#32](https://github.com/2389-research/pipelines/issues/32)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
