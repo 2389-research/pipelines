@@ -4,7 +4,7 @@ A collection of [Dippin](https://github.com/2389-research/dippin-lang) pipelines
 
 ## Quick Start
 
-> **Requires** tracker ≥ `v0.35.0` (which vendors dippin-lang ≥ `v0.35.0`; joint release, tracker tagged first). Pipelines use the `marker_grep` typed-routing field on tool nodes, the `tool_access: none` structural bound on agent Start/Exit nodes, and `writable_paths` fs-jail bounds on agents that need scoped write access. `writable_paths` enforcement is Linux-only (Landlock + openat2) — on macOS/Windows tracker refuses to start when the field is set. Older tracker releases will reject `writable_paths` as an unknown field. Installing with `@latest` is sufficient.
+> **Requires** tracker ≥ `v0.39.0` (which vendors a matching dippin-lang; joint release, tracker tagged first). **Prefer the latest release — install with `@latest`** (CI pins the newest lockstep pair, currently tracker `v0.40.2` / dippin `v0.43.0`). Pipelines use the `marker_grep` typed-routing field on tool nodes, the `tool_access: none` structural bound on agent Start/Exit nodes, and `writable_paths` fs-jail bounds on agents that need scoped write access. The `v0.39.0` floor matters: tracker's adapter only propagates the **top-level** `tool_access` spelling from `v0.39.0` (2389-research/tracker#366) — on older releases the Start/Exit bounds parse but are silently ignored at runtime (prose-only). `writable_paths` enforcement is Linux-only (Landlock + openat2) — on macOS/Windows tracker refuses to start when the field is set; the field itself needs tracker ≥ `v0.35.0`, and older releases reject it as unknown.
 
 ```bash
 # Install tracker

@@ -55,13 +55,16 @@ jobs:
       # change.
       - name: Install tracker + dippin (pinned, lockstep)
         env:
-          # Lockstep pins: tracker v0.35.x vendors dippin v0.35.x (joint
-          # release per dev_loop/README.md). The standalone dippin CLI MUST
-          # match tracker's vendored version so `dippin check/doctor/simulate`
-          # sees the same language semantics as `tracker validate`. There is
-          # no dippin v0.35.1 tag; v0.35.0 is the matching release.
-          TRACKER_VERSION: v0.35.1
-          DIPPIN_VERSION: v0.35.0
+          # Lockstep pins, kept current with the latest release (this repo
+          # prefers running the most recent tracker/dippin — that's what
+          # production uses via @latest). tracker vX vendors a specific dippin
+          # tag; the standalone dippin CLI MUST match tracker's vendored version
+          # so `dippin check/doctor/simulate` sees the same language semantics
+          # as `tracker validate`. tracker v0.40.2 vendors dippin v0.43.0.
+          # (v0.39.0 is the floor where top-level `tool_access` is enforced —
+          # tracker#366; older pins silently no-op'd the Start/Exit bounds.)
+          TRACKER_VERSION: v0.40.2
+          DIPPIN_VERSION: v0.43.0
         run: |
           go install "github.com/2389-research/tracker/cmd/tracker@${TRACKER_VERSION}"
           go install "github.com/2389-research/dippin-lang/cmd/dippin@${DIPPIN_VERSION}"

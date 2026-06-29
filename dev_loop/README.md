@@ -61,9 +61,11 @@ cat "${XDG_CACHE_HOME:-${HOME}/.cache}/dip/dev_loop/runs/${RID}/config_resolutio
 - **Linux.** `writable_paths` enforcement uses Landlock + openat2, which are
   Linux-only. tracker refuses to start when `writable_paths` is set on
   macOS/Windows.
-- `tracker` >= v0.35.0 (this is the version that ships
-  `writable_paths`/`tool_access: none`/`marker_grep` together — earlier
-  versions reject these as unknown fields).
+- `tracker` >= v0.39.0 (prefer the latest release). v0.35.0 first ships
+  `writable_paths`/`tool_access: none`/`marker_grep` together, but the **top-level
+  `tool_access`** spelling these workflows use is only enforced at runtime from
+  v0.39.0 (tracker#366) — on v0.35–v0.38 the Start/Exit bounds silently no-op.
+  Earlier versions reject these fields as unknown.
 - `dippin` is bundled inside `tracker`'s release; `dippin check` and
   `dippin doctor` are both used in CI.
 - `gh` (authenticated against the target repo).

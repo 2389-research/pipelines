@@ -19,11 +19,12 @@ on:
       - "sprint/verify_sprint.dip"
       - "sprint/verify_sprints_runner.dip"
 
-# Note: the runtime smoke probes (smoke.sh) are NOT wired here. They cost real
-# LLM calls and currently fail on main due to an upstream tracker
-# `tool_access` regression — see tests/track_b_smoke/README.md and
-# 2389-research/tracker#366. Operators run smoke.sh manually when investigating
-# Track B sites; this workflow gates only the assertion-helper unit tests.
+# Note: the runtime smoke probes (smoke.sh) are NOT wired here. The upstream
+# tracker `tool_access` regression (2389-research/tracker#366) that broke them
+# is now FIXED — landed in tracker v0.39.0, and this repo's pin has advanced to
+# v0.40.2. They remain unwired only because they cost real LLM calls; operators
+# run smoke.sh manually when investigating Track B sites, and re-wiring them in
+# CI is tracked by #19. This workflow gates only the assertion-helper unit tests.
 
 jobs:
   lib_unit_tests:

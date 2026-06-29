@@ -86,9 +86,10 @@ provider `tracker setup` selected). The sprint families
 `$PATH` — the sprint pipelines preflight-check yq and `smoke.sh` fails fast
 with exit code 2 if it's missing rather than letting the probe exercise the
 wrong (`CheckYq → YqMissing → Exit`) short-circuit. Observed per-invocation
-cost against Claude Sonnet **assuming tracker#366 is fixed** (while the
-regression is live, the converted agent runs with full tool access and the
-observed cost per probe may exceed these):
+cost against Claude Sonnet (with tracker#366 fixed — tracker ≥ v0.39.0 — so the
+converted agent actually runs tool-less; on the older pins where the regression
+was live, the agent ran with full tool access and cost per probe could exceed
+these):
 
 - `verify` / `verify-runner`: ~$0.001 (Exit-only, one LLM call)
 - `verify-sprint-exec`: $0.0024-$0.0052 (Start + Exit, two LLM calls)
@@ -145,21 +146,21 @@ done
 
 ## Current status
 
-**`verify` and `verify-runner` probes FAIL on `main` against tracker
-v0.35.1.** The smoke harness is correctly identifying the regression issue
-#19 was filed to catch — see [2389-research/tracker#366][tracker366].
+**RESOLVED.** tracker#366 — the regression that made the `verify` /
+`verify-runner` probes fail on the old `v0.35.1` pin — **landed in tracker
+v0.39.0**, and this repo's pin has advanced to **v0.40.2 / dippin v0.43.0**. The
+top-level `tool_access` bounds now enforce at runtime, so both probes should go
+green without any `.dip` changes. (They remain unwired in CI only for LLM-call
+cost; re-wiring is tracked by #19.)
 
-Root cause: tracker's dippin adapter never propagates the top-level IR field
-`cfg.ToolAccess` into the per-node `attrs["tool_access"]` map, so
-`SessionConfig.ToolAccess` stays empty and `IsToolAccessRestricted()` returns
-false. The tool registry never gets cleared. Putting `tool_access: none`
-inside a `params:` block DOES propagate (the adapter reads
-`extractAgentBackendAttrs(cfg.Params, attrs)`) — but dippin emits a hint
-steering authors back to the top-level form. Every Track B `.dip` in this
-repo uses the canonical top-level form.
-
-Once tracker#366 lands and this repo's `tracker` pin advances, both probes
-should go green without any `.dip` changes.
+Root cause (historical): tracker's dippin adapter never propagated the top-level
+IR field `cfg.ToolAccess` into the per-node `attrs["tool_access"]` map, so
+`SessionConfig.ToolAccess` stayed empty and `IsToolAccessRestricted()` returned
+false — the tool registry was never cleared. Putting `tool_access: none` inside
+a `params:` block DID propagate (the adapter reads
+`extractAgentBackendAttrs(cfg.Params, attrs)`) — but dippin emits a hint steering
+authors back to the top-level form, which every Track B `.dip` in this repo uses.
+tracker#366 (v0.39.0) fixed the adapter to propagate the top-level field.
 
 The `bats` assertion-helper tests are independent of this regression and pass
 clean: `lib.sh` is verified on synthetic fixtures.
