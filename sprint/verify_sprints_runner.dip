@@ -123,6 +123,7 @@ workflow VerifySprintsRunner
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    writable_paths: VERIFICATION-SUMMARY.md
     auto_status: true
     prompt:
       You are the final report generator for the sprint verification sweep.

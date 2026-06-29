@@ -155,6 +155,29 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   tracker's Linux fs-jail; a runtime smoke (#19) should confirm the
   multi-provider agents still start under the jail
   ([#32](https://github.com/2389-research/pipelines/issues/32)).
+- Sprint-family write-scope sweep: added `writable_paths` to 15 writer agents
+  whose prompts declare a bounded `.ai/` write target but ran unbounded.
+  `spec_to_sprints_yaml_v2.dip` (9): `analyze_spec` → `.ai/spec_analysis.md`;
+  `decompose_claude`/`decompose_gpt`/`decompose_gemini` → their single
+  `.ai/drafts/decomposition_*.md`; `merge_decomposition`/`apply_feedback` →
+  `.ai/sprint_plan.md`; `DecompositionManager` → `.ai/drafts/decomposition_review.md,
+  .ai/sprint_plan.md`; `redecompose_single` → its enumerated allowlist
+  (`.ai/sprints/SPRINT-*.{yaml,md}, .ai/redecompose-result.yaml`);
+  `write_sprint_docs` → `.ai/sprints/SPRINT-*.{md,yaml}`. `sprint_exec_yaml_v2.dip`
+  (2): `PlanManager` → `.ai/sprints/SPRINT-*-plan-brief.md, .ai/managers/plan-journal.md`;
+  `ReviewManager` → `.ai/sprints/SPRINT-*-review-brief.md, .ai/managers/review-journal.md`
+  (the `RecoveryManager` sidecar was already bounded under #41). `verify_sprint.dip`
+  (2): `GenerateReport` → `.ai/sprints/SPRINT-*-verification.md`;
+  `CreateRemediationSprints` → `.ai/sprints/SPRINT-*.{yaml,md}, .ai/ledger.yaml`.
+  `verify_sprints_runner.dip` (1): `FinalReport` → `VERIFICATION-SUMMARY.md`. Each
+  glob is the faithful translation of the prompt's stated output paths, narrowed
+  to the sidecar/file pattern (not `.ai/sprints/**`) per the #41 least-privilege
+  lesson. The broad sprint/task IMPLEMENTER agents (`ImplementSprint`,
+  `ImplementCheap`/`ImplementRescue`, the commit agents) and the megaplan
+  context-producer agents are deliberately left unbounded — they write arbitrary
+  source across the repo or persist via downstream tool nodes, so a glob would
+  break them. `dippin doctor` grade and `tracker validate` unchanged on all four
+  files ([#32](https://github.com/2389-research/pipelines/issues/32)).
 
 ## [0.3.0] - 2026-06-17
 
