@@ -109,6 +109,18 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
 
+### Security
+
+- `greenfield/greenfield_discovery.dip`: scoped the nine writer agents
+  (`SourceAnalyzer`, `DocResearcher`, `SdkAnalyzer`, `CommunityAnalyst`,
+  `RuntimeObserver`, `BinaryAnalyzer`, `GitArchaeologist`, `TestSuiteAnalyzer`,
+  `CoverageAgent`) to `writable_paths: workspace/**`, a faithful translation of
+  each node's "ONLY ... under workspace/" WRITE BOUNDARY clause so the
+  read-only target repo is enforced structurally, not just by prose. The
+  `tool_access: none` Start/Exit nodes and the read-then-breadcrumb
+  `L1IncompleteFailed` reporter are unchanged
+  ([#32](https://github.com/2389-research/pipelines/issues/32)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
