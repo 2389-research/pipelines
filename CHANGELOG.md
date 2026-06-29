@@ -109,6 +109,17 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
 
+### Security
+
+- `greenfield/greenfield_validation.dip`: scoped the nine workspace-writing
+  agents (`TestVectorGenerator`, `TestGenerator`, `AcceptanceCriteriaWriter`,
+  `Gate2Remediation`, `Gate2AgentReview`, and the four `Sanitizer*` workers) to
+  `writable_paths: workspace/**`, the faithful 1:1 translation of each node's
+  "ONLY create or modify files under workspace/" WRITE BOUNDARY prose. The
+  target repo stays read-only to these agents; `tool_access: none` nodes
+  (`Start`/`Exit`) and the already-scoped `Gate2Failed` breadcrumb-writer are
+  unchanged ([#32](https://github.com/2389-research/pipelines/issues/32)).
+
 ## [0.3.0] - 2026-06-17
 
 Second minor release under the `CONTRIBUTING.md#versioning` SemVer policy.
