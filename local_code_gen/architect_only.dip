@@ -195,7 +195,7 @@ workflow ArchitectOnlyTest
       (a) **Symbols consumed.** Name the types / functions / constants Sprint N imports from Sprint M (these are pinned in §6).
 
       (b) **Required cross-module test.** One named test that Sprint N MUST include in its test plan. The test obtains real upstream values through Sprint M's public API surface (constructor, exported constant, factory, parser, builder, etc.) and then feeds those values to Sprint N's public API — no aliasing, no manual reconstruction of Sprint M's types via hand-built fixtures, no mocks. Specify:
-      - **Test name** following the project language's convention (Rust/Python: snake_case like `parse_consumes_real_lexer_tokens`; Go: CamelCase with `Test` prefix like `TestParseConsumesRealLexerTokens`; Node/TS: the string literal you pass to `it(...)`/`test(...)`; Java: the method name). Use a name that is unique across the whole project.
+      - **Test name** following the project language's convention (Rust: snake_case like `parse_consumes_real_lexer_tokens`; Python: pytest-discoverable `test_`-prefixed snake_case like `test_parse_consumes_real_lexer_tokens` (a bare `def name(` is found by the audit grep but not collected/run by pytest); Go: CamelCase with `Test` prefix like `TestParseConsumesRealLexerTokens`; Node/TS: the string literal you pass to `it(...)`/`test(...)`; Java: the method name). Use a name that is unique across the whole project.
       - **Test body sketch** — 3–6 lines in the project's language showing the call chain: construct an upstream value via Sprint M's public API, feed it to Sprint N's public API, assert on the result.
       - **What it catches** — one line: e.g. "type duplication or signature drift in the parser's input type."
 
@@ -363,6 +363,18 @@ workflow ArchitectOnlyTest
     command:
       set -eu
       errors=""
+      # Cross-module mandate (issue #8): if §7 carries any `### Edge:` heading,
+      # every one MUST match the exact `### Edge: Sprint NNN → Sprint MMM` form.
+      # A near-miss (ASCII '->', stray spacing) fails here rather than silently
+      # disabling enforcement — the per-sprint cardinality gate below is strict,
+      # so without this a malformed contract would skip the check entirely.
+      if [ -f .ai/contract.md ] && grep -qE '^### Edge:' .ai/contract.md; then
+        _et=$(grep -cE '^### Edge:' .ai/contract.md 2>/dev/null || true)
+        _ex=$(grep -cE '^### Edge: Sprint [0-9]{3} → Sprint [0-9]{3}( |$)' .ai/contract.md 2>/dev/null || true)
+        if [ "${_et:-0}" -ne "${_ex:-0}" ]; then
+          errors="${errors}contract:malformed-edge-heading(total=${_et:-0},exact=${_ex:-0}) "
+        fi
+      fi
       sprint_count=0
       # Per-file section check. Two tiers:
       #  - Hard-required (exact header match): every sprint must have these.

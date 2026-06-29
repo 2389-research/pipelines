@@ -781,7 +781,10 @@ workflow SprintExecLocalGenQwen
       for tname in $mandate_names; do
         IFS=$oldifs
         [ -z "$tname" ] && continue
-        decl_pat=$(grep_test_decl "$tname")
+        # Escape ERE metacharacters so a name with '.', '+', '(', spaces, etc.
+        # (e.g. a Node string-literal test name) matches literally, not as regex.
+        esc_tname=$(printf '%s' "$tname" | sed 's/[][(){}.^$*+?|\\]/\\&/g')
+        decl_pat=$(grep_test_decl "$esc_tname")
         # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
         if ! grep -rqE "$decl_pat" . \
           --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
