@@ -50,6 +50,19 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   converged-end-state path
   ([#106](https://github.com/2389-research/pipelines/pull/106),
   closes [#76](https://github.com/2389-research/pipelines/issues/76)).
+- `docs/migrations/0.32-tool-access-none.md` +
+  `docs/migrations/0.32-to-current.md`: toolchain migration guides for
+  downstream template users. The first covers the `tool_access: none` agent
+  field (dippin v0.32.0) and the tool-access-vs-policy distinction; the second
+  gives version-by-version notes from v0.32 through the current pins
+  (`command_file` v0.33, `prompt_file`/`system_prompt_file` v0.34,
+  `writable_paths` + DIP140 + per-branch overrides v0.35, DIP143 subgraph
+  containment v0.36). `docs/agent-node-safety.md` gains a "Structural bound
+  tiers" section noting the v0.28.2 runaway-agent vector is now structurally
+  bounded and explaining when to reach for `tool_access: none` vs.
+  `writable_paths` vs. the read-bounded waiver. Docs-only; no `.dip` change
+  ([#20](https://github.com/2389-research/pipelines/issues/20),
+  [#38](https://github.com/2389-research/pipelines/issues/38)).
 
 ### Changed
 
