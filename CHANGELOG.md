@@ -53,6 +53,17 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Changed
 
+- Toolchain pin bumped to the latest lockstep pair: tracker `v0.35.1` → `v0.40.2`,
+  dippin `v0.35.0` → `v0.43.0` (`dev_loop_smoke.yml`), and the README/`dev_loop`
+  requirement floor raised tracker `≥ v0.35.0` → `≥ v0.39.0`. The repo now tracks
+  the most recent release (production runs `@latest`). The floor matters: tracker's
+  adapter only propagates the **top-level** `tool_access` spelling — the form every
+  Track B `.dip` uses — from v0.39.0 ([tracker#366](https://github.com/2389-research/tracker/issues/366));
+  on v0.35–v0.38 the `Start`/`Exit` bounds parsed but silently no-op'd at runtime.
+  `dev_loop.dip` stays Grade A under dippin v0.43.0. The Track B runtime-smoke
+  regression that #366 caused is correspondingly marked resolved in
+  `tests/track_b_smoke/README.md` (re-wiring those probes in CI remains tracked by
+  [#19](https://github.com/2389-research/pipelines/issues/19)).
 - `dev_loop/config/repo_conventions.md` "Testing policy" category bullet now
   names the second axis (auto-runnable harness vs. operator runbook) and
   states the template's default — runbooks that depend on in-tree assertion
