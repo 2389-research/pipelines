@@ -118,6 +118,17 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   scope to the single path their prompts touch — matching the sibling
   breadcrumb-writers in the review/synthesis/validation subgraphs
   ([#32](https://github.com/2389-research/pipelines/issues/32)).
+- Greenfield subgraph write-scope sweep: added `writable_paths: workspace/**` to
+  the 42 worker agents across `greenfield/greenfield_discovery.dip` (9),
+  `greenfield_synthesis.dip` (13), `greenfield_review.dip` (11), and
+  `greenfield_validation.dip` (9) whose prompts already declare the uniform
+  "WRITE BOUNDARY: ONLY ... under workspace/" contract but ran unbounded. The
+  glob is the faithful structural translation of that existing prose; Start/Exit
+  (`tool_access: none`) and the `*Failed` breadcrumb-writers (narrower scope)
+  are unchanged. `dippin check` clean (0 errors) on all four files. Enforced by
+  tracker's Linux fs-jail; a runtime smoke (#19) should confirm the
+  multi-provider agents still start under the jail
+  ([#32](https://github.com/2389-research/pipelines/issues/32)).
 
 ## [0.3.0] - 2026-06-17
 

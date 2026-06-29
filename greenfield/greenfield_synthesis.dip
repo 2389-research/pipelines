@@ -49,6 +49,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Feature Discoverer for Greenfield reverse engineering.
 
@@ -70,6 +71,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Architecture Analyst for Greenfield reverse engineering.
 
@@ -92,6 +94,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the API Extractor for Greenfield reverse engineering.
 
@@ -114,6 +117,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Module Mapper for Greenfield reverse engineering.
 
@@ -136,6 +140,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Synthesizer for Greenfield reverse engineering.
 
@@ -167,6 +172,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Deep Dive Analyzer for Greenfield reverse engineering.
 
@@ -197,6 +203,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Behavior Documenter for Greenfield reverse engineering.
 
@@ -224,6 +231,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the User Journey Analyzer for Greenfield reverse engineering.
 
@@ -253,6 +261,7 @@ workflow GreenfieldSynthesis
     provider: anthropic
     reasoning_effort: high
     auto_status: true
+    writable_paths: workspace/**
     prompt:
       You are the Contract Extractor for Greenfield reverse engineering.
 
@@ -283,6 +292,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: workspace/**
     prompt:
       You are the Gate 1 Remediation agent. Gate 1 found quality issues with the behavioral specs.
 
@@ -341,6 +351,7 @@ workflow GreenfieldSynthesis
     max_retries: 3
     retry_target: Gate1Remediation
     fallback_target: Gate1Failed
+    writable_paths: workspace/**
     prompt:
       You are the Gate 1 quality reviewer. Evaluate the behavioral specs in workspace/raw/specs/.
 
@@ -403,6 +414,7 @@ workflow GreenfieldSynthesis
     max_retries: 2
     retry_target: JourneyContractRemediation
     fallback_target: Gate1Failed
+    writable_paths: workspace/**
     prompt:
       You are the Gate 1b completeness reviewer. Verify every user-facing surface is captured in specs.
 
@@ -421,6 +433,7 @@ workflow GreenfieldSynthesis
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: workspace/**
     prompt:
       You are the Journey/Contract Remediation agent. Gate 1b found completeness gaps.
 
