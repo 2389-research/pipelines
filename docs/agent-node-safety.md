@@ -15,6 +15,47 @@ Conventions for safe agent design:
 3. **If you genuinely need an LLM at a node that should not touch files**, declare `tool_access: none`. On older toolchains, `backend: claude-code` with explicit `disallowed_tools` is the fallback — the native backend silently drops those attributes.
 4. **Don't trust `${ctx.last_response}` content** when designing downstream agent prompts — it's a cross-node prompt-injection vector. `tool_access: none` bounds the catalog but does not sanitize incoming context strings.
 
+## Structural bound tiers
+
+(Per-tier minimum versions are noted on each bullet — `tool_access: none` lands
+in dippin v0.32.0, `writable_paths:` in v0.35.0.)
+
+The v0.28.2 runaway-agent vector documented in the analysis below was
+**prompt-only** when this doc was written at v0.27.0. It is now structurally
+bounded **on a runtime that enforces these fields** — the top-level `tool_access`
+form requires tracker ≥ v0.39.0 (this repo's floor; on v0.31–v0.38 it parses but
+silently no-ops at runtime — [tracker#366](https://github.com/2389-research/tracker/issues/366),
+see [the migration note](migrations/0.32-tool-access-none.md#compatibility)). Two
+language-level fields exist, and they are not interchangeable —
+pick the tightest tier that still lets the node do its job:
+
+- **`tool_access: none` (v0.32.0)** — strips the *entire* tool catalog
+  (`Read` included). Use for acknowledge-only `Start`/`Exit` agents and for LLM
+  nodes that reason over context but must never touch the filesystem. It is
+  all-or-nothing on the native backend; do not apply it to a node that needs its
+  native `Read` tool (see the read-bounded waiver below).
+- **`writable_paths:` (v0.35.0)** — keeps the catalog but confines writes to the
+  listed path globs (a filesystem jail). Use for agents that legitimately read
+  broadly and implement, but should only *write* inside a known scope — e.g.
+  `writable_paths: .dev_loop_worktree/**` on the `dev_loop` implementer,
+  `writable_paths: workspace/.review-failed` on greenfield review.
+  Enforcement is **Linux-only** (Landlock + openat2); on macOS/Windows tracker
+  refuses to start when the field is set, and older tracker releases reject it as
+  an unknown field. Full-chain symlinks are rejected.
+
+Supporting lints (advisory — they do not by themselves bound anything):
+
+- **DIP140 (v0.35)** — flags a params-based bypass of the `writable_paths` jail
+  (a path scope that an interpolated param could escape).
+- **DIP143 (v0.36)** — subgraph-containment advisory: a subgraph's nodes should
+  stay within its declared boundary. See
+  [`dip143-subgraph-audit.md`](dip143-subgraph-audit.md).
+
+Tier-selection rule of thumb: no filesystem need → `tool_access: none`; scoped
+write need → `writable_paths:`; unscoped read need with write-bounding prose →
+read-bounded waiver (below). Version-by-version detail is in
+[`migrations/0.32-to-current.md`](migrations/0.32-to-current.md).
+
 ## Why the obvious mitigations don't work
 
 ### `max_turns: 1` does not bound damage within the one turn
