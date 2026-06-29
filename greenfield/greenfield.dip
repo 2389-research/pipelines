@@ -251,6 +251,7 @@ workflow Greenfield
     label: "Discovery Failed"
     max_turns: 1
     auto_status: true
+    writable_paths: workspace/.l1-failed
     prompt:
       L1 discovery subgraph failed. Write workspace/.l1-failed with reason. Report.
 
@@ -258,6 +259,7 @@ workflow Greenfield
     label: "L1 Output Check Failed"
     max_turns: 2
     auto_status: true
+    writable_paths: workspace/.l1-failed
     prompt:
       L1 output check failed — no intelligence sources produced results.
       Write workspace/.l1-failed with the reason (e.g., "no completed sources" or "l1 output empty").
