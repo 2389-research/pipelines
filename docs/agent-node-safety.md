@@ -15,7 +15,10 @@ Conventions for safe agent design:
 3. **If you genuinely need an LLM at a node that should not touch files**, declare `tool_access: none`. On older toolchains, `backend: claude-code` with explicit `disallowed_tools` is the fallback — the native backend silently drops those attributes.
 4. **Don't trust `${ctx.last_response}` content** when designing downstream agent prompts — it's a cross-node prompt-injection vector. `tool_access: none` bounds the catalog but does not sanitize incoming context strings.
 
-## Structural bound tiers (dippin ≥ v0.35)
+## Structural bound tiers
+
+(Per-tier minimum versions are noted on each bullet — `tool_access: none` lands
+in dippin v0.32.0, `writable_paths:` in v0.35.0.)
 
 The v0.28.2 runaway-agent vector documented in the analysis below was
 **prompt-only** when this doc was written at v0.27.0. It is now structurally
