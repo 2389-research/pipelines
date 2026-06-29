@@ -178,6 +178,20 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   source across the repo or persist via downstream tool nodes, so a glob would
   break them. `dippin doctor` grade and `tracker validate` unchanged on all four
   files ([#32](https://github.com/2389-research/pipelines/issues/32)).
+- Iterative pipeline write-scope sweep: added `writable_paths:` to the
+  bounded-write agents across `iterative/iter_scope.dip` (6),
+  `iter_extract.dip` (9), `iter_dev.dip` (2), `iter_audit.dip` (4), and
+  `iter_run.dip` (10) whose prompts already declare a single bounded write
+  target. Temp-only writers are bound to their per-stage scratch tree
+  (`.ai/iter-scope-temp/**`, `.ai/iter-extract-temp/**`,
+  `.ai/iter-audit-temp/**`, `.ai/iter-run-temp/**`); artifact writers that the
+  prompts confine to docs are bound to `docs/iterations/**` (with
+  `.ai/iter-audit-result.txt` / `.ai/iter-loop-context.txt` added where the
+  prompt also writes those sentinels). The three broad task-implementer agents
+  that write arbitrary source by design (`implement_task`, `fix_spec_issues`,
+  `fix_quality_issues` in `iter_run.dip`) are deliberately left unbounded.
+  All five files stay grade A (`dippin doctor`) and pass `tracker validate`
+  ([#32](https://github.com/2389-research/pipelines/issues/32)).
 
 ## [0.3.0] - 2026-06-17
 

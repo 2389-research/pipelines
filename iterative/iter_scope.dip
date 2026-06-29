@@ -73,6 +73,7 @@ workflow IterScope
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-scope-temp/**
     prompt:
       Read all epic files in docs/iterations/requirements/ — scan epic headers, story titles, status fields, and AC proof obligations. Also read docs/iterations/behavior-scenarios.md for scenario coverage.
 
@@ -100,6 +101,7 @@ workflow IterScope
     reasoning_effort: high
     goal_gate: true
     auto_status: true
+    writable_paths: .ai/iter-scope-temp/**
     prompt:
       You are defining the Walking Skeleton — ITER-0000 — for an iterative development project.
 
@@ -148,6 +150,7 @@ workflow IterScope
     reasoning_effort: high
     goal_gate: true
     auto_status: true
+    writable_paths: .ai/iter-scope-temp/**
     prompt:
       You are ordering the remaining stories (not in the walking skeleton) into follow-on iterations.
 
@@ -266,6 +269,7 @@ workflow IterScope
     label: "Fix Citations"
     max_turns: 15
     auto_status: true
+    writable_paths: .ai/iter-scope-temp/**
     prompt:
       Read the citation check results — some STORY-NNNN IDs in .ai/iter-scope-temp/skeleton.md or .ai/iter-scope-temp/iterations.md do not match any story in docs/iterations/requirements/.
 
@@ -446,6 +450,7 @@ workflow IterScope
     label: "Adjust Scope"
     max_turns: 200
     auto_status: true
+    writable_paths: .ai/iter-scope-temp/**, docs/iterations/requirements/**
     prompt:
       Read the scope review findings from par_scope_aggregate. Adjust skeleton.md and iterations.md to address all raised issues.
 
@@ -474,6 +479,7 @@ workflow IterScope
     model: claude-sonnet-4-6
     goal_gate: true
     auto_status: true
+    writable_paths: docs/iterations/**
     prompt:
       Read .ai/iter-scope-temp/skeleton.md and .ai/iter-scope-temp/iterations.md.
 

@@ -234,6 +234,7 @@ workflow IterExtract
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -305,6 +306,7 @@ workflow IterExtract
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -376,6 +378,7 @@ workflow IterExtract
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       You are extracting testable requirements and behavior scenarios from spec documentation.
 
@@ -472,6 +475,7 @@ workflow IterExtract
     model: claude-opus-4-7
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       ## Competitive Context
 
@@ -526,6 +530,7 @@ workflow IterExtract
     model: claude-opus-4-7
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       ## Competitive Context
 
@@ -582,6 +587,7 @@ workflow IterExtract
     model: gemini-3-flash-preview
     provider: gemini
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       Read both PAR reviewer outputs and the patch files .ai/iter-extract-temp/omission_patches_a.json and .ai/iter-extract-temp/omission_patches_b.json (if they exist).
 
@@ -620,6 +626,7 @@ workflow IterExtract
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       Build a coverage ledger that maps spec sections to extracted stories.
 
@@ -658,6 +665,7 @@ workflow IterExtract
     model: claude-sonnet-4-6
     provider: anthropic
     auto_status: true
+    writable_paths: .ai/iter-extract-temp/**
     prompt:
       The coverage ledger found spec sections with no extracted stories. Your job is to fill those gaps.
 
@@ -698,6 +706,7 @@ workflow IterExtract
     fallback_target: Exit
     max_turns: 20
     auto_status: true
+    writable_paths: docs/iterations/**
     prompt:
       Read ALL extraction JSON files in .ai/iter-extract-temp/extraction_*.json (and any omission patch files such as .ai/iter-extract-temp/omission_patches_a.json, .ai/iter-extract-temp/omission_patches_b.json, .ai/iter-extract-temp/extraction_patches.json).
 
