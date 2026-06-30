@@ -837,10 +837,20 @@ workflow SprintRunnerLocalGenQwen
               --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
               $grep_includes 2>/dev/null ;;
           rust|java-maven|java-gradle)
-            # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
-            for _file in $(grep -rlE "$_decl" . \
+            # Run grep with the caller's IFS so $grep_includes splits into separate
+            # --include flags; THEN split grep's newline-separated output into whole
+            # paths under IFS=newline + noglob (so paths with spaces/globs stay whole).
+            _files=$(grep -rlE "$_decl" . \
               --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
-              $grep_includes 2>/dev/null); do
+              $grep_includes 2>/dev/null)
+            [ -n "$_files" ] || return 1
+            case $- in *f*) _hadf=1 ;; *) _hadf=0 ;; esac
+            _svifs=$IFS
+            IFS=$(printf '\n.'); IFS=${IFS%.}; set -f
+            # shellcheck disable=SC2086 — intentional newline-split of the file list.
+            set -- $_files
+            IFS=$_svifs; [ "$_hadf" = 1 ] || set +f
+            for _file do
               awk -v decl="$_decl" -v marker="$_marker" '
                 {lines[NR]=$0}
                 $0 ~ decl {
@@ -860,8 +870,10 @@ workflow SprintRunnerLocalGenQwen
       # contain spaces (Node string-literal tests), so split on newlines only.
       mandate_names=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`/{line=$0; sub(/^[^`]*`/,"",line); sub(/`.*/,"",line); if(line!="")print line}' "$sprint" | sort -u)
       missing=""
+      _nl=$(printf '\n_'); _nl=${_nl%_}
       oldifs=$IFS
       IFS=$(printf '\n.'); IFS=${IFS%.}
+      set -f
       for tname in $mandate_names; do
         IFS=$oldifs
         [ -z "$tname" ] && continue
@@ -869,12 +881,14 @@ workflow SprintRunnerLocalGenQwen
         # (e.g. a Node string-literal test name) matches literally, not as regex.
         esc_tname=$(printf '%s' "$tname" | sed 's/[][(){}.^$*+?|\\]/\\&/g')
         if ! test_decl_present "$esc_tname"; then
-          missing="${missing}${tname} "
+          missing="${missing}${tname}${_nl}"
         fi
       done
       IFS=$oldifs
+      set +f
       if [ -n "$missing" ]; then
-        echo "CROSS-MODULE MANDATE: missing mandated test(s): $missing" \
+        # Newline-separated so names containing spaces stay unambiguous.
+        printf 'CROSS-MODULE MANDATE: missing mandated test(s):\n%s' "$missing" \
           >> .ai/last_audit_output.txt
         fail=1
       fi
