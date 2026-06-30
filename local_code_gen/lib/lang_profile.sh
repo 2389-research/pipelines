@@ -266,7 +266,12 @@ test_decl_present() {
       set -- $_files
       IFS=$_svifs; [ "$_hadf" = 1 ] || set +f
       for _file do
-        awk -v decl="$_decl" -v marker="$_marker" '
+        # Pass the regexes via ENVIRON, NOT `awk -v`: gawk processes C-style
+        # backslash escapes in -v values, mangling `\(`/`\[` into unmatched
+        # parens/brackets ("invalid regexp"); mawk does not, so -v passes locally
+        # but fails under gawk (Ubuntu CI). ENVIRON delivers the raw value.
+        _decl="$_decl" _marker="$_marker" awk '
+          BEGIN { decl = ENVIRON["_decl"]; marker = ENVIRON["_marker"] }
           {lines[NR]=$0}
           $0 ~ decl {
             for (i=NR-1; i>=1; i--) {
