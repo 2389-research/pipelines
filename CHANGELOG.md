@@ -161,8 +161,9 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   `spec_to_sprints_yaml_v2.dip` (9): `analyze_spec` → `.ai/spec_analysis.md`;
   `decompose_claude`/`decompose_gpt`/`decompose_gemini` → their single
   `.ai/drafts/decomposition_*.md`; `merge_decomposition`/`apply_feedback` →
-  `.ai/sprint_plan.md`; `DecompositionManager` → `.ai/drafts/decomposition_review.md,
-  .ai/sprint_plan.md`; `redecompose_single` → its enumerated allowlist
+  `.ai/sprint_plan.md`;
+  `DecompositionManager` → `.ai/drafts/decomposition_review.md, .ai/sprint_plan.md`;
+  `redecompose_single` → its enumerated allowlist
   (`.ai/sprints/SPRINT-*.{yaml,md}, .ai/redecompose-result.yaml`);
   `write_sprint_docs` → `.ai/sprints/SPRINT-*.{md,yaml}`. `sprint_exec_yaml_v2.dip`
   (2): `PlanManager` → `.ai/sprints/SPRINT-*-plan-brief.md, .ai/managers/plan-journal.md`;
