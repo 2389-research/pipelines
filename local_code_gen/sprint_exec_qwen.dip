@@ -751,6 +751,93 @@ workflow SprintExecLocalGenQwen
         fail=1
       fi
 
+      # Cross-module test mandate (issue #8): the sprint's `## Cross-Module Test
+      # Mandate` section names one backtick-quoted test per inbound dependency
+      # edge. The prompt-level mandate (architect → Sonnet → qwen) is not enough
+      # on its own — a faked or omitted mandate would still pass the test-count
+      # check. Here we grep the generated source for each mandated test as a
+      # real DECLARATION (name-exact, not fuzzy), so a missing or renamed test
+      # emits audit-fail with a diagnostic the existing LocalFix loop routes on.
+      # test_decl_present: returns 0 if $1 (already ERE-escaped) is declared as a
+      # *test* in the tree (not merely some function with that name). python/node/ruby
+      # names are convention-prefixed so a same-line match is test-specific; go requires
+      # a *testing.[TBM] receiver; rust/java require the test attribute (#[test] / @Test)
+      # in the contiguous annotation block directly above the declaration. Inlined here
+      # (lang_profile.sh is the long-term home) so the check ships with the Audit node.
+      test_decl_present() {
+        _name="$1"
+        case "$lang" in
+          python)                 _re="(^|[^A-Za-z0-9_])(async[[:space:]]+)?def[[:space:]]+${_name}[[:space:]]*\(" ;;
+          node)                   _re="(it|test)[[:space:]]*\\([[:space:]]*['\"\`]${_name}['\"\`]" ;;
+          ruby)                   _re="((test|it)[[:space:]]*['\"\`]${_name}['\"\`])|((^|[^A-Za-z0-9_])def[[:space:]]+${_name})" ;;
+          go)                     _re="(^|[^A-Za-z0-9_])func[[:space:]]+${_name}[[:space:]]*\([^)]*\*testing\.[TBM]" ;;
+          rust)                   _marker='^[[:space:]]*#\[(tokio::)?test\]'; _decl="(^|[^A-Za-z0-9_])(async[[:space:]]+)?fn[[:space:]]+${_name}[[:space:]]*\(" ;;
+          java-maven|java-gradle) _marker='^[[:space:]]*@(Test|ParameterizedTest|RepeatedTest)'; _decl="(^|[^A-Za-z0-9_])(void|fun)[[:space:]]+${_name}[[:space:]]*\(" ;;
+          *)                      return 1 ;;
+        esac
+        case "$lang" in
+          python|node|ruby|go)
+            # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
+            grep -rqE "$_re" . \
+              --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+              $grep_includes 2>/dev/null ;;
+          rust|java-maven|java-gradle)
+            # Run grep with the caller's IFS so $grep_includes splits into separate
+            # --include flags; THEN split grep's newline-separated output into whole
+            # paths under IFS=newline + noglob (so paths with spaces/globs stay whole).
+            _files=$(grep -rlE "$_decl" . \
+              --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+              $grep_includes 2>/dev/null)
+            [ -n "$_files" ] || return 1
+            case $- in *f*) _hadf=1 ;; *) _hadf=0 ;; esac
+            _svifs=$IFS
+            IFS=$(printf '\n.'); IFS=${IFS%.}; set -f
+            # shellcheck disable=SC2086 — intentional newline-split of the file list.
+            set -- $_files
+            IFS=$_svifs; [ "$_hadf" = 1 ] || set +f
+            for _file do
+              awk -v decl="$_decl" -v marker="$_marker" '
+                {lines[NR]=$0}
+                $0 ~ decl {
+                  for (i=NR-1; i>=1; i--) {
+                    if (lines[i] ~ /^[[:space:]]*$/) continue
+                    if (lines[i] ~ marker) {found=1; exit}
+                    if (lines[i] ~ /^[[:space:]]*(#\[|@|\/\/|\*|\/\*)/) continue
+                    break
+                  }
+                }
+                END {exit found?0:1}' "$_file" && return 0
+            done
+            return 1 ;;
+        esac
+      }
+      # First backtick token per mandate bullet is the test name; names may
+      # contain spaces (Node string-literal tests), so split on newlines only.
+      mandate_names=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`/{line=$0; sub(/^[^`]*`/,"",line); sub(/`.*/,"",line); if(line!="")print line}' "$sprint" | sort -u)
+      missing=""
+      _nl=$(printf '\n_'); _nl=${_nl%_}
+      oldifs=$IFS
+      IFS=$(printf '\n.'); IFS=${IFS%.}
+      set -f
+      for tname in $mandate_names; do
+        IFS=$oldifs
+        [ -z "$tname" ] && continue
+        # Escape ERE metacharacters so a name with '.', '+', '(', spaces, etc.
+        # (e.g. a Node string-literal test name) matches literally, not as regex.
+        esc_tname=$(printf '%s' "$tname" | sed 's/[][(){}.^$*+?|\\]/\\&/g')
+        if ! test_decl_present "$esc_tname"; then
+          missing="${missing}${tname}${_nl}"
+        fi
+      done
+      IFS=$oldifs
+      set +f
+      if [ -n "$missing" ]; then
+        # Newline-separated so names containing spaces stay unambiguous.
+        printf 'CROSS-MODULE MANDATE: missing mandated test(s):\n%s' "$missing" \
+          >> .ai/last_audit_output.txt
+        fail=1
+      fi
+
       if [ "$fail" -eq 0 ]; then printf 'audit-pass'; else printf 'audit-fail'; fi
 
   # DIP101 ack: CloudFix is the LLM-driven fallback fix path. It's only

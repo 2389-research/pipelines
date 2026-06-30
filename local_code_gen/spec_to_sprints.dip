@@ -716,7 +716,7 @@ workflow SpecToSprintsForLocalCodegen
       (a) **Symbols consumed.** Name the types / functions / constants Sprint N imports from Sprint M (these are pinned in §6).
 
       (b) **Required cross-module test.** One named test that Sprint N MUST include in its test plan. The test obtains real upstream values through Sprint M's public API surface (constructor, exported constant, factory, parser, builder, etc.) and then feeds those values to Sprint N's public API — no aliasing, no manual reconstruction of Sprint M's types via hand-built fixtures, no mocks. Specify:
-      - **Test name** in snake_case (e.g. `parse_consumes_real_lexer_tokens`)
+      - **Test name** following the project language's convention (Rust: snake_case like `parse_consumes_real_lexer_tokens`; Python: pytest-discoverable `test_`-prefixed snake_case like `test_parse_consumes_real_lexer_tokens` (a bare `def name(` is found by the audit grep but not collected/run by pytest); Go: CamelCase with `Test` prefix like `TestParseConsumesRealLexerTokens`; Node/TS: the string literal you pass to `it(...)`/`test(...)`; Java: the method name). Use a name that is unique across the whole project.
       - **Test body sketch** — 3–6 lines in the project's language showing the call chain: construct an upstream value via Sprint M's public API, feed it to Sprint N's public API, assert on the result.
       - **What it catches** — one line: e.g. "type duplication or signature drift in the parser's input type."
 
@@ -724,10 +724,12 @@ workflow SpecToSprintsForLocalCodegen
 
       This rule is mandatory and applies to every project, regardless of stack. Sonnet will expand each test per the sprint's idiom; the local writer (qwen) has zero discretion to skip, rename, weaken, or substitute. If a required cross-module test would cause a freshly-generated module to fail to compile, that compile failure IS the sprint's signal to fix upstream-symbol usage — not to weaken the test.
 
-      Example block (Rust syntax shown — adapt to project language):
+      ### Deterministic marker format (machine-checked — DO NOT vary)
+
+      The pipeline mechanically counts and grep-verifies these markers, so the structure below is mandatory and exact. Each edge in §7 MUST be a level-3 heading on its own line followed by a `- Required test:` bullet whose test name is enclosed in single backticks:
 
       ```
-      **Edge: Sprint 002 → Sprint 001**
+      ### Edge: Sprint 002 → Sprint 001
       - Symbols consumed: `lexer::Token`, `lexer::tokenize`
       - Required test: `parse_consumes_real_lexer_tokens`
         ```rust
@@ -738,7 +740,12 @@ workflow SpecToSprintsForLocalCodegen
         Catches: parser re-declaring its own `Token` enum instead of importing from lexer; signature drift if `parse` doesn't accept `&[lexer::Token]` directly.
       ```
 
-      Sprint 001 has no incoming edges and therefore no required cross-module tests.
+      Marker rules (any deviation breaks the validator and re-dispatches the sprint):
+      - The heading is exactly `### Edge: Sprint NNN → Sprint MMM` — three hashes, the literal word `Edge:`, zero-padded 3-digit sprint ids, and the `→` arrow. NNN is the consuming sprint; MMM is the producer.
+      - Exactly one `- Required test: \`<name>\`` line per `### Edge:` heading. The test name is single-backtick-quoted and matches the name Sonnet will copy into the consuming sprint's spec and qwen will write into source — byte-for-byte.
+      - Use one `### Edge:` heading per directed edge. If a sprint has multiple inbound edges, emit one heading + one required test per edge.
+
+      Sprint 001 has no incoming edges and therefore no `### Edge:` headings naming it as the consumer and no required cross-module tests.
 
       #### 8. Mandatory Rules Across All Sprints
 
@@ -781,7 +788,7 @@ workflow SpecToSprintsForLocalCodegen
         - `Modified files:` — files that already exist from prior sprints and this sprint extends. Use the contract's file-ownership map. Misclassifying a modified file as new will cause the local executor to overwrite the prior sprint's contribution.
       - types/functions this sprint defines (NAMES — fields are pinned in the contract)
       - cross-sprint dependencies it consumes
-      - **Cross-module test mandate (REQUIRED for sprints 002+):** for every dependency edge declared in contract §7 where this sprint is the consumer, copy the FULL test contract (test name + body sketch + what-it-catches line) into this sprint's test plan as a named entry. These are not optional and Sonnet must surface them verbatim — the local writer has no discretion to omit them. If §7 declares N edges into this sprint, the test plan MUST include at least N cross-module tests on top of the sprint's own unit tests.
+      - **Cross-module test mandate (REQUIRED for sprints 002+):** for every dependency edge declared in contract §7 where this sprint is the consumer, copy the FULL test contract (test name + body sketch + what-it-catches line) into this sprint's test plan as a named entry. These are not optional and Sonnet must surface them verbatim — the local writer has no discretion to omit them. If §7 declares N edges into this sprint, the test plan MUST include at least N cross-module tests on top of the sprint's own unit tests. Sonnet ALSO emits a dedicated machine-checked section in each consuming sprint's `SPRINT-NNN.md` — a heading `## Cross-Module Test Mandate` followed by one bullet per inbound edge, exactly: `` - `<test_name>` (edge: Sprint NNN → Sprint MMM) — <one-line catches> ``. The backticked `<test_name>` MUST be byte-identical to the §7 `Required test:` name for that edge. Emit exactly one bullet per §7 `### Edge:` heading naming this sprint as the consumer; the bullet count MUST equal the inbound-edge count (the pipeline compares them). Sprints with zero inbound edges (e.g. sprint 001) omit this section entirely — do NOT emit an empty `## Cross-Module Test Mandate` heading or a `*(none)*` placeholder.
       - exact validation commands
       - Do NOT redefine field-by-field shape of cross-sprint types here; reference them by name and let the contract carry the truth.
       - **Infrastructure & setup specifics (load-bearing for sprint 001 and any later sprint that introduces new build/config infrastructure):** include verbatim content for every config file the sprint creates — package manifests, build-system config, test-runner config, linter configs. Provide the exact text the generator should transcribe.
@@ -879,6 +886,18 @@ workflow SpecToSprintsForLocalCodegen
     command:
       set -eu
       errors=""
+      # Cross-module mandate (issue #8): if §7 carries any `### Edge:` heading,
+      # every one MUST match the exact `### Edge: Sprint NNN → Sprint MMM` form.
+      # A near-miss (ASCII '->', stray spacing) fails here rather than silently
+      # disabling enforcement — the per-sprint cardinality gate below is strict,
+      # so without this a malformed contract would skip the check entirely.
+      if [ -f .ai/contract.md ] && grep -qE '^### Edge:' .ai/contract.md; then
+        _et=$(grep -cE '^### Edge:' .ai/contract.md 2>/dev/null || true)
+        _ex=$(grep -cE '^### Edge: Sprint [0-9]{3} → Sprint [0-9]{3}( |$)' .ai/contract.md 2>/dev/null || true)
+        if [ "${_et:-0}" -ne "${_ex:-0}" ]; then
+          errors="${errors}contract:malformed-edge-heading(total=${_et:-0},exact=${_ex:-0}) "
+        fi
+      fi
       stray=$(ls SPRINT-*.md 2>/dev/null | wc -l | tr -d ' ')
       if [ "$stray" -gt 0 ]; then
         errors="${errors}sprint-files-in-root "
@@ -929,6 +948,25 @@ workflow SpecToSprintsForLocalCodegen
             errors="${errors}missing-${tag}-${base} "
           fi
         done
+        # Cross-module test mandate (issue #8): the contract's §7 declares one
+        # `### Edge: Sprint NNN → Sprint MMM` heading per inbound edge, NNN being
+        # the consuming sprint. Each consuming sprint MUST carry a
+        # `## Cross-Module Test Mandate` section with exactly one bullet per
+        # inbound edge. A mismatch (faked/omitted mandate) routes back through
+        # the invalid-* edge to re-dispatch the sprint. Legacy mode: skip when
+        # the contract has no `### Edge:` headings (pre-issue-#8 contract shape).
+        if [ -f .ai/contract.md ] && grep -qE '^### Edge: Sprint [0-9]{3} → Sprint [0-9]{3}' .ai/contract.md; then
+          sid=$(printf '%s' "$base" | sed 's/^SPRINT-//;s/\.md$//')
+          edge_count=$(grep -cE "^### Edge: Sprint ${sid} → Sprint [0-9]{3}" .ai/contract.md 2>/dev/null || true)
+          [ -z "$edge_count" ] && edge_count=0
+          mandate_count=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`[^`]+`/{c++} END{print c+0}' "$f")
+          if [ "$edge_count" -eq 0 ] && grep -q '^## Cross-Module Test Mandate' "$f"; then
+            errors="${errors}${f}:unexpected-mandate-section(zero-inbound-edges) "
+          fi
+          if [ "$mandate_count" -ne "$edge_count" ]; then
+            errors="${errors}cross-module-mandate-mismatch-${base} "
+          fi
+        fi
       done
       if [ -z "$(awk 'NR>1' .ai/ledger.tsv)" ]; then
         errors="${errors}empty-ledger "
