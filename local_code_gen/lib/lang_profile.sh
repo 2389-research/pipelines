@@ -11,11 +11,17 @@
 # To add a language `foo`:
 #   1. detect_lang: add an `[ -f "$pr/foomanifest" ]` clause
 #   2. lang_install_cmd / lang_test_cmd / lang_src_glob / lang_src_dirs /
-#      lang_test_count_pattern / lang_test_grep_includes: add a `foo)` case
+#      lang_test_count_pattern / lang_test_grep_includes / test_decl_present:
+#      add a `foo)` case
 #   3. lang_failure_block: add an awk extractor for the test runner's output shape
 #   4. lang_syntax_check: optionally add a per-extension fast-parse case
 #
 # That's it. No dip changes needed.
+#
+# Staged into .ai/ and sourced into the dips' bash command shells at runtime, so
+# `local` and BASH_SOURCE are intentional. Suppress the POSIX-sh-only complaints
+# about them so the CI `shellcheck -s sh` gate stays clean.
+# shellcheck disable=SC3043,SC3028
 
 # ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -214,6 +220,75 @@ lang_test_grep_includes() {
     java-maven|java-gradle) echo '--include=*.java --include=*.kt' ;;
     *)                      echo '' ;;
   esac
+}
+
+# test_decl_present: returns 0 if $1 (already ERE-escaped) is declared as a
+# *test* in the tree (not merely some function with that name). python/node/ruby
+# names are convention-prefixed so a same-line match is test-specific; go requires
+# a *testing.[TBM] receiver; rust/java require the test attribute (#[test] / @Test)
+# in the contiguous annotation block directly above the declaration. Runs from the
+# project tree (cwd); computes its own --include flags via lang_test_grep_includes.
+# Args: $1=esc_name (ERE-escaped by caller), $2=lang
+test_decl_present() {
+  _name="$1"
+  lang="$2"
+  grep_includes=$(lang_test_grep_includes "$lang")
+  case "$lang" in
+    python)                 _re="(^|[^A-Za-z0-9_])(async[[:space:]]+)?def[[:space:]]+${_name}[[:space:]]*\(" ;;
+    node)                   _re="(it|test)[[:space:]]*\\([[:space:]]*['\"\`]${_name}['\"\`]" ;;
+    ruby)                   _re="((test|it)[[:space:]]*['\"\`]${_name}['\"\`])|((^|[^A-Za-z0-9_])def[[:space:]]+${_name})" ;;
+    go)                     _re="(^|[^A-Za-z0-9_])func[[:space:]]+${_name}[[:space:]]*\([^)]*\*testing\.[TBM]" ;;
+    rust)                   _marker='^[[:space:]]*#\[(tokio::)?test\]'; _decl="(^|[^A-Za-z0-9_])(async[[:space:]]+)?fn[[:space:]]+${_name}[[:space:]]*\(" ;;
+    java-maven|java-gradle) _marker='^[[:space:]]*@(Test|ParameterizedTest|RepeatedTest)'; _decl="(^|[^A-Za-z0-9_])(void|fun)[[:space:]]+${_name}[[:space:]]*\(" ;;
+    *)                      return 1 ;;
+  esac
+  case "$lang" in
+    python|node|ruby|go)
+      # grep_includes is a multi-flag string we want word-split.
+      # shellcheck disable=SC2086
+      grep -rqE "$_re" . \
+        --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+        $grep_includes 2>/dev/null ;;
+    rust|java-maven|java-gradle)
+      # Run grep with the caller's IFS so $grep_includes splits into separate
+      # --include flags; THEN split grep's newline-separated output into whole
+      # paths under IFS=newline + noglob (so paths with spaces/globs stay whole).
+      # shellcheck disable=SC2086
+      _files=$(grep -rlE "$_decl" . \
+        --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+        $grep_includes 2>/dev/null)
+      [ -n "$_files" ] || return 1
+      case $- in *f*) _hadf=1 ;; *) _hadf=0 ;; esac
+      _svifs=$IFS
+      IFS=$(printf '\n.'); IFS=${IFS%.}; set -f
+      # intentional newline-split of the file list.
+      # shellcheck disable=SC2086
+      set -- $_files
+      IFS=$_svifs; [ "$_hadf" = 1 ] || set +f
+      for _file do
+        awk -v decl="$_decl" -v marker="$_marker" '
+          {lines[NR]=$0}
+          $0 ~ decl {
+            for (i=NR-1; i>=1; i--) {
+              if (lines[i] ~ /^[[:space:]]*$/) continue
+              if (lines[i] ~ marker) {found=1; exit}
+              if (lines[i] ~ /^[[:space:]]*(#\[|@|\/\/|\*|\/\*)/) continue
+              break
+            }
+          }
+          END {exit found?0:1}' "$_file" && return 0
+      done
+      return 1 ;;
+  esac
+}
+
+# mandate_test_names: extract the mandated test names from a sprint spec's
+# `## Cross-Module Test Mandate` section, one per bullet, sorted-unique. The
+# first backtick token per bullet is the test name; names may contain spaces
+# (Node string-literal tests). Bullets outside that section are ignored.
+# Args: $1=path-to-sprint-file
+mandate_test_names() {
+  awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`/{line=$0; sub(/^[^`]*`/,"",line); sub(/`.*/,"",line); if(line!="")print line}' "$1" | sort -u
 }
 
 # lang_failure_block: extract the "interesting failure detail" subsection from
