@@ -1,0 +1,37 @@
+name: local_code_gen lib
+
+on:
+  pull_request:
+    paths:
+      - "local_code_gen/**"
+      - ".github/workflows/local_code_gen_lib.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "local_code_gen/**"
+      - ".github/workflows/local_code_gen_lib.yml"
+
+# This workflow gates the per-language single-source-of-truth helper
+# (lib/lang_profile.sh) that the local_code_gen dips source at runtime. It runs
+# shellcheck (sh dialect) + the bats unit suite against synthetic fixture trees.
+# No real LLM calls — the dips themselves are not invoked here.
+
+jobs:
+  lib_unit_tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats + shellcheck
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y bats shellcheck
+
+      - name: shellcheck (sh dialect)
+        run: shellcheck -s sh local_code_gen/lib/lang_profile.sh
+
+      - name: bats unit tests for lang_profile helpers
+        run: bats local_code_gen/tests/
