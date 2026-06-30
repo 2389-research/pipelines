@@ -960,6 +960,9 @@ workflow SpecToSprintsForLocalCodegen
           edge_count=$(grep -cE "^### Edge: Sprint ${sid} → Sprint [0-9]{3}" .ai/contract.md 2>/dev/null || true)
           [ -z "$edge_count" ] && edge_count=0
           mandate_count=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`[^`]+`/{c++} END{print c+0}' "$f")
+          if [ "$edge_count" -eq 0 ] && grep -q '^## Cross-Module Test Mandate' "$f"; then
+            errors="${errors}${f}:unexpected-mandate-section(zero-inbound-edges) "
+          fi
           if [ "$mandate_count" -ne "$edge_count" ]; then
             errors="${errors}cross-module-mandate-mismatch-${base} "
           fi
