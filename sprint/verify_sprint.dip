@@ -344,6 +344,7 @@ workflow VerifySprint
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprints/SPRINT-*-verification.md
     auto_status: true
     prompt:
       You are the report generator for sprint verification. Compile all mechanical check results and semantic review findings into a structured verification report.
@@ -407,6 +408,7 @@ workflow VerifySprint
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprints/SPRINT-*.yaml, .ai/sprints/SPRINT-*.md, .ai/ledger.yaml
     auto_status: true
     prompt:
       You create remediation sprints when verification fails, or mark sprints as verified when they pass.

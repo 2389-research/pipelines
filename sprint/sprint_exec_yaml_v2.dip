@@ -186,6 +186,7 @@ workflow SprintExecYamlV2
     model: claude-opus-4-7
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprints/SPRINT-*-plan-brief.md, .ai/managers/plan-journal.md
     auto_status: true
     prompt:
       You are the Plan Manager for sprint execution. Your job is to assess whether the current sprint is ready to execute and flag risks for the implementation agent.
@@ -843,6 +844,7 @@ workflow SprintExecYamlV2
     model: gpt-5.5
     provider: openai
     reasoning_effort: high
+    writable_paths: .ai/sprints/SPRINT-*-review-brief.md, .ai/managers/review-journal.md
     prompt:
       You are the Review Manager for sprint execution. Your job is to synthesize the 3 independent reviews and 6 cross-critiques into a structured evidence brief for the final verdict agent.
 

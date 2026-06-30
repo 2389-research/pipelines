@@ -111,6 +111,7 @@ workflow SpecToSprintsYamlV2
     model: gpt-5.4
     provider: openai
     reasoning_effort: high
+    writable_paths: .ai/spec_analysis.md
     prompt:
       You are working in `run.working_dir`.
 
@@ -198,6 +199,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/drafts/decomposition_claude.md
     fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
@@ -242,6 +244,7 @@ workflow SpecToSprintsYamlV2
     model: gpt-5.2
     provider: openai
     reasoning_effort: high
+    writable_paths: .ai/drafts/decomposition_gpt.md
     fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
@@ -286,6 +289,7 @@ workflow SpecToSprintsYamlV2
     model: gemini-3-flash-preview
     provider: gemini
     reasoning_effort: high
+    writable_paths: .ai/drafts/decomposition_gemini.md
     fallback_target: decompose_join
     prompt:
       You are working in `run.working_dir`.
@@ -498,6 +502,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprint_plan.md
     goal_gate: true
     retry_target: merge_decomposition
     fallback_target: DecompositionManager
@@ -594,6 +599,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/drafts/decomposition_review.md, .ai/sprint_plan.md
     auto_status: true
     prompt:
       You are the Decomposition Manager. Your job is to review the merged sprint plan for quality issues before it goes to human approval.
@@ -638,6 +644,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprints/SPRINT-*.yaml, .ai/sprints/SPRINT-*.md, .ai/redecompose-result.yaml
     auto_status: true
     prompt:
       STATUS contract — emit `STATUS: fail` as the FIRST line of your
@@ -812,6 +819,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprint_plan.md
     prompt:
       You are working in `run.working_dir`.
 
@@ -852,6 +860,7 @@ workflow SpecToSprintsYamlV2
     model: claude-opus-4-6
     provider: anthropic
     reasoning_effort: high
+    writable_paths: .ai/sprints/SPRINT-*.md, .ai/sprints/SPRINT-*.yaml
     fallback_target: write_ledger
     prompt:
       You are working in `run.working_dir`.
