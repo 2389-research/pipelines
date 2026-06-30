@@ -758,23 +758,52 @@ workflow SprintExecLocalGenQwen
       # check. Here we grep the generated source for each mandated test as a
       # real DECLARATION (name-exact, not fuzzy), so a missing or renamed test
       # emits audit-fail with a diagnostic the existing LocalFix loop routes on.
-      # grep_test_decl: per-language regex (POSIX ERE) for `<name>` declared as a
-      # test. Inlined here (lang_profile.sh is the long-term home) so the check
-      # ships with the Audit node. Returns the pattern on stdout.
-      grep_test_decl() {
+      # test_decl_present: returns 0 if $1 (already ERE-escaped) is declared as a
+      # *test* in the tree (not merely some function with that name). python/node/ruby
+      # names are convention-prefixed so a same-line match is test-specific; go requires
+      # a *testing.[TBM] receiver; rust/java require the test attribute (#[test] / @Test)
+      # in the contiguous annotation block directly above the declaration. Inlined here
+      # (lang_profile.sh is the long-term home) so the check ships with the Audit node.
+      test_decl_present() {
+        _name="$1"
         case "$lang" in
-          python)                 printf '(^|[^A-Za-z0-9_])(async[[:space:]]+)?def[[:space:]]+%s[[:space:]]*\(' "$1" ;;
-          go)                     printf '(^|[^A-Za-z0-9_])func[[:space:]]+%s[[:space:]]*\(' "$1" ;;
-          node)                   printf "(it|test)[[:space:]]*\\([[:space:]]*['\"\`]%s['\"\`]" "$1" ;;
-          rust)                   printf '(^|[^A-Za-z0-9_])(async[[:space:]]+)?fn[[:space:]]+%s[[:space:]]*\(' "$1" ;;
-          ruby)                   printf "((test|it)[[:space:]]*['\"\`]%s['\"\`])|((^|[^A-Za-z0-9_])def[[:space:]]+%s)" "$1" "$1" ;;
-          java-maven|java-gradle) printf '(^|[^A-Za-z0-9_])(void|fun)[[:space:]]+%s[[:space:]]*\(' "$1" ;;
-          *)                      printf 'NEVER_MATCHES_ANYTHING' ;;
+          python)                 _re="(^|[^A-Za-z0-9_])(async[[:space:]]+)?def[[:space:]]+${_name}[[:space:]]*\(" ;;
+          node)                   _re="(it|test)[[:space:]]*\\([[:space:]]*['\"\`]${_name}['\"\`]" ;;
+          ruby)                   _re="((test|it)[[:space:]]*['\"\`]${_name}['\"\`])|((^|[^A-Za-z0-9_])def[[:space:]]+${_name})" ;;
+          go)                     _re="(^|[^A-Za-z0-9_])func[[:space:]]+${_name}[[:space:]]*\([^)]*\*testing\.[TBM]" ;;
+          rust)                   _marker='^[[:space:]]*#\[(tokio::)?test\]'; _decl="(^|[^A-Za-z0-9_])(async[[:space:]]+)?fn[[:space:]]+${_name}[[:space:]]*\(" ;;
+          java-maven|java-gradle) _marker='^[[:space:]]*@(Test|ParameterizedTest|RepeatedTest)'; _decl="(^|[^A-Za-z0-9_])(void|fun)[[:space:]]+${_name}[[:space:]]*\(" ;;
+          *)                      return 1 ;;
+        esac
+        case "$lang" in
+          python|node|ruby|go)
+            # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
+            grep -rqE "$_re" . \
+              --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+              $grep_includes 2>/dev/null ;;
+          rust|java-maven|java-gradle)
+            # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
+            for _file in $(grep -rlE "$_decl" . \
+              --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
+              $grep_includes 2>/dev/null); do
+              awk -v decl="$_decl" -v marker="$_marker" '
+                {lines[NR]=$0}
+                $0 ~ decl {
+                  for (i=NR-1; i>=1; i--) {
+                    if (lines[i] ~ /^[[:space:]]*$/) continue
+                    if (lines[i] ~ marker) {found=1; exit}
+                    if (lines[i] ~ /^[[:space:]]*(#\[|@|\/\/|\*|\/\*)/) continue
+                    break
+                  }
+                }
+                END {exit found?0:1}' "$_file" && return 0
+            done
+            return 1 ;;
         esac
       }
       # First backtick token per mandate bullet is the test name; names may
       # contain spaces (Node string-literal tests), so split on newlines only.
-      mandate_names=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`/{line=$0; sub(/^[^`]*`/,"",line); sub(/`.*/,"",line); if(line!="")print line}' "$sprint" | head -200 | sort -u)
+      mandate_names=$(awk '/^## Cross-Module Test Mandate/{m=1;next} m && /^## /{exit} m && /^[[:space:]]*-[[:space:]]+`/{line=$0; sub(/^[^`]*`/,"",line); sub(/`.*/,"",line); if(line!="")print line}' "$sprint" | sort -u)
       missing=""
       oldifs=$IFS
       IFS=$(printf '\n.'); IFS=${IFS%.}
@@ -784,11 +813,7 @@ workflow SprintExecLocalGenQwen
         # Escape ERE metacharacters so a name with '.', '+', '(', spaces, etc.
         # (e.g. a Node string-literal test name) matches literally, not as regex.
         esc_tname=$(printf '%s' "$tname" | sed 's/[][(){}.^$*+?|\\]/\\&/g')
-        decl_pat=$(grep_test_decl "$esc_tname")
-        # shellcheck disable=SC2086 — grep_includes is a multi-flag string.
-        if ! grep -rqE "$decl_pat" . \
-          --exclude-dir=.ai --exclude-dir=.tracker --exclude-dir=.git \
-          $grep_includes 2>/dev/null; then
+        if ! test_decl_present "$esc_tname"; then
           missing="${missing}${tname} "
         fi
       done
