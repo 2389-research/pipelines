@@ -94,11 +94,16 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   test-mandate validator. The per-language test-declaration detector
   (`test_decl_present`) and the mandate-bullet extractor (`mandate_test_names`)
   were inlined byte-identically in both Audit nodes; they now live once in
-  `lang_profile.sh` (already staged into `.ai/` and sourced by both dips). Pure
-  refactor — no behavior change: the detection logic is moved verbatim from
-  [#130](https://github.com/2389-research/pipelines/pull/130), with the Audit
-  call sites adapted only to pass `lang` and let the lib compute its own
-  `--include` flags. Adds the first CI coverage for `local_code_gen/`: a bats
+  `lang_profile.sh` (already staged into `.ai/` and sourced by both dips). The
+  detection logic carries over from
+  [#130](https://github.com/2389-research/pipelines/pull/130) with no *intended*
+  behavior change; the Audit call sites are adapted to pass `lang` and let the lib
+  compute its own `--include` flags. One robustness fix landed alongside the move:
+  the Rust/Java attribute scan now passes its regexes via `ENVIRON` instead of
+  `awk -v`, which `gawk` mangled (C-escape processing turned `\(`/`\[` into
+  unmatched parens → `invalid regexp`); `mawk` tolerated it, so the inlined #130
+  copies work on mawk dev boxes but would fail under `gawk`. The new CI (below)
+  caught it. Adds the first CI coverage for `local_code_gen/`: a bats
   suite (`local_code_gen/tests/test_lang_profile_testdecl.bats`) plus a
   `shellcheck -s sh` + `bats` workflow
   (`.github/workflows/local_code_gen_lib.yml`) gated on `local_code_gen/**`
