@@ -16,8 +16,21 @@ test_graph_contract() {
   [ -f "$graph" ] || fail 'complete.dip is missing'
   grep -F 'parallel ReviewFreshEyes -> ReviewCorrectness, ReviewScope' "$graph" >/dev/null || fail 'two-reviewer fan-out missing'
   [ "$(grep -c 'fan_in_policy: all' "$graph")" -eq 4 ] || fail 'strict review fan-in policy missing'
-  grep -F 'model: claude-sonnet-4-6' "$graph" >/dev/null || fail 'Claude reviewer missing'
-  grep -F 'model: gpt-5.4' "$graph" >/dev/null || fail 'GPT reviewer missing'
+  awk '
+    /^  agent / { agent = $2; agents[agent] = 1; next }
+    /^  [^ ]/ { agent = "" }
+    agent && $1 == "provider:" { providers[agent] = $2 }
+    agent && $1 == "model:" { models[agent] = $2; distinct[$2] = 1 }
+    END {
+      for (name in agents) {
+        count++
+        expected = name ~ /Scope$/ ? "deepseek-4.1-flash" : "glm-5.3"
+        if (providers[name] != "openai-compat" || models[name] != expected) exit 1
+      }
+      for (model in distinct) model_count++
+      if (count != 6 || model_count != 2) exit 1
+    }
+  ' "$graph" || fail 'all six agents must use Lunaroute models through openai-compat with distinct correctness and scope models'
   grep -F 'Repair -> ReReviewFreshEyes' "$graph" >/dev/null || fail 'single repair path missing'
   [ "$(grep -c '^  agent Repair$' "$graph")" -eq 1 ] || fail 'repair must be a single bounded node'
   pass 'graph bounds selection, repair, and two-model review'

@@ -30,10 +30,31 @@ API contract. Avoid adding an application framework or a queue runner.
 - [x] Review scope, claim/closure handling, retry bounds, and documentation.
 - [x] Commit the contained directory and root README entry.
 
-Validation: `kata/check` passes with tracker v0.66.0 and dippin v0.68.0.
-It checks parsing/lint, concrete simulated routes, real Git evidence guards,
-CLI contract fixtures, and real tracker preflight rejection. Independent
-fresh-eyes review approved after fixes. No live model completion was tested.
+Before the Lunaroute switch, `kata/check` passed with tracker v0.66.0 and
+Dippin v0.68.0. It checked parsing/lint, concrete simulated routes, real Git
+evidence guards, CLI contract fixtures, and real tracker preflight rejection. Independent
+fresh-eyes review approved after fixes. Initial validation did not make live
+model calls.
+
+Provider update (2026-09-13): Doctor Biz chose the configured Lunaroute gateway
+through `openai-compat`. Worker, repair, and correctness reviews use `glm-5.3`;
+scope reviews use `deepseek-4.1-flash`. The graph contract requires all six
+agents to use the compatible provider and two distinct models. The adapter
+does not forward `reasoning_effort`, so those attributes were removed.
+The updated graph contract failed on the old provider configuration, then
+`./kata/check` passed after the switch, including ShellCheck and real tracker
+preflight checks. The existing static runtime-context warning remains.
+The current pipeline requires the validated tracker v0.73.1 / Dippin v0.72.0
+toolchain. Dippin v0.68.0 lacks `openai-compat` lint support: its six DIP108
+unknown-provider warnings fail the check. No warnings were suppressed.
+Resume an authentication failure after claim with the same run ID and pipeline
+to retain the selected issue and actor.
+
+Live provider validation: the configured `/models` endpoint lists both models.
+Installed tracker completed a separate smoke workflow through `openai-compat`:
+each model took two turns and made one real file-read tool call (run
+`8a94c566bfe4`). This verifies authentication and tool calls; a full live kata
+completion remains untested.
 
 No live issue may be created just for testing. Live model execution is a
 separate validation layer from graph simulation; report any untested layer.

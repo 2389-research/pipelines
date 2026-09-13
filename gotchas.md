@@ -11,3 +11,8 @@ Kata runs may start on main in a repository without tracker ignore rules.
 Prepare local artifact exclusions and a task branch automatically; preserve
 unrelated uncommitted work and report its paths. Keep preflight failures on
 ClaimNext rather than masking them with a generic Stop node.
+
+Doctor Biz wants kata agents routed through the configured Lunaroute gateway
+using `openai-compat`: `glm-5.3` for worker/repair/correctness and
+`deepseek-4.1-flash` for scope. After post-claim authentication failures, resume
+the saved run with the same pipeline to preserve its claim; do not start over.

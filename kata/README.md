@@ -7,8 +7,12 @@ acceptance criteria. An empty queue does no work.
 The worker uses TDD and the repository's own checks. Two models then review
 in parallel, emulating the fresh-eyes skill:
 
-- **Correctness:** acceptance criteria, regressions, error paths, and tests.
-- **Scope:** unnecessary changes, maintainability, and relevant security risks.
+- **Correctness (`glm-5.3`):** acceptance criteria, regressions, error paths, and tests.
+- **Scope (`deepseek-4.1-flash`):** unnecessary changes, maintainability, and relevant security risks.
+
+The worker and repair agent also use `glm-5.3`. All six agent nodes use
+tracker's `openai-compat` provider through Lunaroute. The adapter does not
+forward `reasoning_effort`; reasoning behavior follows the gateway defaults.
 
 Both must approve closure. Rejected work gets at most one repair pass and
 another review. Unfinished work stays open with a `needs-review` handoff.
@@ -17,13 +21,17 @@ The pipeline does not depend on locally installed agent skills.
 ## Run
 
 Use a clean target repository with kata already initialized for that repository.
-Configure tracker for both Anthropic and OpenAI. You also need `kata`, `git`,
-and `jq` on PATH.
+Configure `OPENAI_COMPAT_API_KEY` with your Lunaroute API key and
+`OPENAI_COMPAT_BASE_URL` with `https://gw.lunaroute.com/v1`. Tracker accepts
+these from your environment or `~/.config/tracker/.env`; `tracker setup`
+can configure them. Existing Lunaroute settings can be reused.
+You also need `kata`, `git`, and `jq` on PATH.
 
-Validated toolchains: tracker **v0.73.1** with Dippin **v0.72.0**, and tracker
-**v0.66.0** with Dippin **v0.68.0**. Match the Dippin CLI to tracker's dependency
-for validation. Kata **v0.17.2** or newer is required. This directory has newer
-tool requirements than the collection's general quickstart.
+Use the validated toolchain: tracker **v0.73.1** with Dippin **v0.72.0**.
+Dippin **v0.68.0** lacks `openai-compat` lint support and fails `kata/check`
+with six DIP108 unknown-provider warnings. Match the Dippin CLI to tracker's
+dependency for validation. Kata **v0.17.2** or newer is required. This directory
+has newer tool requirements than the collection's general quickstart.
 
 ```sh
 cd /path/to/target-repo
@@ -50,7 +58,16 @@ Do not run concurrent coding pipelines in the same checkout. Scope limits are
 workflow rules and verification checks, not an OS sandbox.
 
 If a run is interrupted, inspect its artifacts and the selected issue before
-restarting. The claim remains attached to that run's actor. Release it with
+restarting. If authentication fails after `ClaimNext` succeeds, fix the provider
+environment and resume the existing run from the same target repository with
+the same pipeline:
+
+```sh
+tracker -r "<run-id>" --workdir "$PWD" /path/to/pipelines/kata/complete.dip
+```
+
+The saved checkpoint preserves the completed claim step; resume keeps the
+selected issue and run actor instead of claiming another item. Release it with
 `kata unassign <ref>` only after confirming the old run has stopped and its
 work has been accounted for.
 

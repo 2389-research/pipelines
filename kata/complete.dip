@@ -17,9 +17,8 @@ workflow CompleteOneKata
 
   agent Implement
     label: "Scope and implement the selected kata"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    reasoning_effort: high
+    model: glm-5.3
+    provider: openai-compat
     goal_gate: true
     auto_status: true
     max_turns: 30
@@ -31,9 +30,8 @@ workflow CompleteOneKata
 
   agent ReviewCorrectness
     label: "Fresh-eyes correctness review"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    reasoning_effort: high
+    model: glm-5.3
+    provider: openai-compat
     max_turns: 16
     max_retries: 1
     retry_target: ReviewCorrectness
@@ -41,9 +39,8 @@ workflow CompleteOneKata
 
   agent ReviewScope
     label: "Fresh-eyes scope review"
-    model: gpt-5.4
-    provider: openai
-    reasoning_effort: high
+    model: deepseek-4.1-flash
+    provider: openai-compat
     max_turns: 16
     max_retries: 1
     retry_target: ReviewScope
@@ -61,9 +58,8 @@ workflow CompleteOneKata
 
   agent Repair
     label: "Apply the single allowed repair pass"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    reasoning_effort: high
+    model: glm-5.3
+    provider: openai-compat
     goal_gate: true
     auto_status: true
     max_turns: 20
@@ -75,9 +71,8 @@ workflow CompleteOneKata
 
   agent ReReviewCorrectness
     label: "Fresh-eyes correctness re-review"
-    model: claude-sonnet-4-6
-    provider: anthropic
-    reasoning_effort: high
+    model: glm-5.3
+    provider: openai-compat
     max_turns: 16
     max_retries: 1
     retry_target: ReReviewCorrectness
@@ -85,9 +80,8 @@ workflow CompleteOneKata
 
   agent ReReviewScope
     label: "Fresh-eyes scope re-review"
-    model: gpt-5.4
-    provider: openai
-    reasoning_effort: high
+    model: deepseek-4.1-flash
+    provider: openai-compat
     max_turns: 16
     max_retries: 1
     retry_target: ReReviewScope
