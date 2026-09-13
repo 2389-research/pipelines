@@ -21,7 +21,7 @@ workflow CompleteOneKata
     provider: openai-compat
     goal_gate: true
     auto_status: true
-    max_turns: 30
+    max_turns: 300
     prompt_file: prompts/implement.md
 
   parallel ReviewFreshEyes -> ReviewCorrectness, ReviewScope
@@ -32,7 +32,7 @@ workflow CompleteOneKata
     label: "Fresh-eyes correctness review"
     model: glm-5.3
     provider: openai-compat
-    max_turns: 16
+    max_turns: 100
     max_retries: 1
     retry_target: ReviewCorrectness
     prompt_file: prompts/review-correctness.md
@@ -41,7 +41,7 @@ workflow CompleteOneKata
     label: "Fresh-eyes scope review"
     model: deepseek-4.1-flash
     provider: openai-compat
-    max_turns: 16
+    max_turns: 100
     max_retries: 1
     retry_target: ReviewScope
     prompt_file: prompts/review-scope.md
@@ -62,7 +62,7 @@ workflow CompleteOneKata
     provider: openai-compat
     goal_gate: true
     auto_status: true
-    max_turns: 20
+    max_turns: 150
     prompt_file: prompts/repair.md
 
   parallel ReReviewFreshEyes -> ReReviewCorrectness, ReReviewScope
@@ -73,7 +73,7 @@ workflow CompleteOneKata
     label: "Fresh-eyes correctness re-review"
     model: glm-5.3
     provider: openai-compat
-    max_turns: 16
+    max_turns: 100
     max_retries: 1
     retry_target: ReReviewCorrectness
     prompt_file: prompts/review-correctness.md
@@ -82,7 +82,7 @@ workflow CompleteOneKata
     label: "Fresh-eyes scope re-review"
     model: deepseek-4.1-flash
     provider: openai-compat
-    max_turns: 16
+    max_turns: 100
     max_retries: 1
     retry_target: ReReviewScope
     prompt_file: prompts/review-scope.md

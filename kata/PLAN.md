@@ -56,5 +56,22 @@ each model took two turns and made one real file-read tool call (run
 `8a94c566bfe4`). This verifies authentication and tool calls; a full live kata
 completion remains untested.
 
+Turn-limit update (2026-09-13): the live run exhausted Implement's 30-turn
+ceiling after about 15 investigative turns, then implementation and a passing
+`make check`, before recording evidence and committing. Doctor Biz requested
+much larger limits: Implement 300, Repair 150, and each of the four review
+nodes 100. These ceilings allow the full implementation and review workflow
+to finish; they are not turn targets. Bound discovery to the selected item's
+contract and relevant code while preserving the full acceptance criteria,
+one-item scope, and single repair pass. Worker prompts now target three turns
+for initial discovery, preserve partial work on resume, keep the saved branch,
+and move directly from passing checks to sanity review, evidence, and commit.
+Fresh-eyes review found and corrected misleading integration wording; the
+pipeline leaves integration to the operator. The graph contract failed against the
+old limits before the configuration changed; `./kata/check` then passed,
+including graph routes, shell guards, real tracker preflight, and ShellCheck.
+The known static runtime-context warning remains. A full live completion
+under the larger ceilings has not yet been verified.
+
 No live issue may be created just for testing. Live model execution is a
 separate validation layer from graph simulation; report any untested layer.

@@ -21,16 +21,22 @@ test_graph_contract() {
     /^  [^ ]/ { agent = "" }
     agent && $1 == "provider:" { providers[agent] = $2 }
     agent && $1 == "model:" { models[agent] = $2; distinct[$2] = 1 }
+    agent && $1 == "max_turns:" { limits[agent] = $2 }
     END {
       for (name in agents) {
         count++
         expected = name ~ /Scope$/ ? "deepseek-4.1-flash" : "glm-5.3"
         if (providers[name] != "openai-compat" || models[name] != expected) exit 1
+        expected_limit = name == "Implement" ? 300 : (name == "Repair" ? 150 : 100)
+        if (limits[name] != expected_limit) {
+          printf "%s must allow %d turns (found %s)\n", name, expected_limit, limits[name] > "/dev/stderr"
+          exit 1
+        }
       }
       for (model in distinct) model_count++
       if (count != 6 || model_count != 2) exit 1
     }
-  ' "$graph" || fail 'all six agents must use Lunaroute models through openai-compat with distinct correctness and scope models'
+  ' "$graph" || fail 'all six agents must use the configured Lunaroute models, provider, and turn limits'
   grep -F 'Repair -> ReReviewFreshEyes' "$graph" >/dev/null || fail 'single repair path missing'
   [ "$(grep -c '^  agent Repair$' "$graph")" -eq 1 ] || fail 'repair must be a single bounded node'
   pass 'graph bounds selection, repair, and two-model review'

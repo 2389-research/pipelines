@@ -16,3 +16,7 @@ Doctor Biz wants kata agents routed through the configured Lunaroute gateway
 using `openai-compat`: `glm-5.3` for worker/repair/correctness and
 `deepseek-4.1-flash` for scope. After post-claim authentication failures, resume
 the saved run with the same pipeline to preserve its claim; do not start over.
+
+Doctor Biz wants much larger kata turn ceilings so checks, evidence, and
+commits can finish: implementation 300, repair 150, each review 100. Bound
+discovery to relevant code; do not narrow the selected item's goal to fit a cap.

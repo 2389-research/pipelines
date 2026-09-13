@@ -18,6 +18,18 @@ Both must approve closure. Rejected work gets at most one repair pass and
 another review. Unfinished work stays open with a `needs-review` handoff.
 The pipeline does not depend on locally installed agent skills.
 
+Turn ceilings leave room for implementation, checks, evidence, and commits:
+
+| Agent | Maximum turns |
+| --- | ---: |
+| Implement | 300 |
+| Repair | 150 |
+| Each correctness/scope review and re-review | 100 |
+
+These are safety ceilings, not targets. Keep discovery focused on the selected
+item and move into implementation once its contract and relevant code are clear.
+The larger ceilings preserve the same one-item scope and single repair pass.
+
 ## Run
 
 Use a clean target repository with kata already initialized for that repository.
