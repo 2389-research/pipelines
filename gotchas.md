@@ -26,3 +26,6 @@ After an implementation turn-limit failure, use kata/retry-implementation to
 back up and rewind only the failed worker state while retaining its claim.
 Check the repository-local checkpoint: tracker v0.73.1 can write fresh logs
 under ~/.local/state/tracker while leaving a stale checkpoint copy there.
+
+Live recovery and completion passed for todo-test#tzrg on 2026-09-13: both
+model reviews approved commit 510d313, closure succeeded, and the tree was clean.
