@@ -1,0 +1,150 @@
+# ABOUTME: Claims and completes one ready unowned kata with bounded implementation and review.
+# ABOUTME: Persists identity under .tracker and closes only after two fresh-eyes approvals.
+
+workflow CompleteOneKata
+  goal: "Claim the next ready unowned kata and complete only that item with TDD and independent review."
+  start: ClaimNext
+  exit: Exit
+
+  defaults
+    fidelity: summary:high
+
+  tool ClaimNext
+    label: "Guard workspace and claim one kata"
+    marker_grep: "^(claim-ok|queue-empty)"
+    timeout: 30s
+    command_file: scripts/claim-next.sh
+
+  agent Implement
+    label: "Scope and implement the selected kata"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    max_turns: 30
+    prompt_file: prompts/implement.md
+
+  parallel ReviewFreshEyes -> ReviewCorrectness, ReviewScope
+    params:
+      fan_in_policy: all
+
+  agent ReviewCorrectness
+    label: "Fresh-eyes correctness review"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    max_turns: 16
+    max_retries: 1
+    retry_target: ReviewCorrectness
+    prompt_file: prompts/review-correctness.md
+
+  agent ReviewScope
+    label: "Fresh-eyes scope review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    max_turns: 16
+    max_retries: 1
+    retry_target: ReviewScope
+    prompt_file: prompts/review-scope.md
+
+  fan_in ReviewsApproved <- ReviewCorrectness, ReviewScope
+    params:
+      fan_in_policy: all
+
+  tool CheckApprovals
+    label: "Require both SHA-bound review approvals"
+    marker_grep: "^approvals-ok$"
+    timeout: 30s
+    command_file: scripts/check-approvals.sh
+
+  agent Repair
+    label: "Apply the single allowed repair pass"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    goal_gate: true
+    auto_status: true
+    max_turns: 20
+    prompt_file: prompts/repair.md
+
+  parallel ReReviewFreshEyes -> ReReviewCorrectness, ReReviewScope
+    params:
+      fan_in_policy: all
+
+  agent ReReviewCorrectness
+    label: "Fresh-eyes correctness re-review"
+    model: claude-sonnet-4-6
+    provider: anthropic
+    reasoning_effort: high
+    max_turns: 16
+    max_retries: 1
+    retry_target: ReReviewCorrectness
+    prompt_file: prompts/review-correctness.md
+
+  agent ReReviewScope
+    label: "Fresh-eyes scope re-review"
+    model: gpt-5.4
+    provider: openai
+    reasoning_effort: high
+    max_turns: 16
+    max_retries: 1
+    retry_target: ReReviewScope
+    prompt_file: prompts/review-scope.md
+
+  fan_in ReReviewsApproved <- ReReviewCorrectness, ReReviewScope
+    params:
+      fan_in_policy: all
+
+  tool ReCheckApprovals
+    label: "Require both SHA-bound re-review approvals"
+    marker_grep: "^approvals-ok$"
+    timeout: 30s
+    command_file: scripts/check-approvals.sh
+
+  tool CloseSelected
+    label: "Close the approved selected kata with evidence"
+    marker_grep: "^close-ok$"
+    timeout: 30s
+    command_file: scripts/close-selected.sh
+
+  tool Handoff
+    label: "Leave failed work open for review"
+    timeout: 30s
+    command_file: scripts/handoff-selected.sh
+
+  tool Stop
+    label: "Stop after selection or claim failure"
+    timeout: 5s
+    command:
+      exit 1
+
+  tool Exit
+    label: "One-item run complete"
+    timeout: 5s
+    command:
+      true
+
+  edges
+    ClaimNext -> Implement  on claim-ok
+    ClaimNext -> Exit  on queue-empty
+    ClaimNext -> Stop  when ctx.outcome = fail
+    Implement -> ReviewFreshEyes  on success
+    Implement -> Handoff  on fail
+    ReviewFreshEyes -> ReviewsApproved  when ctx.outcome = success
+    ReviewFreshEyes -> Repair  when ctx.outcome = fail
+    ReviewsApproved -> CheckApprovals
+    CheckApprovals -> CloseSelected  when ctx.outcome = success
+    CheckApprovals -> Repair  when ctx.outcome = fail
+    Repair -> ReReviewFreshEyes  on success
+    Repair -> Handoff  on fail
+    ReReviewFreshEyes -> ReReviewsApproved  when ctx.outcome = success
+    ReReviewFreshEyes -> Handoff  when ctx.outcome = fail
+    ReReviewsApproved -> ReCheckApprovals
+    ReCheckApprovals -> CloseSelected  when ctx.outcome = success
+    ReCheckApprovals -> Handoff  when ctx.outcome = fail
+    CloseSelected -> Exit  when ctx.outcome = success
+    CloseSelected -> Handoff  when ctx.outcome = fail
+    Handoff -> Exit
+    Stop -> Exit
