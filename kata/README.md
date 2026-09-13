@@ -79,7 +79,30 @@ tracker -r "<run-id>" --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 ```
 
 The saved checkpoint preserves the completed claim step; resume keeps the
-selected issue and run actor instead of claiming another item. Release it with
+selected issue and run actor instead of claiming another item. Resume continues
+at the checkpoint's current node; it does not automatically retry a failed worker.
+
+If `Implement` exhausted its turns and the run reached `Handoff`, stop tracker
+and prepare an implementation retry from the target repository:
+
+```sh
+/path/to/pipelines/kata/retry-implementation "<run-id>"
+```
+
+This command verifies the saved workspace, branch, base commit, and live issue
+ownership, backs up the repository-local checkpoint, and returns it to
+`Implement`. It restores the selected issue's prompt context and removes failed
+worker routing state. It preserves the claim and all source changes, then prints
+the tracker resume command. It requires `pgrep` and refuses while any tracker
+process is running. It only handles an implementation turn-limit failure before
+reviews; later failures need inspection rather than restarting the whole review cycle.
+
+For tracker v0.73.1, `-r` reads `.tracker/runs/<run-id>/checkpoint.json` in the
+target repository. A copy under `~/.local/state/tracker` can be stale even when
+that directory contains the current activity log. Inspect the repository-local
+checkpoint before choosing a recovery action.
+
+Release an abandoned claim with
 `kata unassign <ref>` only after confirming the old run has stopped and its
 work has been accounted for.
 

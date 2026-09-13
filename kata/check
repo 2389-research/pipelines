@@ -27,4 +27,5 @@ fi
 "$KATA_DIR/tests/approvals.sh"
 "$KATA_DIR/tests/preflight.sh"
 "$KATA_DIR/tests/close.sh"
-shellcheck "$KATA_DIR/check" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh
+"$KATA_DIR/tests/retry-implementation.sh"
+shellcheck "$KATA_DIR/check" "$KATA_DIR/retry-implementation" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh

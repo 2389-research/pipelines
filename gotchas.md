@@ -20,3 +20,9 @@ the saved run with the same pipeline to preserve its claim; do not start over.
 Doctor Biz wants much larger kata turn ceilings so checks, evidence, and
 commits can finish: implementation 300, repair 150, each review 100. Bound
 discovery to relevant code; do not narrow the selected item's goal to fit a cap.
+
+Tracker resume continues at the saved node, including a terminal Handoff.
+After an implementation turn-limit failure, use kata/retry-implementation to
+back up and rewind only the failed worker state while retaining its claim.
+Check the repository-local checkpoint: tracker v0.73.1 can write fresh logs
+under ~/.local/state/tracker while leaving a stale checkpoint copy there.

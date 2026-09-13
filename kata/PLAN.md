@@ -73,5 +73,22 @@ including graph routes, shell guards, real tracker preflight, and ShellCheck.
 The known static runtime-context warning remains. A full live completion
 under the larger ceilings has not yet been verified.
 
+Recovery update (2026-09-13): ordinary resume re-entered Handoff because the
+active repository-local checkpoint had advanced past Implement. A stale copy
+under ~/.local/state/tracker still named Implement; its fresh activity log
+did not make that checkpoint authoritative. Recovery must inspect the local
+checkpoint and account for its saved route, not infer the next node from logs.
+The retry-implementation command is limited to a first implementation turn-limit
+handoff before reviews. It verifies the claim and Git state, backs up the
+checkpoint, restores the claim prompt context, and clears failed worker routing
+without changing the selected issue or source files. Operator invocation gives
+the worker another attempt; automatic repair and review bounds remain unchanged.
+Regression checks failed before the helper existed and when hidden review
+history was accepted, then passed after implementation and guard fixes.
+Canonical kata/check and ShellCheck pass. Fresh-eyes review tightened the
+refusal of legacy gate and memo state. Live recovery backed up the actual
+checkpoint and preserved all source and selected-state hashes; tracker then
+resumed Implement through Lunaroute instead of repeating Handoff.
+
 No live issue may be created just for testing. Live model execution is a
 separate validation layer from graph simulation; report any untested layer.
