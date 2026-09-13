@@ -1,8 +1,14 @@
 # Complete one kata item
 
-`complete.dip` claims the next ready, unowned issue in the target repository,
-works on that issue, and stops. Planning is optional and stays within its
-acceptance criteria. An empty queue does no work.
+`complete.dip` claims the next ready, unowned issue without open children in
+the target repository, works on that issue, and stops. Planning is optional
+and stays within its acceptance criteria. If no eligible issue exists, it does no work.
+
+Kata's readiness check only rules out open blocking predecessors; a parent
+epic can still be ready while its children are unfinished. Selection filters
+those parents before claiming. It keeps Kata's ordering: lowest explicit
+priority first, unset priority last, and the returned order for ties. Parents
+whose children are all closed remain eligible.
 
 The worker uses TDD and the repository's own checks. Two models then review
 in parallel, emulating the fresh-eyes skill:
@@ -53,8 +59,9 @@ tracker --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 Run once per item. When work is ready, the pipeline creates a branch named
 `kata/<short-id>-<run-id>` from `main`, `master`, or `trunk`. It keeps any
 existing non-default branch. An empty queue leaves the current branch unchanged.
-The selection never advances to a second issue, including when a competing
-agent wins the claim. The workflow does not push or merge; review the resulting
+The run never claims a second issue, including when a competing agent wins
+the claim. Candidate filtering happens before that single claim attempt.
+The workflow does not push or merge; review the resulting
 branch before integrating it.
 
 Runtime artifacts live under `.tracker`. The preflight adds only `/.tracker/`

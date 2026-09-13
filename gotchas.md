@@ -29,3 +29,8 @@ under ~/.local/state/tracker while leaving a stale checkpoint copy there.
 
 Live recovery and completion passed for todo-test#tzrg on 2026-09-13: both
 model reviews approved commit 510d313, closure succeeded, and the tree was clean.
+
+Kata ready/next may return parent epics with open children: parent links do
+not count as blocking predecessors. Filter ready results by child_counts.open
+before claiming. Preserve explicit priority order (unset last, received order
+for ties), and never try another claim after losing an ownership race.

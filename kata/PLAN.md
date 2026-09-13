@@ -2,6 +2,8 @@
 
 Goal: claim the next ready, unowned kata item in the target repository and
 complete only that item through tracker. Stop after one item.
+Candidates with open children are excluded before claiming; keep Kata's
+priority order among the remaining ready, unowned items.
 
 Design: deterministic selection and claim; one agent scopes the item and
 implements it with TDD, writing a small plan only when needed. Two models
@@ -97,3 +99,18 @@ a clean working tree. This verifies one real item through recovery and closure.
 
 No live issue may be created just for testing. Live model execution is a
 separate validation layer from graph simulation; report any untested layer.
+
+Selection update (2026-09-13): mux run 8cb3219a7812 claimed parent epic x3hz
+with open children. The worker correctly stopped without source changes.
+Kata v0.17.2 ready/next excludes open blocks predecessors but does not exclude
+open-child parents. Ready results include child_counts, so filter them before
+the single claim attempt and preserve next's lowest-explicit-priority ordering
+(unset priorities last; received order breaks ties). An all-parent queue is
+a no-op; claim races still stop without trying another candidate.
+Regression tests reproduced the parent selection and a file-path assumption
+under tracker-style inline execution. The selector now lives in claim-next.sh;
+all selection tests execute its contents through sh -c. Canonical kata/check,
+ShellCheck, and fresh-eyes review passed. A read-only check against Mux's live
+ready queue skipped x3hz and chose ac2b. The mistaken epic claim was released
+with an expected-owner guard after verifying no source changes or commits;
+the checkout returned to main. No replacement issue was claimed in this check.

@@ -33,22 +33,41 @@ state_tmp="$TRACKER_RUN_DIR/selected.json.tmp"
 printf '' >"$state_tmp"
 trap 'rm -f "$state_tmp"' EXIT HUP INT TERM
 
-next_json=$(kata next --workspace "$workspace" --unowned --json)
-uid=$(printf '%s' "$next_json" | jq -er '.issue.uid // empty') || {
-  if printf '%s' "$next_json" | jq -e '.issue == null' >/dev/null; then
-    printf 'queue-empty\n'
-    exit 0
-  fi
-  printf 'kata next returned an invalid response\n' >&2
+ready_json=$(kata ready --workspace "$workspace" --unowned --limit 0 --json)
+# Kata next prefers lower numeric priorities, then preserves ready API order.
+# Slurping rejects empty or multiple response documents before any claim.
+selected_json=$(printf '%s' "$ready_json" | jq -cs '
+  def count: type == "number" and . >= 0 and floor == .;
+  if length != 1 or (.[0] | type) != "object" or (.[0].issues | type) != "array" then
+    error("invalid ready response envelope")
+  else .[0].issues end
+  | if all(.[];
+      type == "object"
+      and (.priority == null or (.priority | type == "number" and floor == . and . >= 0 and . <= 4))
+      and ((has("child_counts") | not) or
+        (.child_counts | type == "object"
+          and (.open | count) and (.total | count) and .open <= .total)))
+    then . else error("invalid ready issue priority or child counts") end
+  | to_entries
+  | map(select((.value.child_counts.open // 0) == 0))
+  | sort_by([(.value.priority == null), (.value.priority // 0), .key])
+  | .[0].value
+') || {
+  printf 'kata ready returned an invalid response\n' >&2
   exit 1
 }
-short_id=$(printf '%s' "$next_json" | jq -er '.issue.short_id')
-qualified_id=$(printf '%s' "$next_json" | jq -er '.issue.qualified_id')
+if [ "$selected_json" = null ]; then
+  printf 'queue-empty\n'
+  exit 0
+fi
+uid=$(printf '%s' "$selected_json" | jq -er '.uid // empty') || { printf 'kata ready returned an invalid response\n' >&2; exit 1; }
+short_id=$(printf '%s' "$selected_json" | jq -er '.short_id')
+qualified_id=$(printf '%s' "$selected_json" | jq -er '.qualified_id')
 case "$uid" in
-  *[!0123456789ABCDEFGHJKMNPQRSTVWXYZ]*|'') printf 'kata next returned an invalid issue UID\n' >&2; exit 1 ;;
+  *[!0123456789ABCDEFGHJKMNPQRSTVWXYZ]*|'') printf 'kata ready returned an invalid issue UID\n' >&2; exit 1 ;;
 esac
-[ "${#uid}" -eq 26 ] || { printf 'kata next returned an invalid issue UID\n' >&2; exit 1; }
-case "$short_id" in *[!abcdefghijklmnopqrstuvwxyz0123456789]*|'') printf 'kata next returned an invalid short ID\n' >&2; exit 1 ;; esac
+[ "${#uid}" -eq 26 ] || { printf 'kata ready returned an invalid issue UID\n' >&2; exit 1; }
+case "$short_id" in *[!abcdefghijklmnopqrstuvwxyz0123456789]*|'') printf 'kata ready returned an invalid short ID\n' >&2; exit 1 ;; esac
 case "$TRACKER_RUN_ID" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*|'') printf 'TRACKER_RUN_ID is unsafe for a Git branch\n' >&2; exit 1 ;; esac
 
 create_branch=false

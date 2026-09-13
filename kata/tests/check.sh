@@ -9,7 +9,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$*"; }
-assert_contains() { printf '%s' "$1" | grep -F "$2" >/dev/null || fail "expected [$2] in [$1]"; }
+assert_contains() { printf '%s' "$1" | grep -F -- "$2" >/dev/null || fail "expected [$2] in [$1]"; }
 
 test_graph_contract() {
   graph=$KATA_DIR/complete.dip
@@ -60,7 +60,7 @@ run_preflight() {
   mkdir -p "$TMP_ROOT/test-bin"
   ln -sf "$KATA_DIR/tests/fake-kata.sh" "$TMP_ROOT/test-bin/kata"
   mkdir -p "$repo/.tracker/runs/test"
-  (cd "$repo" && PATH="$TMP_ROOT/test-bin:$PATH" TRACKER_RUN_DIR="$repo/.tracker/runs/test" TRACKER_RUN_ID="${TEST_RUN_ID:-test}" TRACKER_WORKDIR="$repo" "$KATA_DIR/scripts/claim-next.sh" "$@") 2>&1
+  (cd "$repo" && PATH="$TMP_ROOT/test-bin:$PATH" TRACKER_RUN_DIR="$repo/.tracker/runs/test" TRACKER_RUN_ID="${TEST_RUN_ID:-test}" TRACKER_WORKDIR="$repo" sh -c "$(cat "$KATA_DIR/scripts/claim-next.sh")" sh "$@") 2>&1
 }
 
 test_claim_and_persist() {
@@ -75,7 +75,7 @@ test_claim_and_persist() {
   grep -Fx '/.tracker/' "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)" >/dev/null || fail 'root-anchored local exclude is missing'
   grep -Fx 'keep-me' "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)" >/dev/null || fail 'existing local exclude entry changed'
   jq -e --arg repo "$repo" '.issue_uid == "01ARZ3NDEKTSV4RRFFQ69G5FAV" and .short_id == "5fav" and .qualified_id == "demo#5fav" and .workspace == $repo' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'selected identity was not persisted'
-  [ "$(sed -n '1p' "$repo/.fake-kata-log")" = 'claim 01ARZ3NDEKTSV4RRFFQ69G5FAV' ] || fail 'claim did not use full immutable identity'
+  grep -F -- '--if-unowned 01ARZ3NDEKTSV4RRFFQ69G5FAV --json' "$repo/.fake-kata-log" >/dev/null || fail 'claim did not use full immutable identity'
   pass 'ready item is claimed once and its identity is persisted'
 }
 
@@ -96,7 +96,8 @@ test_claim_conflict_stops() {
   assert_contains "$output" 'claim failed'
   [ "$(git -C "$repo" branch --show-current)" = main ] || fail 'claim conflict left a task branch checked out'
   [ "$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads | wc -l | tr -d ' ')" = 1 ] || fail 'claim conflict created a branch'
-  [ "$(grep -c '^next$' "$repo/.fake-kata-log")" -eq 1 ] || fail 'claim conflict selected again'
+  [ "$(grep -c '^ready ' "$repo/.fake-kata-log")" -eq 1 ] || fail 'claim conflict selected again'
+  [ "$(grep -c '^claim ' "$repo/.fake-kata-log")" -eq 1 ] || fail 'claim conflict attempted another claim'
   [ ! -e "$repo/.tracker/runs/test/selected.json" ] || fail 'claim conflict persisted a selection'
   pass 'claim conflict stops without reselection'
 }
@@ -107,7 +108,7 @@ test_unsafe_run_id_stops_before_branch_or_claim() {
   if output=$(TEST_RUN_ID='../unsafe' FAKE_KATA_MODE=ready run_preflight "$repo"); then fail 'unsafe run ID succeeded'; fi
   assert_contains "$output" 'TRACKER_RUN_ID is unsafe'
   [ "$(git -C "$repo" branch --show-current)" = 'main' ] || fail 'unsafe run ID changed branch'
-  [ "$(cat "$repo/.fake-kata-log")" = 'next' ] || fail 'unsafe run ID reached claim'
+  [ "$(wc -l <"$repo/.fake-kata-log" | tr -d ' ')" -eq 1 ] || fail 'unsafe run ID reached claim'
   pass 'unsafe branch identifiers stop before branch creation or claim'
 }
 
@@ -169,6 +170,69 @@ test_approvals_bind_current_commit_and_workspace() {
   pass 'approval guard binds both attestations to HEAD and workspace'
 }
 
+test_parent_selection() {
+  repo=$TMP_ROOT/parent-selection
+  new_repo "$repo"
+  response='{"issues":[{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAA","short_id":"5faa","qualified_id":"demo#5faa","priority":0,"child_counts":{"open":2,"total":2}},{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAV","short_id":"5fav","qualified_id":"demo#5fav","priority":2}]}'
+  output=$(FAKE_READY_JSON="$response" run_preflight "$repo") || fail "$output"
+  assert_contains "$output" 'claim-ok'
+  jq -e '.issue_uid == "01ARZ3NDEKTSV4RRFFQ69G5FAV"' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'claimed higher-priority parent instead of ready leaf'
+  [ "$(grep -c '^claim ' "$repo/.fake-kata-log")" -eq 1 ] || fail 'selection claimed more than once'
+  assert_contains "$(cat "$repo/.fake-kata-log")" '--unowned --limit 0 --json'
+  pass 'parent with open children is skipped before claiming a ready leaf'
+}
+
+test_ineligible_or_malformed_queue() {
+  for case_name in parents malformed-count negative-count fractional-count missing-count invalid-envelope empty-response multiple-responses malformed-json malformed-priority; do
+    repo=$TMP_ROOT/$case_name
+    new_repo "$repo"
+    case "$case_name" in
+      parents) response='{"issues":[{"priority":0,"child_counts":{"open":1,"total":1}}]}' ;;
+      malformed-count) response='{"issues":[{"child_counts":{"open":"1","total":1}}]}' ;;
+      negative-count) response='{"issues":[{"child_counts":{"open":-1,"total":1}}]}' ;;
+      fractional-count) response='{"issues":[{"child_counts":{"open":0.5,"total":1}}]}' ;;
+      missing-count) response='{"issues":[{"child_counts":{"total":1}}]}' ;;
+      invalid-envelope) response='{"issue":null}' ;;
+      empty-response) response='' ;;
+      multiple-responses) response='{"issues":[]} {"issues":[]}' ;;
+      malformed-json) response='{"issues":[' ;;
+      malformed-priority) response='{"issues":[{"priority":"0"}]}' ;;
+    esac
+    if output=$(FAKE_READY_JSON="$response" run_preflight "$repo"); then
+      [ "$case_name" = parents ] || fail "$case_name succeeded"
+      assert_contains "$output" 'queue-empty'
+    else
+      [ "$case_name" != parents ] || fail 'parents-only queue failed'
+      assert_contains "$output" 'invalid response'
+    fi
+    [ "$(git -C "$repo" branch --show-current)" = main ] || fail "$case_name changed branch"
+    [ ! -e "$repo/.tracker/runs/test/selected.json" ] || fail "$case_name persisted selection"
+    [ "$(wc -l <"$repo/.fake-kata-log" | tr -d ' ')" -eq 1 ] || fail "$case_name attempted a claim"
+  done
+  pass 'parents-only queue is a no-op and malformed queues stop before claiming'
+}
+
+test_selection_priority_contract() {
+  for selection_case in zero null ties closed; do
+    repo=$TMP_ROOT/priority-$selection_case
+    new_repo "$repo"
+    case "$selection_case" in
+      zero) rows='[{"short_id":"5faa"},{"short_id":"5fab","priority":1},{"short_id":"5fav","priority":0}]' ;;
+      null) rows='[{"short_id":"5fav"},{"short_id":"5faa","priority":null}]' ;;
+      ties) rows='[{"short_id":"5fav","priority":2},{"short_id":"5faa","priority":2}]' ;;
+      closed) rows='[{"short_id":"5fav","priority":1,"child_counts":{"open":0,"total":2}},{"short_id":"5faa","priority":2}]' ;;
+    esac
+    response=$(printf '%s' "$rows" | jq '{issues:map(. + {uid:("01ARZ3NDEKTSV4RRFFQ69G" + (.short_id | ascii_upcase)),qualified_id:("demo#" + .short_id)})}')
+    output=$(FAKE_READY_JSON="$response" run_preflight "$repo") || fail "$output"
+    assert_contains "$output" 'claim-ok'
+    jq -e '.short_id == "5fav"' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail "$selection_case selection disagrees with kata next"
+  done
+  pass 'selection keeps canonical priority, unprioritized order, ties, and closed-child parents'
+}
+
+test_parent_selection
+test_ineligible_or_malformed_queue
+test_selection_priority_contract
 test_graph_contract
 test_claim_and_persist
 test_empty_queue_is_noop
