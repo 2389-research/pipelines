@@ -9,9 +9,10 @@ review in parallel using fresh-eyes checks. Allow at most one repair pass
 and close with evidence only after approval. Failed work stays open with
 a needs-review handoff.
 An empty queue is a clean no-op; claim races stop without selecting again.
-Use a task branch, preserve existing work, never push or merge. Keep runtime
+Create a task branch when starting on the default branch; preserve existing
+work and never push or merge. Locally exclude tracker artifacts. Keep runtime
 state under .tracker, bind the selected full issue identity and workspace,
-and require a fresh clean target tree before changes. Scope containment is
+and require a clean target tree apart from runtime artifacts before changes. Scope containment is
 workflow discipline, not an OS security sandbox.
 
 Review roles: correctness (acceptance criteria, regressions, error paths,

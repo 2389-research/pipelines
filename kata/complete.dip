@@ -114,12 +114,6 @@ workflow CompleteOneKata
     timeout: 30s
     command_file: scripts/handoff-selected.sh
 
-  tool Stop
-    label: "Stop after selection or claim failure"
-    timeout: 5s
-    command:
-      exit 1
-
   tool Exit
     label: "One-item run complete"
     timeout: 5s
@@ -129,7 +123,6 @@ workflow CompleteOneKata
   edges
     ClaimNext -> Implement  on claim-ok
     ClaimNext -> Exit  on queue-empty
-    ClaimNext -> Stop  when ctx.outcome = fail
     Implement -> ReviewFreshEyes  on success
     Implement -> Handoff  on fail
     ReviewFreshEyes -> ReviewsApproved  when ctx.outcome = success
@@ -147,4 +140,3 @@ workflow CompleteOneKata
     CloseSelected -> Exit  when ctx.outcome = success
     CloseSelected -> Handoff  when ctx.outcome = fail
     Handoff -> Exit
-    Stop -> Exit

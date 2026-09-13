@@ -25,14 +25,14 @@ test_graph_contract() {
 
 new_repo() {
   repo=$1
-  git init -q "$repo"
+  git init -q -b main "$repo"
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name tester
   : >"$repo/.seed"
-  printf '.tracker/\n.fake-kata-log\n' >"$repo/.gitignore"
+  printf '.fake-kata-log\n' >"$repo/.gitignore"
   git -C "$repo" add .seed .gitignore
   git -C "$repo" commit -qm init
-  git -C "$repo" switch -qc feat/test
+  printf 'keep-me' >"$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)"
 }
 
 run_preflight() {
@@ -41,7 +41,7 @@ run_preflight() {
   mkdir -p "$TMP_ROOT/test-bin"
   ln -sf "$KATA_DIR/tests/fake-kata.sh" "$TMP_ROOT/test-bin/kata"
   mkdir -p "$repo/.tracker/runs/test"
-  (cd "$repo" && PATH="$TMP_ROOT/test-bin:$PATH" TRACKER_RUN_DIR="$repo/.tracker/runs/test" TRACKER_RUN_ID=test TRACKER_WORKDIR="$repo" "$KATA_DIR/scripts/claim-next.sh" "$@") 2>&1
+  (cd "$repo" && PATH="$TMP_ROOT/test-bin:$PATH" TRACKER_RUN_DIR="$repo/.tracker/runs/test" TRACKER_RUN_ID="${TEST_RUN_ID:-test}" TRACKER_WORKDIR="$repo" "$KATA_DIR/scripts/claim-next.sh" "$@") 2>&1
 }
 
 test_claim_and_persist() {
@@ -50,6 +50,11 @@ test_claim_and_persist() {
   repo=$(cd "$repo" && pwd -P)
   output=$(FAKE_KATA_MODE=ready run_preflight "$repo")
   assert_contains "$output" 'claim-ok'
+  [ "$(git -C "$repo" branch --show-current)" = 'kata/5fav-test' ] || fail 'ready item did not create its deterministic task branch'
+  git -C "$repo" check-ignore -q .tracker/runs/test || fail 'runtime directory was not added to the local Git exclude'
+  [ "$(cat "$repo/.gitignore")" = '.fake-kata-log' ] || fail 'source ignore file changed'
+  grep -Fx '/.tracker/' "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)" >/dev/null || fail 'root-anchored local exclude is missing'
+  grep -Fx 'keep-me' "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)" >/dev/null || fail 'existing local exclude entry changed'
   jq -e --arg repo "$repo" '.issue_uid == "01ARZ3NDEKTSV4RRFFQ69G5FAV" and .short_id == "5fav" and .qualified_id == "demo#5fav" and .workspace == $repo' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'selected identity was not persisted'
   [ "$(sed -n '1p' "$repo/.fake-kata-log")" = 'claim 01ARZ3NDEKTSV4RRFFQ69G5FAV' ] || fail 'claim did not use full immutable identity'
   pass 'ready item is claimed once and its identity is persisted'
@@ -60,6 +65,7 @@ test_empty_queue_is_noop() {
   new_repo "$repo"
   output=$(FAKE_KATA_MODE=empty run_preflight "$repo")
   assert_contains "$output" 'queue-empty'
+  [ "$(git -C "$repo" branch --show-current)" = 'main' ] || fail 'empty queue changed branch'
   [ ! -e "$repo/.tracker/runs/test/selected.json" ] || fail 'empty queue persisted a selection'
   pass 'empty queue is a clean no-op'
 }
@@ -69,9 +75,21 @@ test_claim_conflict_stops() {
   new_repo "$repo"
   if output=$(FAKE_KATA_MODE=conflict run_preflight "$repo"); then fail 'claim conflict succeeded'; fi
   assert_contains "$output" 'claim failed'
+  [ "$(git -C "$repo" branch --show-current)" = main ] || fail 'claim conflict left a task branch checked out'
+  [ "$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads | wc -l | tr -d ' ')" = 1 ] || fail 'claim conflict created a branch'
   [ "$(grep -c '^next$' "$repo/.fake-kata-log")" -eq 1 ] || fail 'claim conflict selected again'
   [ ! -e "$repo/.tracker/runs/test/selected.json" ] || fail 'claim conflict persisted a selection'
   pass 'claim conflict stops without reselection'
+}
+
+test_unsafe_run_id_stops_before_branch_or_claim() {
+  repo=$TMP_ROOT/unsafe-run-id
+  new_repo "$repo"
+  if output=$(TEST_RUN_ID='../unsafe' FAKE_KATA_MODE=ready run_preflight "$repo"); then fail 'unsafe run ID succeeded'; fi
+  assert_contains "$output" 'TRACKER_RUN_ID is unsafe'
+  [ "$(git -C "$repo" branch --show-current)" = 'main' ] || fail 'unsafe run ID changed branch'
+  [ "$(cat "$repo/.fake-kata-log")" = 'next' ] || fail 'unsafe run ID reached claim'
+  pass 'unsafe branch identifiers stop before branch creation or claim'
 }
 
 test_existing_selection_stops_without_reselection() {
@@ -79,27 +97,38 @@ test_existing_selection_stops_without_reselection() {
   new_repo "$repo"
   mkdir -p "$repo/.tracker/runs/test"
   printf '{}\n' >"$repo/.tracker/runs/test/selected.json"
+  exclude=$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)
+  before=$(cat "$exclude")
   if output=$(FAKE_KATA_MODE=ready run_preflight "$repo"); then fail 'existing selection succeeded'; fi
   assert_contains "$output" 'selection already exists'
+  [ "$(cat "$exclude")" = "$before" ] || fail 'existing selection mutated local excludes'
   [ ! -e "$repo/.fake-kata-log" ] || fail 'existing selection called kata'
   pass 'existing run selection cannot select a second item'
 }
 
-test_dirty_or_default_branch_stops_before_kata() {
+test_dirty_work_and_existing_branch() {
   repo=$TMP_ROOT/dirty
   new_repo "$repo"
-  : >"$repo/dirty"
+  : >"$repo/.kata.toml"
+  : >"$repo/.gitignore.local"
+  : >"$repo/uncommitted.txt"
   if output=$(FAKE_KATA_MODE=ready run_preflight "$repo"); then fail 'dirty tree succeeded'; fi
   assert_contains "$output" 'working tree is not clean'
+  assert_contains "$output" '.kata.toml'
+  assert_contains "$output" '.gitignore.local'
+  assert_contains "$output" 'uncommitted.txt'
+  assert_contains "$output" 'commit, stash, or remove'
+  [ "$(git -C "$repo" branch --show-current)" = 'main' ] || fail 'dirty preflight changed branch'
+  git -C "$repo" check-ignore -q .tracker/runs/test || fail 'dirty preflight did not exclude tracker artifacts'
   [ ! -e "$repo/.fake-kata-log" ] || fail 'dirty tree called kata'
 
-  repo=$TMP_ROOT/main
+  repo=$TMP_ROOT/existing-branch
   new_repo "$repo"
-  git -C "$repo" switch -q main
-  if output=$(FAKE_KATA_MODE=ready run_preflight "$repo"); then fail 'default branch succeeded'; fi
-  assert_contains "$output" 'refusing default branch'
-  [ ! -e "$repo/.fake-kata-log" ] || fail 'default branch called kata'
-  pass 'real Git guards stop dirty and default-branch workspaces'
+  git -C "$repo" switch -qc feat/already-here
+  output=$(FAKE_KATA_MODE=ready run_preflight "$repo")
+  assert_contains "$output" 'claim-ok'
+  [ "$(git -C "$repo" branch --show-current)" = 'feat/already-here' ] || fail 'existing task branch changed'
+  pass 'preflight reports all dirty paths and preserves an existing task branch'
 }
 
 test_approvals_bind_current_commit_and_workspace() {
@@ -125,7 +154,8 @@ test_graph_contract
 test_claim_and_persist
 test_empty_queue_is_noop
 test_claim_conflict_stops
+test_unsafe_run_id_stops_before_branch_or_claim
 test_existing_selection_stops_without_reselection
-test_dirty_or_default_branch_stops_before_kata
+test_dirty_work_and_existing_branch
 test_approvals_bind_current_commit_and_workspace
 printf 'all kata checks passed\n'

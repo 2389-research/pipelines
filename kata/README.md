@@ -16,27 +16,38 @@ The pipeline does not depend on locally installed agent skills.
 
 ## Run
 
-Use a clean target repository on a task branch, with kata already initialized
-for that repository. Configure tracker for both Anthropic and OpenAI. You
-also need `kata`, `git`, and `jq` on PATH.
+Use a clean target repository with kata already initialized for that repository.
+Configure tracker for both Anthropic and OpenAI. You also need `kata`, `git`,
+and `jq` on PATH.
 
-Validated toolchain: tracker **v0.66.0**, whose Dippin dependency is **v0.68.0**.
-Use that matching Dippin version for validation. This directory has a newer
-toolchain requirement than the collection's general quickstart.
+Validated toolchains: tracker **v0.73.1** with Dippin **v0.72.0**, and tracker
+**v0.66.0** with Dippin **v0.68.0**. Match the Dippin CLI to tracker's dependency
+for validation. Kata **v0.17.2** or newer is required. This directory has newer
+tool requirements than the collection's general quickstart.
 
 ```sh
 cd /path/to/target-repo
-git switch -c kata/next-item
 tracker --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 ```
 
-Run once per item. The selection never advances to a second issue, including
-when a competing agent wins the claim. The workflow does not push or merge;
-review the resulting branch before integrating it.
+Run once per item. When work is ready, the pipeline creates a branch named
+`kata/<short-id>-<run-id>` from `main`, `master`, or `trunk`. It keeps any
+existing non-default branch. An empty queue leaves the current branch unchanged.
+The selection never advances to a second issue, including when a competing
+agent wins the claim. The workflow does not push or merge; review the resulting
+branch before integrating it.
 
-Runtime artifacts live under `.tracker`. Keep that directory ignored in the
-target repository. Do not run concurrent coding pipelines in the same checkout.
-Scope limits are workflow rules and verification checks, not an OS sandbox.
+Runtime artifacts live under `.tracker`. The preflight adds only `/.tracker/`
+to `.git/info/exclude`; it does not edit the repository's `.gitignore`. Unrelated
+dirty paths stop the run before Kata selection. Resolve every path printed by
+the preflight, then start a fresh tracker run. To inspect a saved preflight error:
+
+```sh
+jq -r '.context_updates.tool_stderr' .tracker/runs/<run-id>/ClaimNext/status.json
+```
+
+Do not run concurrent coding pipelines in the same checkout. Scope limits are
+workflow rules and verification checks, not an OS sandbox.
 
 If a run is interrupted, inspect its artifacts and the selected issue before
 restarting. The claim remains attached to that run's actor. Release it with
