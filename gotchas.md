@@ -39,3 +39,9 @@ Doctor Biz wants a fresh branch for every claimed kata and a PR when GitHub
 is configured. GitHub tasks start from the fetched default branch; local-only
 tasks start from current HEAD. Publish only the SHA approved by both reviewers,
 reuse a matching open PR, and leave the kata open if publication fails.
+
+Doctor Biz chose stacked branches and PRs for whole-board runs, leaving merging
+to the operator. Each kata uses the previous approved task as its base. Tracker
+0.73.1 native subgraphs share run identity/artifacts, so board.dip calls separate
+complete.dip CLI runs and records their IDs. Resume resolves the current child
+before another claim. No ready work with open items remaining means incomplete.

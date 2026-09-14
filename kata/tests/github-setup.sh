@@ -134,3 +134,60 @@ for scenario in origin-preferred only-github no-github empty conflict; do
   esac
 done
 printf 'ok - remote preference, non-GitHub setup, empty queues, and claim races are bounded\n'
+
+write_stack_base() {
+  jq -n --arg branch feat/previous --arg commit "$previous" --argjson github "$1" \
+    '{branch:$branch,commit:$commit,github:$github}' >"$TMP_ROOT/stack-base.json"
+}
+stack_github='{"remote":"origin","repository":"Acme/Demo","base_branch":"release"}'
+new_repo stack-github
+git -C "$repo" push -q "$TMP_ROOT/remote.git" feat/previous
+git -C "$repo" remote add origin https://github.com/acme/demo.git
+write_stack_base "$stack_github"
+output=$(KATA_STACK_BASE_FILE="$TMP_ROOT/stack-base.json" run_setup) || fail "$output"
+contains "$output" claim-ok
+[ "$(git -C "$repo" branch --show-current)" = kata/5fav-test ] || fail 'stack did not create a fresh task branch'
+[ -f "$repo/previous.txt" ] || fail 'stack lost previous task work'
+[ "$(git -C "$repo" rev-parse HEAD)" = "$previous" ] || fail 'stack did not retain frozen commit'
+jq -e --arg previous "$previous" '.base_commit == $previous and .github == {remote:"origin",repository:"Acme/Demo",base_branch:"feat/previous"} and .actor == "kata-pipeline-test"' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'stack publication base or run identity incorrect'
+printf 'ok - GitHub stacked tasks retain previous work and record the previous PR branch\n'
+
+new_repo stack-local
+write_stack_base null
+output=$(KATA_STACK_BASE_FILE="$TMP_ROOT/stack-base.json" run_setup) || fail "$output"
+contains "$output" claim-ok
+[ -f "$repo/previous.txt" ] || fail 'local stack lost previous work'
+[ "$(git -C "$repo" branch --show-current)" = kata/5fav-test ] || fail 'local stack did not create a fresh task branch'
+jq -e --arg previous "$previous" '.github == null and .base_commit == $previous' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'local stack base incorrect'
+[ ! -s "$GH_SETUP_LOG" ] || fail 'local stack queried GitHub'
+printf 'ok - local stacked tasks use the frozen current HEAD without GitHub\n'
+
+for scenario in missing-file invalid-json multiple-json non-object missing-github invalid-branch invalid-commit invalid-github invalid-remote invalid-base head-mismatch branch-mismatch remote-mismatch repository-mismatch github-to-local local-to-github changed-base missing-base; do
+  new_repo "stack-$scenario"
+  git -C "$repo" remote add origin https://github.com/acme/demo.git
+  write_stack_base "$stack_github"
+  case "$scenario" in
+    missing-file) rm "$TMP_ROOT/stack-base.json" ;;
+    invalid-json) printf '{' >"$TMP_ROOT/stack-base.json" ;;
+    multiple-json) printf '{}\n' >>"$TMP_ROOT/stack-base.json" ;;
+    non-object) printf '[]\n' >"$TMP_ROOT/stack-base.json" ;;
+    missing-github) jq 'del(.github)' "$TMP_ROOT/stack-base.json" >"$TMP_ROOT/edited.json"; mv "$TMP_ROOT/edited.json" "$TMP_ROOT/stack-base.json" ;;
+    invalid-branch) jq '.branch = "../bad"' "$TMP_ROOT/stack-base.json" >"$TMP_ROOT/edited.json"; mv "$TMP_ROOT/edited.json" "$TMP_ROOT/stack-base.json" ;;
+    invalid-commit) jq '.commit = "1234567"' "$TMP_ROOT/stack-base.json" >"$TMP_ROOT/edited.json"; mv "$TMP_ROOT/edited.json" "$TMP_ROOT/stack-base.json" ;;
+    invalid-github) write_stack_base '{}' ;;
+    invalid-remote) write_stack_base '{"remote":"../origin","repository":"Acme/Demo","base_branch":"release"}' ;;
+    invalid-base) write_stack_base '{"remote":"origin","repository":"Acme/Demo","base_branch":"../bad"}' ;;
+    head-mismatch) jq --arg commit "$initial" '.commit = $commit' "$TMP_ROOT/stack-base.json" >"$TMP_ROOT/edited.json"; mv "$TMP_ROOT/edited.json" "$TMP_ROOT/stack-base.json" ;;
+    branch-mismatch) jq '.branch = "other"' "$TMP_ROOT/stack-base.json" >"$TMP_ROOT/edited.json"; mv "$TMP_ROOT/edited.json" "$TMP_ROOT/stack-base.json" ;;
+    remote-mismatch) git -C "$repo" remote rename origin upstream ;;
+    repository-mismatch) git -C "$repo" remote set-url origin https://github.com/other/repo.git ;;
+    github-to-local) git -C "$repo" remote remove origin ;;
+    local-to-github) write_stack_base null ;;
+    changed-base) git --git-dir="$TMP_ROOT/remote.git" update-ref refs/heads/feat/previous "$base" ;;
+    missing-base) git --git-dir="$TMP_ROOT/remote.git" update-ref -d refs/heads/feat/previous ;;
+  esac
+  if output=$(KATA_STACK_BASE_FILE="$TMP_ROOT/stack-base.json" run_setup); then fail "stack $scenario succeeded"; fi
+  contains "$output" 'stack'
+  assert_unclaimed
+done
+printf 'ok - invalid, stale, missing, and changed stack bases stop before claim\n'

@@ -1,0 +1,20 @@
+# ABOUTME: Completes the repository's kata board through isolated complete.dip runs.
+# ABOUTME: Stacks reviewed task branches and PRs, stopping on failure or blocked work.
+workflow CompleteKataBoard
+  goal: "Complete all ready unowned katas sequentially with stacked PRs and report any remaining blocked work."
+  start: RunBoard
+  exit: Exit
+
+  tool RunBoard
+    label: "Complete the board one reviewed kata at a time"
+    timeout: 168h
+    command:
+      sh "${graph.workflow_dir}/scripts/run-board.sh" "${graph.workflow_dir}/complete.dip"
+
+  tool Exit
+    label: "Kata board complete"
+    timeout: 5s
+    command: true
+
+  edges
+    RunBoard -> Exit

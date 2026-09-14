@@ -9,6 +9,10 @@ command -v tracker >/dev/null
 dippin validate "$KATA_DIR/complete.dip"
 check_json=$(dippin check --format json "$KATA_DIR/complete.dip")
 printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
+dippin validate "$KATA_DIR/board.dip"
+check_json=$(dippin check --format json "$KATA_DIR/board.dip")
+printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
+tracker validate "$KATA_DIR/board.dip"
 simulation_log=$(mktemp)
 trap 'rm -f "$simulation_log"' EXIT HUP INT TERM
 dippin simulate "$KATA_DIR/complete.dip" --all-paths >"$simulation_log" 2>&1
@@ -29,5 +33,6 @@ sh "$KATA_DIR/tests/github-setup.sh"
 "$KATA_DIR/tests/preflight.sh"
 "$KATA_DIR/tests/close.sh"
 sh "$KATA_DIR/tests/publish.sh"
+sh "$KATA_DIR/tests/board.sh"
 "$KATA_DIR/tests/retry-implementation.sh"
 shellcheck "$KATA_DIR/check" "$KATA_DIR/retry-implementation" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh

@@ -78,6 +78,38 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
 fi
 base_commit=$(git rev-parse HEAD)
 github=null
+stack_branch=
+stack_commit=
+stack_github=null
+if [ -n "${KATA_STACK_BASE_FILE:-}" ]; then
+  [ -f "$KATA_STACK_BASE_FILE" ] || { printf 'stack base file is missing\n' >&2; exit 1; }
+  stack_json=$(jq -cse '
+    if length == 1 then .[0] else error("expected one stack base") end
+    | select(type == "object" and has("github")
+      and (.branch | type == "string" and length > 0)
+      and (.commit | type == "string" and test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+      and (.github == null or (.github | type == "object"
+        and (.remote | type == "string" and length > 0)
+        and (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+        and (.base_branch | type == "string" and length > 0))))
+  ' "$KATA_STACK_BASE_FILE") || { printf 'invalid stack base settings\n' >&2; exit 1; }
+  stack_branch=$(printf '%s' "$stack_json" | jq -r '.branch')
+  stack_commit=$(printf '%s' "$stack_json" | jq -r '.commit')
+  stack_github=$(printf '%s' "$stack_json" | jq -c '.github')
+  git check-ref-format --branch "$stack_branch" >/dev/null 2>&1 || { printf 'invalid stack base branch\n' >&2; exit 1; }
+  [ "$(git symbolic-ref --quiet --short HEAD)" = "$stack_branch" ] && [ "$base_commit" = "$stack_commit" ] || {
+    printf 'current branch and HEAD must match the frozen stack base\n' >&2; exit 1
+  }
+  if [ "$stack_github" != null ]; then
+    stack_remote=$(printf '%s' "$stack_github" | jq -r '.remote')
+    stack_repository=$(printf '%s' "$stack_github" | jq -r '.repository | ascii_downcase')
+    stack_previous_base=$(printf '%s' "$stack_github" | jq -r '.base_branch')
+    if ! git check-ref-format "refs/remotes/$stack_remote" >/dev/null 2>&1 ||
+      ! git check-ref-format "refs/heads/$stack_previous_base" >/dev/null 2>&1; then
+      printf 'invalid stack GitHub remote or base branch\n' >&2; exit 1
+    fi
+  fi
+fi
 
 # Read configured URLs so Git's transport rewrites do not change repository identity.
 github_repository() {
@@ -105,6 +137,16 @@ if [ "$github_count" -gt 1 ] && [ "$github_remote" != origin ]; then
   printf 'multiple GitHub remotes without a GitHub origin; choose an origin before running\n' >&2
   exit 1
 fi
+if [ -n "$stack_branch" ]; then
+  if [ "$stack_github" = null ]; then
+    [ -z "$github_remote" ] || { printf 'local stack base cannot switch to GitHub\n' >&2; exit 1; }
+  else
+    [ "$github_remote" = "$stack_remote" ] &&
+      [ "$(printf '%s' "$repository" | tr '[:upper:]' '[:lower:]')" = "$stack_repository" ] || {
+        printf 'GitHub remote and repository must match the stack base\n' >&2; exit 1
+      }
+  fi
+fi
 if [ -n "$github_remote" ]; then
   fetch_urls=$(git config --get-all "remote.$github_remote.url")
   [ "$(printf '%s\n' "$fetch_urls" | wc -l | tr -d ' ')" -eq 1 ] || { printf 'GitHub remote must have exactly one fetch URL\n' >&2; exit 1; }
@@ -124,8 +166,12 @@ if [ -n "$github_remote" ]; then
   repository=$(printf '%s' "$repo_json" | jq -r '.nameWithOwner')
   base_branch=$(printf '%s' "$repo_json" | jq -r '.defaultBranchRef.name')
   git check-ref-format "refs/heads/$base_branch" >/dev/null || { printf 'GitHub default branch is invalid\n' >&2; exit 1; }
-  git fetch --no-tags -- "$github_remote" "refs/heads/$base_branch" || { printf 'GitHub default branch fetch failed before claim\n' >&2; exit 1; }
+  if [ -n "$stack_branch" ]; then base_branch=$stack_branch; fi
+  git fetch --no-tags -- "$github_remote" "refs/heads/$base_branch" || { printf 'GitHub base branch fetch failed before claim (stack base: %s)\n' "${stack_branch:-none}" >&2; exit 1; }
   base_commit=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
+  if [ -n "$stack_branch" ] && [ "$base_commit" != "$stack_commit" ]; then
+    printf 'fetched stack branch differs from the frozen commit\n' >&2; exit 1
+  fi
   github=$(jq -n --arg remote "$github_remote" --arg repository "$repository" --arg base "$base_branch" '{remote:$remote,repository:$repository,base_branch:$base}')
 fi
 actor="kata-pipeline-$TRACKER_RUN_ID"

@@ -57,13 +57,52 @@ cd /path/to/target-repo
 tracker --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 ```
 
-Run once per item. When work is ready, the pipeline creates a branch named
+To work through the whole board, run:
+
+```sh
+tracker --workdir "$PWD" /path/to/pipelines/kata/board.dip
+```
+
+The board runner calls this same `complete.dip` once per item, with separate
+Tracker run IDs, claims, reviews, and checkpoints. It runs sequentially. After
+the first item, each task branches from the previous approved commit and opens
+its PR against the previous task branch. This keeps later work available while
+the PRs await your review. Merge the stack from oldest to newest; the pipeline
+does not merge it. Standalone `complete.dip` retains the default-branch behavior
+described below.
+
+The board stops on its first failed child. If no item is ready and unowned,
+it checks all open items: an empty board succeeds; remaining owned or blocked
+items produce an incomplete-board report. It never takes another actor's claim.
+Parents become eligible as their children close. The runner rechecks the live
+board after each completion, so newly added eligible work is included.
+
+The parent run's `board/state.json` records child IDs, commits, and PR URLs.
+Each child's console output is under `board/items/<attempt>/child.log`; full
+artifacts remain in the target repository's `.tracker/runs/<child-id>`.
+Inspect and recover a failed child using the one-item recovery guidance below,
+then resume the parent with `tracker -r <board-run-id> /path/to/kata/board.dip`.
+The controller verifies the existing child's successful completion before
+advancing, so resuming the parent does not silently claim a replacement item.
+An incomplete board can be resumed after its blockers or ownership are resolved.
+Keep the checkout on the last task branch with a clean working tree.
+
+Board runs require the source `.dip` directory; packed `.dipx` bundles are not
+supported. Tracker 0.73.1 native subgraphs share the parent's artifact directory,
+so this runner uses separate CLI processes to preserve per-item state and resume.
+Nested Tracker reloads stored provider settings such as `~/.config/tracker/.env`;
+Tracker's default tool environment filters environment-only API keys. Configure
+stored credentials before running the board. The runner does not change that policy.
+The outer tool allows seven days; parent token/cost limits and summaries do not
+aggregate child processes. Review each child run's usage separately.
+
+For a standalone one-item run, `complete.dip` creates a branch named
 `kata/<short-id>-<run-id>`, even when starting on another feature branch.
 For GitHub repositories, it fetches the remote's default branch and starts
 from that commit. Existing local branches and commits remain intact. For
 repositories without GitHub, the task branch starts from current HEAD.
 An empty queue leaves the current branch unchanged.
-The run never claims a second issue, including when a competing agent wins
+Each one-item run never claims a second issue, including when a competing agent wins
 the claim. Candidate filtering happens before that single claim attempt.
 The pipeline recognizes GitHub.com SSH and HTTPS remotes. It prefers a GitHub
 `origin`; otherwise it requires exactly one GitHub remote. It verifies remote
@@ -144,6 +183,9 @@ kata/GitHub response fixtures and real Git repositories, including pushes to
 temporary bare remotes; the preflight smoke test
 runs the actual tracker binary. Closure guards reject stale or missing
 approvals, missing evidence, and changes to the task branch or workspace.
+Board orchestration tests also run real Tracker child processes and local Git
+commits, using tool-only child workflows and fixture Kata records without models
+or live GitHub publication. Stack-base tests verify the fetched predecessor SHA.
 These checks do not prove that a model can solve an arbitrary issue. A live
 run needs a real, initialized target repository and working provider credentials.
 
