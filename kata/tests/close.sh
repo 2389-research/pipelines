@@ -16,7 +16,7 @@ git -C "$repo" commit -qm 'test: seed closure repository'
 base=$(git -C "$repo" rev-parse HEAD)
 mkdir -p "$run_dir"
 jq -n --arg workspace "$repo" --arg base "$base" \
-  '{workspace:$workspace,base_commit:$base,branch:"kata/close",issue_uid:"unused",actor:"unused"}' \
+  '{workspace:$workspace,base_commit:$base,branch:"kata/close",issue_uid:"unused",actor:"unused",github:null}' \
   >"$run_dir/selected.json"
 reject() {
   if TRACKER_RUN_DIR="$run_dir" TRACKER_WORKDIR="$repo" \

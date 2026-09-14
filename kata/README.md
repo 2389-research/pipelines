@@ -20,7 +20,7 @@ The worker and repair agent also use `glm-5.3`. All six agent nodes use
 tracker's `openai-compat` provider through Lunaroute. The adapter does not
 forward `reasoning_effort`; reasoning behavior follows the gateway defaults.
 
-Both must approve closure. Rejected work gets at most one repair pass and
+Both must approve publication and closure. Rejected work gets at most one repair pass and
 another review. Unfinished work stays open with a `needs-review` handoff.
 The pipeline does not depend on locally installed agent skills.
 
@@ -43,7 +43,8 @@ Configure `OPENAI_COMPAT_API_KEY` with your Lunaroute API key and
 `OPENAI_COMPAT_BASE_URL` with `https://gw.lunaroute.com/v1`. Tracker accepts
 these from your environment or `~/.config/tracker/.env`; `tracker setup`
 can configure them. Existing Lunaroute settings can be reused.
-You also need `kata`, `git`, and `jq` on PATH.
+You also need `kata`, `git`, and `jq` on PATH. GitHub repositories additionally
+need an authenticated `gh` CLI and permission to push a branch and open a PR.
 
 Use the validated toolchain: tracker **v0.73.1** with Dippin **v0.72.0**.
 Dippin **v0.68.0** lacks `openai-compat` lint support and fails `kata/check`
@@ -57,12 +58,24 @@ tracker --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 ```
 
 Run once per item. When work is ready, the pipeline creates a branch named
-`kata/<short-id>-<run-id>` from `main`, `master`, or `trunk`. It keeps any
-existing non-default branch. An empty queue leaves the current branch unchanged.
+`kata/<short-id>-<run-id>`, even when starting on another feature branch.
+For GitHub repositories, it fetches the remote's default branch and starts
+from that commit. Existing local branches and commits remain intact. For
+repositories without GitHub, the task branch starts from current HEAD.
+An empty queue leaves the current branch unchanged.
 The run never claims a second issue, including when a competing agent wins
 the claim. Candidate filtering happens before that single claim attempt.
-The workflow does not push or merge; review the resulting
-branch before integrating it.
+The pipeline recognizes GitHub.com SSH and HTTPS remotes. It prefers a GitHub
+`origin`; otherwise it requires exactly one GitHub remote. It verifies remote
+and authentication setup before claiming and records the repository and PR base.
+
+After both reviews approve the same commit, the final tool step pushes that
+commit to the task branch and opens a PR with the completion summary and
+verification evidence. A retry reuses a matching open PR. The URL is saved in
+`pr-url.txt` under the run directory and included in the kata closure message.
+Only then does the pipeline close the kata. Push or PR failures leave it open
+with a handoff. It never force-pushes or merges. Repositories without GitHub
+finish with the local commit and kata closure.
 
 Runtime artifacts live under `.tracker`. The preflight adds only `/.tracker/`
 to `.git/info/exclude`; it does not edit the repository's `.gitignore`. Unrelated
@@ -88,6 +101,11 @@ tracker -r "<run-id>" --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 The saved checkpoint preserves the completed claim step; resume keeps the
 selected issue and run actor instead of claiming another item. Resume continues
 at the checkpoint's current node; it does not automatically retry a failed worker.
+
+Runs claimed before GitHub publication was added lack the saved `github` setting.
+Closure stops with a recovery error for these runs. Inspect the existing branch,
+claim, and review evidence before recovering it; starting another run would leave
+the original claim behind.
 
 If `Implement` exhausted its turns and the run reached `Handoff`, stop tracker
 and prepare an implementation retry from the target repository:
@@ -122,7 +140,8 @@ With the matching tools plus ShellCheck available:
 ```
 
 Graph simulation checks routing without making model calls. Unit tests use
-kata response fixtures and real Git repositories; the preflight smoke test
+kata/GitHub response fixtures and real Git repositories, including pushes to
+temporary bare remotes; the preflight smoke test
 runs the actual tracker binary. Closure guards reject stale or missing
 approvals, missing evidence, and changes to the task branch or workspace.
 These checks do not prove that a model can solve an arbitrary issue. A live

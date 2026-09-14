@@ -14,9 +14,10 @@ handoff and return `STATUS: fail`; do not expand the task to those other items.
 
 Confirm the current branch matches the saved `branch`; stop with a handoff if it does not.
 Keep this branch even when issue text or a shared plan suggests creating another branch.
-The pipeline closes the issue after review; integration is left to the operator. Extract
-this item's requirements from those documents without executing their claim, close,
-branch-switch, push, or merge steps.
+After both reviews approve, the pipeline pushes this branch and opens a PR when GitHub
+is configured, then closes the issue. Merging remains the operator's job. Extract this
+item's requirements from those documents without executing their claim, close,
+branch-switch, push, or merge steps yourself.
 
 On resume, inspect the current diff against `base_commit`, including untracked files,
 and this run's existing plan, handoff, and verification evidence. Continue the selected

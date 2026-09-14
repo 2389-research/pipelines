@@ -12,7 +12,7 @@ workflow CompleteOneKata
   tool ClaimNext
     label: "Guard workspace and claim one kata"
     marker_grep: "^(claim-ok|queue-empty)"
-    timeout: 30s
+    timeout: 5m
     command_file: scripts/claim-next.sh
 
   agent Implement
@@ -98,9 +98,9 @@ workflow CompleteOneKata
     command_file: scripts/check-approvals.sh
 
   tool CloseSelected
-    label: "Close the approved selected kata with evidence"
+    label: "Publish the approved task and close the kata"
     marker_grep: "^close-ok$"
-    timeout: 30s
+    timeout: 5m
     command_file: scripts/close-selected.sh
 
   tool Handoff

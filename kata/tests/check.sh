@@ -145,10 +145,16 @@ test_dirty_work_and_existing_branch() {
   repo=$TMP_ROOT/existing-branch
   new_repo "$repo"
   git -C "$repo" switch -qc feat/already-here
+  printf 'existing work\n' >"$repo/feature.txt"
+  git -C "$repo" add feature.txt
+  git -C "$repo" commit -qm feature
+  old_head=$(git -C "$repo" rev-parse HEAD)
   output=$(FAKE_KATA_MODE=ready run_preflight "$repo")
   assert_contains "$output" 'claim-ok'
-  [ "$(git -C "$repo" branch --show-current)" = 'feat/already-here' ] || fail 'existing task branch changed'
-  pass 'preflight reports all dirty paths and preserves an existing task branch'
+  [ "$(git -C "$repo" branch --show-current)" = 'kata/5fav-test' ] || fail 'existing feature branch reused for a fresh run'
+  [ "$(git -C "$repo" rev-parse feat/already-here)" = "$old_head" ] || fail 'existing feature commit changed'
+  jq -e --arg base "$old_head" '.base_commit == $base and has("github") and .github == null' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'non-GitHub base and publication decision not saved'
+  pass 'preflight reports dirty paths and creates a fresh branch while retaining existing work'
 }
 
 test_approvals_bind_current_commit_and_workspace() {

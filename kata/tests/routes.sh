@@ -22,8 +22,9 @@ scenario 0 1 0
 scenario 1 1 0 --scenario CheckApprovals.outcome=fail
 scenario 1 0 1 --scenario CheckApprovals.outcome=fail --scenario ReCheckApprovals.outcome=fail
 scenario 0 0 1 --scenario Implement.outcome=fail
+scenario 0 1 1 --scenario CloseSelected.outcome=fail
 dippin simulate "$pipeline_dir/complete.dip" --scenario ClaimNext.tool_marker=queue-empty \
   >"$test_root/events" 2>"$test_root/summary"
 jq -se '[.[] | select(.event == "node_enter") | .node] == ["ClaimNext", "Exit"]' \
   "$test_root/events" >/dev/null
-printf 'ok - simulated success, repair, rejection, worker failure, and empty queue routes\n'
+printf 'ok - simulated success, repair, rejection, worker/publication failure, and empty queue routes\n'

@@ -34,3 +34,8 @@ Kata ready/next may return parent epics with open children: parent links do
 not count as blocking predecessors. Filter ready results by child_counts.open
 before claiming. Preserve explicit priority order (unset last, received order
 for ties), and never try another claim after losing an ownership race.
+
+Doctor Biz wants a fresh branch for every claimed kata and a PR when GitHub
+is configured. GitHub tasks start from the fetched default branch; local-only
+tasks start from current HEAD. Publish only the SHA approved by both reviewers,
+reuse a matching open PR, and leave the kata open if publication fails.

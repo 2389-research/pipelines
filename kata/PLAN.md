@@ -11,9 +11,12 @@ review in parallel using fresh-eyes checks. Allow at most one repair pass
 and close with evidence only after approval. Failed work stays open with
 a needs-review handoff.
 An empty queue is a clean no-op; claim races stop without selecting again.
-Create a task branch when starting on the default branch; preserve existing
-work and never push or merge. Locally exclude tracker artifacts. Keep runtime
-state under .tracker, bind the selected full issue identity and workspace,
+Create a fresh task branch for each claimed item. For GitHub repositories,
+start from the fetched default branch and publish a PR after review, before
+closing the kata. For other repositories, start from current HEAD and finish
+locally. Preserve existing branches and never merge automatically. Locally
+exclude tracker artifacts. Keep runtime state under .tracker, bind the selected
+full issue identity and workspace,
 and require a clean target tree apart from runtime artifacts before changes. Scope containment is
 workflow discipline, not an OS security sandbox.
 
@@ -114,3 +117,23 @@ ShellCheck, and fresh-eyes review passed. A read-only check against Mux's live
 ready queue skipped x3hz and chose ac2b. The mistaken epic claim was released
 with an expected-owner guard after verifying no source changes or commits;
 the checkout returned to main. No replacement issue was claimed in this check.
+
+Branch and PR update (2026-09-14): every confirmed claim creates a fresh kata
+branch. GitHub repositories start from their fetched default branch; other
+repositories start from current HEAD. GitHub identity and base are saved before
+worker execution. After both reviews approve, closure pushes only that approved
+commit, creates or reuses an open PR, verifies its head and base, and records its
+URL before closing the kata. Publication failures leave the claim open with a
+handoff. Setup and publication each allow five minutes for network operations.
+Saved runs without publication metadata require inspection and recovery.
+
+Regression tests reproduced feature-branch reuse, the wrong base, implicit
+GitHub host selection, and publication failures. Independent review also found
+inconsistent slash-containing remote names and unintended annotated-tag pushes.
+The tests use real temporary Git repositories with GitHub/Kata CLI fixtures;
+they do not claim live GitHub end-to-end coverage. No practice issue or PR was
+created. A live kata-to-PR run remains the next validation layer.
+Final `./kata/check` and `git diff --check` passed, including graph validation,
+ShellCheck, real tracker preflight, setup, publication, and recovery tests.
+Fresh-eyes review is complete; both remote-name and tag-scope findings are fixed.
+Removing the tag guard in an isolated copy reproduces its regression failure.
