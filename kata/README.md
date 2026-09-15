@@ -57,11 +57,18 @@ cd /path/to/target-repo
 tracker --workdir "$PWD" /path/to/pipelines/kata/complete.dip
 ```
 
-To work through the whole board, run:
+To work through the whole board, run it without the TUI:
 
 ```sh
-tracker --workdir "$PWD" /path/to/pipelines/kata/board.dip
+tracker --no-tui --workdir "$PWD" /path/to/pipelines/kata/board.dip
 ```
+
+Do not run the board in Tracker's TUI. The whole board is one long tool node, so
+the TUI shows one running node for hours. Leaving that screen with `q` or Ctrl-C
+cancels the run: Tracker 0.73.1 kills the controller and its child Tracker, then
+labels the failure `command timed out after 168h0m0s` (verified 2026-09-15).
+Both modes print nothing until the board ends; follow progress under the parent
+run's `board/` directory as described below.
 
 The board runner calls this same `complete.dip` once per item, with separate
 Tracker run IDs, claims, reviews, and checkpoints. It runs sequentially. After
@@ -81,7 +88,11 @@ The parent run's `board/state.json` records child IDs, commits, and PR URLs.
 Each child's console output is under `board/items/<attempt>/child.log`; full
 artifacts remain in the target repository's `.tracker/runs/<child-id>`.
 Inspect and recover a failed child using the one-item recovery guidance below,
-then resume the parent with `tracker -r <board-run-id> /path/to/kata/board.dip`.
+then resume the parent with
+`tracker --no-tui -r <board-run-id> /path/to/kata/board.dip`.
+A child killed with its parent (a closed TUI or Ctrl-C) still owns its kata as
+`kata-pipeline-<child-id>`. Resume that child from the target repository with
+`tracker -r <child-id> /path/to/kata/complete.dip` before resuming the board.
 The controller verifies the existing child's successful completion before
 advancing, so resuming the parent does not silently claim a replacement item.
 An incomplete board can be resumed after its blockers or ownership are resolved.

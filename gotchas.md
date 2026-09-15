@@ -45,3 +45,12 @@ to the operator. Each kata uses the previous approved task as its base. Tracker
 0.73.1 native subgraphs share run identity/artifacts, so board.dip calls separate
 complete.dip CLI runs and records their IDs. Resume resolves the current child
 before another claim. No ready work with open items remaining means incomplete.
+
+Tracker 0.73.1 treats any TUI exit as a run cancel. Pressing `q` or Ctrl-C in
+the TUI cancels the pipeline context, SIGKILLs the running tool's process group
+(for board.dip: the controller and its child tracker), and reports the failure
+as `command timed out after <node timeout>` because translateExecError labels
+every ctx.Err() a timeout. Run board.dip with `--no-tui`. A killed child keeps
+its kata claim, so resume the child before the board. Verified 2026-09-15 under
+tmux with a sleeping nested child: `q` and Ctrl-C both reproduced the exact
+board failure; the same runs left alone completed with the TUI on or off.
