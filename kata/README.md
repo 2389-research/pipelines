@@ -216,7 +216,8 @@ For each kata that needs a decision, read the question and answer it:
 
 For each kata that needs review, diff the WIP branch against its base commit
 and read the review records under the child run directory
-(`.tracker/runs/<child-id>/Review*/status.json` and `ReReview*/status.json`).
+(`.tracker/runs/<child-id>/Review*/status.json` and
+`.tracker/runs/<child-id>/ReReview*/status.json`).
 Either finish and close it by hand, or answer with guidance so the next run
 can finish it. Merge the PR stack oldest first. Then run the board again in
 the evening with the same command as before.

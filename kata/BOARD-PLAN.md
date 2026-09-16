@@ -15,8 +15,10 @@ the next child. First items retain the normal default-branch base. Later items
 fetch and verify the previous task branch, use it as their PR base, and retain
 the existing reviews and closure gates. No automatic merges or force pushes.
 
-The board stops on the first failed child. Recovery reconciles an existing child
-before starting another, including completion after a manual child resume.
+A failed child hands its kata off for review and the board claims the next one;
+three consecutive failed children, or a failure that leaves the handoff record,
+checkout, tree, or kata unclean, stop the board. Recovery reconciles an existing
+child before starting another, including completion after a manual child resume.
 No eligible item triggers a full open-board check: zero open items means success;
 remaining owned/blocked items mean an explicit incomplete-board report. A resumed
 blocked board may query again. No source changes or claims for other repositories.
