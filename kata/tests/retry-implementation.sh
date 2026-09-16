@@ -2,7 +2,7 @@
 # ABOUTME: Exercises turn-limit checkpoint recovery using disposable real Git repositories.
 # ABOUTME: Stubs only the read-only kata and process boundaries; never contacts the daemon.
 set -eu
-pipeline_dir=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+pipeline_dir=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 repo="$test_root/target repo"

@@ -54,3 +54,12 @@ every ctx.Err() a timeout. Run board.dip with `--no-tui`. A killed child keeps
 its kata claim, so resume the child before the board. Verified 2026-09-15 under
 tmux with a sleeping nested child: `q` and Ctrl-C both reproduced the exact
 board failure; the same runs left alone completed with the TUI on or off.
+
+kata scripts resolve every path physically (`pwd -P`), so a test that compares
+a path against script output must resolve its own path the same way. On this
+machine `~/workspace` is a symlink to `~/Public/src`, and the agent shell's cwd
+is the symlinked form: `kata/tests/retry-implementation.sh` computed its
+pipeline_dir with logical `pwd`, grepped that path in the resume hint, missed,
+and `set -e` exited 1 with no message, so `kata/check` went red silently. The
+same test passed when invoked by its physical path. Fixed with `pwd -P` on
+2026-09-15.
