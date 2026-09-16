@@ -26,6 +26,8 @@ owner=$(cat "$fixture/owner")
 case "$verb" in
   show)
     [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 92
+    case "$1" in demo#5fav|01ARZ3NDEKTSV4RRFFQ69G5FAV) ;; *) exit 92 ;; esac
+    [ ! -e "$fixture/show-fails-after-release" ] || [ -n "$owner" ] || { printf 'daemon unreachable\n' >&2; exit 1; }
     jq -n --arg status "$(cat "$fixture/status")" --arg owner "$owner" \
       '{issue:{uid:"01ARZ3NDEKTSV4RRFFQ69G5FAV",qualified_id:"demo#5fav",status:$status,owner:(if $owner == "" then null else $owner end)}}'
     ;;
@@ -38,6 +40,7 @@ case "$verb" in
     ;;
   list)
     [ "$*" = '--status open --limit 0 --json' ] || exit 94
+    [ ! -e "$fixture/list-fails" ] || { printf 'daemon unreachable\n' >&2; exit 1; }
     printf '%s\n' '{"issues":[{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAV","qualified_id":"demo#5fav","status":"open","labels":["needs-decision","task"]}]}'
     ;;
   *) exit 95 ;;
@@ -61,7 +64,7 @@ fail() {
 reset_fixture() {
   printf '%s\n' "$1" >"$fixture/status"
   printf '%s' "$2" >"$fixture/owner"
-  rm -f "$fixture/kata.log" "$fixture/comment"
+  rm -f "$fixture/kata.log" "$fixture/comment" "$fixture/show-fails-after-release" "$fixture/list-fails"
 }
 
 run_answer() {
@@ -96,6 +99,21 @@ grep -Fx 'unassign 01ARZ3NDEKTSV4RRFFQ69G5FAV --expect-owner kata-pipeline-abc -
 grep -Fx 'Owner: nobody' "$test_root/output" >/dev/null || fail 'owner line is missing'
 grep -Fx 'Labels: needs-decision,task' "$test_root/output" >/dev/null || fail 'labels line is missing'
 printf 'ok - answer comments the reply, releases the pipeline claim, and reports owner and labels\n'
+
+reset_fixture open kata-pipeline-abc
+: >"$fixture/show-fails-after-release"
+run_answer demo#5fav 'Ship it'
+[ "$status" -ne 0 ] || fail 'answer exited 0 although the post-release show failed'
+grep -F 'daemon unreachable' "$test_root/output" >/dev/null || fail 'post-release show failure is not reported'
+if grep -F 'Owner:' "$test_root/output" >/dev/null; then fail 'owner line was printed after a failed show'; fi
+grep -F 'unassign' "$fixture/kata.log" >/dev/null || fail 'claim was not released before the failed show'
+reset_fixture open kata-pipeline-abc
+: >"$fixture/list-fails"
+run_answer demo#5fav 'Ship it'
+[ "$status" -ne 0 ] || fail 'answer exited 0 although the post-release list failed'
+grep -F 'daemon unreachable' "$test_root/output" >/dev/null || fail 'post-release list failure is not reported'
+if grep -F 'Labels:' "$test_root/output" >/dev/null; then fail 'labels line was printed after a failed list'; fi
+printf 'ok - answer fails loudly when the post-release show or list fails\n'
 
 run_answer --help
 [ "$status" -eq 0 ] || fail "--help exited $status"

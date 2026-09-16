@@ -29,6 +29,10 @@ case "$owner" in
   *) printf '%s is owned by %s, not a pipeline actor; refusing to take a claim\n' "$ref" "$owner" >&2; exit 1 ;;
 esac
 kata unassign --workspace "$workspace" "$uid" --expect-owner "$owner" --comment "$text" --json >/dev/null
-printf 'Owner: %s\n' "$(kata show --workspace "$workspace" "$uid" --json | jq -r '.issue.owner // "nobody"')"
-printf 'Labels: %s\n' "$(kata list --workspace "$workspace" --status open --limit 0 --json |
-  jq -r --arg uid "$uid" '[.issues[] | select(.uid == $uid) | (.labels // [])[]] | if length == 0 then "none" else join(",") end')"
+released=$(kata show --workspace "$workspace" "$uid" --json)
+open_issues=$(kata list --workspace "$workspace" --status open --limit 0 --json)
+owner=$(printf '%s' "$released" | jq -r '.issue.owner // "nobody"')
+labels=$(printf '%s' "$open_issues" |
+  jq -r --arg uid "$uid" '[.issues[] | select(.uid == $uid) | (.labels // [])[]] | if length == 0 then "none" else join(",") end')
+printf 'Owner: %s\n' "$owner"
+printf 'Labels: %s\n' "$labels"
