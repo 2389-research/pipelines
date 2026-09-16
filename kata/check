@@ -29,6 +29,7 @@ if grep -F 'warning: unresolved condition variable' "$tracker_log" >/dev/null; t
 fi
 "$KATA_DIR/tests/routes.sh"
 sh "$KATA_DIR/tests/continue.sh"
+sh "$KATA_DIR/tests/handoff.sh"
 "$KATA_DIR/tests/check.sh"
 sh "$KATA_DIR/tests/github-setup.sh"
 "$KATA_DIR/tests/approvals.sh"
