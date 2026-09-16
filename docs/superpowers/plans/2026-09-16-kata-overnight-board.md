@@ -10,6 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-16-kata-overnight-board-design.md`
 
+## Status
+
+- 2026-09-16: plan written and committed; no task started. The planning session was compacted seven times, so execution starts in a fresh session.
+- Next step: Task 1 (`ContinueImplement`) with superpowers:subagent-driven-development, one task per subagent, in plan order.
+
 ## Global Constraints
 
 - Toolchain floors: tracker **v0.73.1**, Dippin **v0.72.0**, kata **v0.17.2** or newer, `jq`, `git`, ShellCheck. Verify with `tracker --version`, `dippin --version`, `kata --version` before starting.
