@@ -270,6 +270,9 @@ SH
   chmod +x "$test_root/bin/git"
   must_stop "$1"
   rm "$test_root/bin/git"
+  jq -e '.stop_reason == "git status failed; inspect the checkout"' "$ledger" >/dev/null
+  grep -Fx 'git status failed; inspect the checkout' "$test_root/output" >/dev/null
+  must_not_report "$1"
 }
 
 # An integrity stop leaves the ledger mid-inspection, so it prints the recovery message, not the review.

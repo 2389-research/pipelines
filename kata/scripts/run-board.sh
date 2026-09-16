@@ -92,7 +92,7 @@ record_failure() {
   reason=$(jq -r '.reason' "$handoff")
   [ "$reason" != unexpected_checkout ] || stop_child
   [ "$(git symbolic-ref --quiet --short HEAD)" = "$(jq -r '.start_branch' "$handoff")" ] || stop_child
-  dirty=$(git status --porcelain --untracked-files=normal)
+  dirty=$(git status --porcelain --untracked-files=normal) || stop_board 'git status failed; inspect the checkout'
   [ -z "$dirty" ] || stop_child
   if [ -n "$KATA_STACK_BASE_FILE" ]; then
     [ "$(git rev-parse HEAD)" = "$(jq -r '.commit' "$KATA_STACK_BASE_FILE")" ] || stop_child
@@ -170,7 +170,7 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     branch=$(jq -er '.branch' "$selected")
     head=$(git rev-parse HEAD)
     [ "$(git symbolic-ref --quiet --short HEAD)" = "$branch" ] || stop_child
-    dirty=$(git status --porcelain --untracked-files=normal)
+    dirty=$(git status --porcelain --untracked-files=normal) || stop_board 'git status failed; inspect the checkout'
     [ -z "$dirty" ] || stop_child
     for approval in review-correctness.approved review-scope.approved; do
       [ "$(sed -n '1p' "$child/$approval" 2>/dev/null || true)" = "$head" ] || stop_child
