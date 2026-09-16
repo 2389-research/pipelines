@@ -115,6 +115,14 @@ grep -Fx '  demo#bq4e  turn limit reached twice; branch kata/bq4e-b1b1b1b1b1b1 (
 grep -Fx 'Remaining open (3)' "$test_root/output" >/dev/null || fail 'older: remaining count is wrong'
 printf 'ok - a named stopped run reports its stop reason\n'
 
+ledger nullreason '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":false,"runs":[
+  {"run_id":"a1a1a1a1a1a1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a1a1a1a1a1a1","reason":null,"label":"needs-review"}]}'
+handoff a1a1a1a1a1a1 '{"run_id":"a1a1a1a1a1a1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":null,"label":"needs-review","branch":"kata/bq4e-a1a1a1a1a1a1","base_commit":"'"$base"'","wip_commit":null,"start_branch":"main","question":null}'
+(cd "$repo" && "$report" nullreason) >"$test_root/output" 2>&1 || fail 'report failed for a handoff without a reason'
+grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null || fail 'null reason: the review group is missing'
+grep -F '  demo#bq4e  ' "$test_root/output" >/dev/null || fail 'null reason: the kata is not named'
+printf 'ok - a handoff record without a reason still reports its kata\n'
+
 status=0
 (cd "$repo" && "$report" missing) >"$test_root/output" 2>&1 || status=$?
 [ "$status" -eq 1 ] || fail "missing run exited $status, expected 1"

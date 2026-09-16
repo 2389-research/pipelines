@@ -103,7 +103,7 @@ jq -r '
   def reason_text: . as $reason |
     {decision:"needs a decision", publish:"publication failed", review:"review rejected",
      turn_limit:"turn limit reached twice", implement:"worker stopped",
-     unexpected_checkout:"handoff found the wrong branch"} | .[$reason] // $reason;
+     unexpected_checkout:"handoff found the wrong branch"} | .[$reason]? // $reason;
   def short: if . == null then "none" else .[0:8] end;
   def next_lines: .next[] | "      \(.)";
   "Board \(.board_run_id) in \(.workspace): \(if .stop_reason != null then "stopped" elif .finished then "finished" else "in progress" end)",
