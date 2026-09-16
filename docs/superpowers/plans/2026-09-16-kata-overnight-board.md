@@ -13,7 +13,12 @@
 ## Status
 
 - 2026-09-16: plan written and committed; no task started. The planning session was compacted seven times, so execution starts in a fresh session.
-- Next step: Task 1 (`ContinueImplement`) with superpowers:subagent-driven-development, one task per subagent, in plan order.
+- 2026-09-16: Tasks 1-10 executed with superpowers:subagent-driven-development in one session (compacted once). `feat/kata-pipeline` carries 18 commits since 0e0b2fa: the nine planned commits, four task-review fixes, and a five-commit final fix wave (26ffcc0..7da253e). `./kata/check` is green at 7da253e (exit 0, 55 ok lines).
+- Not done: Task 10 Step 3, the live board on a scratch repository. It needs a scratch repository with kata initialized, two small katas, and Lunaroute credentials; run `kata/board.dip` without the TUI as the README describes, then `kata/board-report`.
+- Open policy call: a failed WIP commit or `git switch` inside the handoff stops the board with "needs inspection" instead of finishing the handoff. Options: `--no-verify` for the WIP commit only, a plumbing commit, or accept early stops on hook-heavy repositories.
+- Deferred minors (real, none loses work or claims wrongly): label loop tested with one combination; whitespace-only question.md accepted; jq probes hide malformed status files; tests inherit global git config (`core.hooksPath` unpinned); no failing `label add` case; report.sh lacks negative cases (hex branch, missing runs, in-progress header); record_failure's stack-base and ownership guards, missing-vs-malformed handoff.json, and five `stop_board` sites are untested; claim-next.sh has a `label rm` failure window after a claim; board-report and answer swallow a `git rev-parse` failure; run-id length checks differ between board-report and run-board; a failed kata comment leaves the label added; seven pre-existing tests use logical `pwd`.
+- Tracker/kata items flagged, not patched: a TUI exit is reported as a 168h timeout; static validation warns on unset runtime context for complete.dip; dippin prints a DIP125 hint at ContinueImplement; `kata label add` idempotence and the labels shape of `kata ready --json` are unverified.
+- Next step: run the live board (Step 3) on the scratch repository, decide the WIP-commit policy, then merge via PR.
 
 ## Global Constraints
 
