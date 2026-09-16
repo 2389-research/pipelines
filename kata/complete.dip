@@ -103,6 +103,11 @@ workflow CompleteOneKata
     timeout: 5m
     command_file: scripts/close-selected.sh
 
+  tool ContinueImplement
+    label: "Grant one warm continue after a steady turn-limit breach"
+    timeout: 10s
+    command_file: scripts/continue-implement.sh
+
   tool Handoff
     label: "Leave failed work open for review"
     timeout: 30s
@@ -117,8 +122,11 @@ workflow CompleteOneKata
   edges
     ClaimNext -> Implement  on claim-ok
     ClaimNext -> Exit  on queue-empty
-    Implement -> ReviewFreshEyes  on success
-    Implement -> Handoff  on fail
+    Implement -> ReviewFreshEyes  when ctx.outcome = success
+    Implement -> ContinueImplement  when ctx.turn_breach_class = operator_decision
+    Implement -> Handoff  when ctx.outcome = fail
+    ContinueImplement -> Implement  when ctx.outcome = success  restart: true
+    ContinueImplement -> Handoff  when ctx.outcome = fail
     ReviewFreshEyes -> ReviewsApproved  when ctx.outcome = success
     ReviewFreshEyes -> Repair  when ctx.outcome = fail
     ReviewsApproved -> CheckApprovals
