@@ -119,4 +119,6 @@ fi
 kata close --workspace "$workspace" --as "$actor" "$uid" --done \
   --message "$completion" \
   --commit "$head" --test "$test_evidence" --json >/dev/null
+# The warm-continue override belongs to this run's worker; the next run starts from the base budget.
+rm -f "$workspace/.tracker/turn_overrides/Implement"
 printf 'close-ok\n'

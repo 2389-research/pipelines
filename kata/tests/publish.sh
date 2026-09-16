@@ -117,7 +117,10 @@ not_pushed() {
  fi
 }
 new_case publish
+mkdir -p "$repo/.tracker/turn_overrides"
+printf '450\n' >"$repo/.tracker/turn_overrides/Implement"
 run_close || { cat "$case_dir/output" >&2; exit 1; }
+[ ! -e "$repo/.tracker/turn_overrides/Implement" ] || { printf 'FAIL: closure kept the turn override\n' >&2; exit 1; }
 [ "$(git --git-dir="$bare" rev-parse refs/heads/kata/publish 2>/dev/null)" = "$TEST_HEAD" ] || { printf 'FAIL: approved commit was not published\n' >&2; exit 1; }
 [ "$(cat "$run_dir/pr-url.txt")" = https://github.com/owner/project/pull/42 ]
 grep -F 'https://github.com/owner/project/pull/42' "$TEST_CLOSE" >/dev/null
