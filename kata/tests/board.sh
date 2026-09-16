@@ -47,7 +47,9 @@ case "$verb" in
     ;;
   list)
     [ "$*" = '--status open --limit 0 --json' ] || exit 93
-    if [ -f "$fixture/blocked" ]; then
+    if [ -f "$fixture/broken-list" ]; then
+      printf '%s\n' '{"issues":"every open kata"}'
+    elif [ -f "$fixture/blocked" ]; then
       printf '%s\n' '{"issues":[{"uid":"blocked-item","qualified_id":"blocked-item","status":"open","owner":"another-actor","labels":null}]}'
     else
       printf '%s\n' '{"issues":[]}'
@@ -66,6 +68,8 @@ esac
 SH
 chmod +x "$test_root/bin/kata"
 export PATH="$test_root/bin:$PATH"
+# Captured before any Git fixture joins PATH, for the case that fails a single git status.
+real_git=$(command -v git)
 cat >"$test_root/workflow/complete.dip" <<'DIP'
 # ABOUTME: Exercises board child identity, fail-forward handoffs, and artifacts without model nodes.
 # ABOUTME: Performs real local commits and records a disposable issue lifecycle.
@@ -157,12 +161,23 @@ SH
 cat >"$test_root/workflow/implement.sh" <<'SH'
 #!/bin/sh
 # ABOUTME: Stands in for the worker: succeeds unless the fixture lists this attempt as a failure.
-# ABOUTME: A failing attempt leaves uncommitted work behind for the real handoff to commit.
+# ABOUTME: A failing attempt leaves uncommitted work behind, or wanders off the task branch.
 set -eu
 cd "$TRACKER_WORKDIR"
 fixture="$TRACKER_WORKDIR/.tracker/board-fixture"
 number=$(wc -l <"$fixture/claims" | tr -d ' ')
+if [ -f "$fixture/leave-branch" ] && grep -qx "$number" "$fixture/leave-branch"; then
+  # The worker wandered back to the branch it started on, so the handoff touches no Git state.
+  start_branch=$(jq -r '.start_branch' "$TRACKER_RUN_DIR/selected.json")
+  git switch -q "$start_branch"
+  remaining=$(cat "$fixture/remaining")
+  printf '%s\n' "$((remaining - 1))" >"$fixture/remaining"
+  printf 'deliberate fixture worker failure off the task branch\n' >&2
+  exit 35
+fi
 if [ -f "$fixture/fail-implement" ] && grep -qx "$number" "$fixture/fail-implement"; then
+  # A kata released behind the pipeline's back: the board must refuse to record the failure.
+  [ ! -f "$fixture/lose-owner" ] || rm -f "$fixture/fixture-item-$number.owner"
   printf 'partial work %s\n' "$number" >"wip-$number.txt"
   remaining=$(cat "$fixture/remaining")
   printf '%s\n' "$((remaining - 1))" >"$fixture/remaining"
@@ -238,6 +253,30 @@ must_succeed() {
 must_stop() {
   if run_board; then
     printf 'FAIL: board accepted %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+# A git status the board could not run is not a clean tree. Only that one command fails.
+must_stop_without_git_status() {
+  cat >"$test_root/bin/git" <<SH
+#!/bin/sh
+# ABOUTME: Fails every git status so a broken status cannot pass for a clean tree.
+# ABOUTME: Hands every other Git command to the real binary unchanged.
+set -eu
+[ "\${1:-}" != status ] || { printf 'fixture git status failure\n' >&2; exit 128; }
+exec $real_git "\$@"
+SH
+  chmod +x "$test_root/bin/git"
+  must_stop "$1"
+  rm "$test_root/bin/git"
+}
+
+# An integrity stop leaves the ledger mid-inspection, so it prints the recovery message, not the review.
+must_not_report() {
+  if grep -F "Board $TRACKER_RUN_ID in" "$test_root/output" >/dev/null; then
+    printf 'FAIL: the morning review was printed after %s\n' "$1" >&2
+    cat "$test_root/output" >&2
     exit 1
   fi
 }
@@ -390,6 +429,7 @@ cp "$test_root/scope.approved" "$child_dir/review-scope.approved"
 printf 'unfinished work\n' >"$repo/uncommitted.txt"
 must_stop 'dirty tree after child recovery'
 rm "$repo/uncommitted.txt"
+must_stop_without_git_status 'a tree it could not read after child recovery'
 git -C "$repo" switch -q main
 must_stop 'changed branch after child recovery'
 git -C "$repo" switch -q kata/item-1
@@ -411,6 +451,70 @@ jq -e --arg child "$failed_child" \
 must_succeed 'completed recovered parent resume'
 [ "$(claim_count)" -eq 2 ]
 printf 'ok - an integrity stop halts claims; a real child resume reconciles once without duplicate work\n'
+
+new_case unexpected-checkout 1
+printf '1\n' >"$fixture/leave-branch"
+must_stop 'a handoff from a worker that left the task branch'
+[ "$(claim_count)" -eq 1 ]
+failed_child=$(head -n 1 "$fixture/claims")
+jq -e --arg child "$failed_child" '.finished == false and .runs == [] and
+  .stop_reason == "child \($child) needs inspection"' "$ledger" >/dev/null
+jq -e '.reason == "unexpected_checkout" and .start_branch == "main" and .wip_commit == null' \
+  "$repo/.tracker/runs/$failed_child/handoff.json" >/dev/null
+[ "$(git -C "$repo" branch --show-current)" = main ]
+grep -F "Child run $failed_child needs inspection" "$test_root/output" >/dev/null
+grep -F "tracker -r $failed_child" "$test_root/output" >/dev/null
+must_not_report 'a handoff from the wrong branch'
+printf 'ok - a handoff from the wrong branch stops the board for inspection\n'
+
+# Each guard on a failed child, tripped one at a time against the same real handoff.
+new_case handoff-guards 1
+printf '1\n' >"$fixture/fail-implement"
+: >"$fixture/lose-owner"
+must_stop 'a handed-off kata that nobody owns'
+[ "$(claim_count)" -eq 1 ]
+failed_child=$(head -n 1 "$fixture/claims")
+child_dir="$repo/.tracker/runs/$failed_child"
+jq -e --arg child "$failed_child" '.finished == false and .runs == [] and
+  .stop_reason == "child \($child) needs inspection"' "$ledger" >/dev/null
+grep -F "Child run $failed_child needs inspection" "$test_root/output" >/dev/null
+must_not_report 'a handed-off kata that nobody owns'
+printf 'kata-pipeline-%s\n' "$failed_child" >"$fixture/fixture-item-1.owner"
+cp "$child_dir/handoff.json" "$test_root/handoff.json"
+jq 'del(.label)' "$test_root/handoff.json" >"$child_dir/handoff.json"
+must_stop 'a handoff record without a label'
+cp "$test_root/handoff.json" "$child_dir/handoff.json"
+cp "$child_dir/Handoff/status.json" "$test_root/handoff-status.json"
+jq '.context_updates.tool_stdout = "handoff-maybe"' "$test_root/handoff-status.json" \
+  >"$child_dir/Handoff/status.json"
+must_stop 'a handoff that never printed its marker'
+cp "$test_root/handoff-status.json" "$child_dir/Handoff/status.json"
+git -C "$repo" switch -q kata/item-1
+must_stop 'a checkout that is not the branch the child started from'
+git -C "$repo" switch -q main
+printf 'unfinished work\n' >"$repo/uncommitted.txt"
+must_stop 'a dirty tree after a handoff'
+rm "$repo/uncommitted.txt"
+must_stop_without_git_status 'a tree it could not read after a handoff'
+[ "$(claim_count)" -eq 1 ]
+must_succeed 'the repaired handoff of a failed child'
+jq -e --arg child "$failed_child" '.finished == true and (has("stop_reason") | not) and
+  [.runs[].kind] == ["failed","empty"] and .runs[0].run_id == $child' "$ledger" >/dev/null
+[ "$(claim_count)" -eq 2 ]
+printf 'ok - a failed child is recorded only when its handoff, checkout, tree, and kata all check out\n'
+
+new_case broken-list 0
+: >"$fixture/broken-list"
+must_stop 'an open-board response that is not a list'
+jq -e '.finished == false and .runs == [] and
+  .stop_reason == "invalid open-board response"' "$ledger" >/dev/null
+grep -Fx 'invalid open-board response' "$test_root/output" >/dev/null
+must_not_report 'an invalid open-board response'
+rm "$fixture/broken-list"
+(cd "$repo" && "$pipeline_dir/board-report" "$TRACKER_RUN_ID") >"$test_root/output" 2>&1
+grep -Fx "Board $TRACKER_RUN_ID in $repo: stopped" "$test_root/output" >/dev/null
+grep -Fx 'Stop reason: invalid open-board response' "$test_root/output" >/dev/null
+printf 'ok - a board that stops outside a child records why, and the review says it stopped\n'
 
 # Invoke the actual parent workflow so nested tool environments and failure routing are real.
 new_case nested 1

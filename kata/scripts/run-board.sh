@@ -68,6 +68,12 @@ stop_child() {
   printf 'Recover the child in %s with tracker -r %s %s, then resume board %s.\n' "$workspace" "$run_id" "$pipeline" "$TRACKER_RUN_ID" >&2
   exit 1
 }
+# A stop outside a child belongs in the ledger too, so the morning review says the board stopped.
+stop_board() {
+  set_stop_reason "$1"
+  printf '%s\n' "$1" >&2
+  exit 1
+}
 append_run() {
   # $result is a jq variable bound by --argjson; ShellCheck cannot see the jq call behind write_state.
   # shellcheck disable=SC2016
@@ -82,8 +88,12 @@ record_failure() {
     "$handoff" >/dev/null 2>&1 || stop_child
   jq -e '.context_updates.tool_stdout | type == "string" and (split("\n") | any(. == "handoff-ok"))' \
     "$child/Handoff/status.json" >/dev/null 2>&1 || stop_child
+  # The worker left the task branch, so the handoff preserved and restored nothing. A human looks first.
+  reason=$(jq -r '.reason' "$handoff")
+  [ "$reason" != unexpected_checkout ] || stop_child
   [ "$(git symbolic-ref --quiet --short HEAD)" = "$(jq -r '.start_branch' "$handoff")" ] || stop_child
-  [ -z "$(git status --porcelain --untracked-files=normal)" ] || stop_child
+  dirty=$(git status --porcelain --untracked-files=normal)
+  [ -z "$dirty" ] || stop_child
   if [ -n "$KATA_STACK_BASE_FILE" ]; then
     [ "$(git rev-parse HEAD)" = "$(jq -r '.commit' "$KATA_STACK_BASE_FILE")" ] || stop_child
   fi
@@ -128,15 +138,14 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     rm "$item/child.pid"
   elif [ -f "$item/child.pid" ]; then
     pending_pid=$(cat "$item/child.pid")
-    case "$pending_pid" in ''|*[!0-9]*) printf 'invalid child PID; inspect %s\n' "$item" >&2; exit 1 ;; esac
+    case "$pending_pid" in ''|*[!0-9]*) stop_board "invalid child PID; inspect $item" ;; esac
     if kill -0 "$pending_pid" 2>/dev/null; then
-      printf 'child process %s is still running; wait before resuming the board\n' "$pending_pid" >&2
-      exit 1
+      stop_board "child process $pending_pid is still running; wait before resuming the board"
     fi
   fi
   run_id=$(jq -Rnr '[inputs | fromjson? | select(.source == "pipeline" and .type == "pipeline_started") | .run_id] | unique | if length == 1 then .[0] else empty end' <"$item/child.log")
-  case "$run_id" in ''|*[!a-f0-9]*) printf 'child identity is unknown; inspect %s before retrying\n' "$item/child.log" >&2; exit 1 ;; esac
-  [ "${#run_id}" -eq 12 ] || { printf 'invalid child run ID\n' >&2; exit 1; }
+  case "$run_id" in ''|*[!a-f0-9]*) stop_board "child identity is unknown; inspect $item/child.log before retrying" ;; esac
+  [ "${#run_id}" -eq 12 ] || stop_board 'invalid child run ID'
   child="$workspace/.tracker/runs/$run_id"
   # The child's activity log includes manual resumes; the initial CLI log does not.
   [ -f "$child/activity.jsonl" ] || stop_child
@@ -161,15 +170,15 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     branch=$(jq -er '.branch' "$selected")
     head=$(git rev-parse HEAD)
     [ "$(git symbolic-ref --quiet --short HEAD)" = "$branch" ] || stop_child
-    [ -z "$(git status --porcelain --untracked-files=normal)" ] || stop_child
+    dirty=$(git status --porcelain --untracked-files=normal)
+    [ -z "$dirty" ] || stop_child
     for approval in review-correctness.approved review-scope.approved; do
       [ "$(sed -n '1p' "$child/$approval" 2>/dev/null || true)" = "$head" ] || stop_child
     done
     issue=$(kata show --workspace "$workspace" "$uid" --json)
     printf '%s' "$issue" | jq -e --arg uid "$uid" '.issue.uid == $uid and .issue.status == "closed"' >/dev/null || stop_child
     if jq -e --arg uid "$uid" 'any(.runs[]; .kind == "completed" and .issue_uid == $uid)' "$state" >/dev/null; then
-      printf 'child repeated an already completed kata: %s\n' "$uid" >&2
-      exit 1
+      stop_board "child repeated an already completed kata: $uid"
     fi
     pr_url=
     if jq -e '.github != null' "$selected" >/dev/null; then
@@ -184,7 +193,7 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     jq -e '.outcome == "success" and .context_updates.tool_marker == "queue-empty"' \
       "$child/ClaimNext/status.json" >/dev/null 2>&1 || stop_child
     open=$(kata list --workspace "$workspace" --status open --limit 0 --json)
-    printf '%s' "$open" | jq -e '.issues | type == "array"' >/dev/null || { printf 'invalid open-board response\n' >&2; exit 1; }
+    printf '%s' "$open" | jq -e '.issues | type == "array"' >/dev/null || stop_board 'invalid open-board response'
     # Katas this board handed off stay open on purpose; only untouched ones count as remaining.
     remaining=$(printf '%s' "$open" | jq --slurpfile state "$state" \
       '[.issues[] | select(.uid as $uid | any($state[0].runs[]; .issue_uid == $uid) | not)] | length')
