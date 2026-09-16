@@ -110,7 +110,7 @@ workflow CompleteOneKata
 
   tool Handoff
     label: "Leave failed work open for review"
-    timeout: 30s
+    timeout: 5m
     command_file: scripts/handoff-selected.sh
 
   tool Exit
