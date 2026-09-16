@@ -99,7 +99,9 @@ finishes; the report lists those katas under `Remaining open`. It never takes
 another actor's claim. Parents become eligible as their children close. The
 runner rechecks the live board after each child, so newly added eligible work
 is included. The controller exits 0 at the end of the queue and 1 on every
-early stop, and it prints the morning review either way.
+early stop. It prints the morning review at the end of the queue and after
+three consecutive failures. An inspection stop prints recovery instructions
+instead of the review.
 
 The parent run's `board/state.json` records every child: `completed` entries
 carry the commit and PR URL, `failed` entries carry the branch, reason, and
