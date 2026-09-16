@@ -43,7 +43,8 @@ if [ "$current_branch" = "$branch" ]; then
       reason=turn_limit
     fi
   fi
-  if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+  dirty=$(git status --porcelain --untracked-files=normal)
+  if [ -n "$dirty" ]; then
     git add -A
     git commit -q -m "wip(kata): $qualified_id handoff from run $run_id"
     wip_commit=$(git rev-parse HEAD)

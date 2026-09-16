@@ -9,6 +9,7 @@ test_root=$(mktemp -d)
 test_root=$(cd "$test_root" && pwd -P)
 trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 command -v jq >/dev/null
+real_git=$(command -v git)
 
 mkdir -p "$test_root/bin"
 cat >"$test_root/bin/kata" <<'SH'
@@ -70,7 +71,8 @@ new_repo() {
 }
 
 handoff() {
-  if (cd "$repo" && TRACKER_RUN_DIR="$run_dir" TRACKER_RUN_ID=test TRACKER_WORKDIR="$repo" sh "$script") \
+  extra_path=${2:-}
+  if (cd "$repo" && PATH="${extra_path:+$extra_path:}$PATH" TRACKER_RUN_DIR="$run_dir" TRACKER_RUN_ID=test TRACKER_WORKDIR="$repo" sh "$script") \
     >"$test_root/output" 2>&1; then
     fail "$1: handoff exited zero"
   fi
@@ -179,3 +181,26 @@ handoff no-claim
 grep -F 'no claimed kata exists to hand off' "$test_root/output" >/dev/null || fail 'no-claim: message is missing'
 [ ! -e "$fixture/kata.log" ] || fail 'no-claim: kata was called'
 printf 'ok - a missing claim is refused before any kata call\n'
+
+new_repo git-status-failure
+printf 'half done\n' >"$repo/partial.txt"
+badgit="$test_root/badgit"
+mkdir -p "$badgit"
+cat >"$badgit/git" <<GIT
+#!/bin/sh
+# ABOUTME: Wraps the real git but fails "git status" to simulate a broken repository.
+# ABOUTME: Delegates every other subcommand so the rest of a handoff still runs normally.
+set -eu
+if [ "\$1" = status ]; then
+  printf 'fatal: fixture git status failure\n' >&2
+  exit 128
+fi
+exec "$real_git" "\$@"
+GIT
+chmod +x "$badgit/git"
+handoff git-status-failure "$badgit"
+[ ! -e "$run_dir/handoff.json" ] || fail 'git-status-failure: handoff.json was written after a broken git status'
+if grep -Fx 'handoff-ok' "$test_root/output" >/dev/null; then
+  fail 'git-status-failure: handoff-ok was printed despite a broken git status'
+fi
+printf 'ok - a broken git status stops the handoff instead of treating a broken tree as clean\n'
