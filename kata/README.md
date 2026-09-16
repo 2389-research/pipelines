@@ -21,7 +21,9 @@ tracker's `openai-compat` provider through Lunaroute. The adapter does not
 forward `reasoning_effort`; reasoning behavior follows the gateway defaults.
 
 Both must approve publication and closure. Rejected work gets at most one repair pass and
-another review. Unfinished work stays open with a `needs-review` handoff.
+another review. A worker that hits its turn limit while still making progress gets one
+automatic continue. Unfinished work stays open, labeled `needs-review` or `needs-decision`,
+for the morning review.
 The pipeline does not depend on locally installed agent skills.
 
 Turn ceilings leave room for implementation, checks, evidence, and commits:
@@ -35,6 +37,11 @@ Turn ceilings leave room for implementation, checks, evidence, and commits:
 These are safety ceilings, not targets. Keep discovery focused on the selected
 item and move into implementation once its contract and relevant code are clear.
 The larger ceilings preserve the same one-item scope and single repair pass.
+
+`Implement` gets one automatic warm continue. When it stops at its turn limit while
+still making steady progress (tracker's `operator_decision` breach class), the pipeline
+raises its ceiling to 450 turns and restarts the worker once with its earlier episode
+summary. A second breach hands the kata off.
 
 ## Run
 
@@ -78,25 +85,42 @@ the PRs await your review. Merge the stack from oldest to newest; the pipeline
 does not merge it. Standalone `complete.dip` retains the default-branch behavior
 described below.
 
-The board stops on its first failed child. If no item is ready and unowned,
-it checks all open items: an empty board succeeds; remaining owned or blocked
-items produce an incomplete-board report. It never takes another actor's claim.
-Parents become eligible as their children close. The runner rechecks the live
-board after each completion, so newly added eligible work is included.
+A child that fails cleanly does not stop the board. The handoff labels the kata
+`needs-review` (or `needs-decision` when the worker wrote a question), comments
+the branch and base commit, commits any uncommitted work as a WIP commit on the
+task branch, and returns the checkout to the branch the child started on. The
+board records the failure in its ledger and claims the next kata from the same
+stack base, so a failed kata never becomes the base of a later one. Three
+consecutive failed children stop the board with `stop_reason` set in the ledger.
+If no item is ready and unowned, the board checks all open items: katas it
+already handed off are expected, and any other open kata is listed in
+`board/blocked.json` and counted in the `Board incomplete` line. The board then
+finishes; the report lists those katas under `Remaining open`. It never takes
+another actor's claim. Parents become eligible as their children close. The
+runner rechecks the live board after each child, so newly added eligible work
+is included. The controller exits 0 at the end of the queue and 1 on every
+early stop, and it prints the morning review either way.
 
-The parent run's `board/state.json` records child IDs, commits, and PR URLs.
-Each child's console output is under `board/items/<attempt>/child.log`; full
-artifacts remain in the target repository's `.tracker/runs/<child-id>`.
-Inspect and recover a failed child using the one-item recovery guidance below,
-then resume the parent with
+The parent run's `board/state.json` records every child: `completed` entries
+carry the commit and PR URL, `failed` entries carry the branch, reason, and
+label, and `empty` entries mark an empty queue. Each child's console output is
+under `board/items/<attempt>/child.log`; full artifacts remain in the target
+repository's `.tracker/runs/<child-id>`. A stop with `child <child-id> needs
+inspection` means the child ended in a state the controller could not verify:
+a failed closure, a dirty tree, an unexpected branch, or a handoff that did not
+complete. Inspect and recover that child using the one-item recovery guidance
+below, then resume the parent with
 `tracker --no-tui -r <board-run-id> /path/to/kata/board.dip`.
 A child killed with its parent (a closed TUI or Ctrl-C) still owns its kata as
 `kata-pipeline-<child-id>`. Resume that child from the target repository with
 `tracker -r <child-id> /path/to/kata/complete.dip` before resuming the board.
-The controller verifies the existing child's successful completion before
-advancing, so resuming the parent does not silently claim a replacement item.
-An incomplete board can be resumed after its blockers or ownership are resolved.
-Keep the checkout on the last task branch with a clean working tree.
+The controller verifies the existing child's outcome before advancing, so
+resuming the parent does not silently claim a replacement item. A board stopped
+by three consecutive failures can be resumed; it claims again from the same
+stack base. A finished board is not resumed; start a new board run after
+answering or unblocking its katas. Keep the checkout on the last task branch
+with a clean working tree. Runs claimed before the handoff recorded a starting
+branch stop for inspection at handoff.
 
 Board runs require the source `.dip` directory; packed `.dipx` bundles are not
 supported. Tracker 0.73.1 native subgraphs share the parent's artifact directory,
@@ -181,6 +205,41 @@ Release an abandoned claim with
 `kata unassign <ref>` only after confirming the old run has stopped and its
 work has been accounted for.
 
+## Morning review
+
+Katas the board could not finish stay open, owned by `kata-pipeline-<child-id>`,
+with a `needs-review` or `needs-decision` label and a comment naming the branch,
+base commit, WIP commit, and question. This section is written for the agent or
+person working that inbox. From the target Git root:
+
+```sh
+/path/to/pipelines/kata/board-report
+```
+
+prints the newest board run: completed katas with branches and PR URLs, katas
+that need a decision with their questions, katas that need review with their
+branches, and open katas the board never touched. `board-report --json
+<board-run-id>` prints the same for one run as JSON.
+
+For each kata that needs a decision, read the question and answer it:
+
+```sh
+/path/to/pipelines/kata/answer <issue-ref> "<your answer>"
+```
+
+For each kata that needs review, diff the WIP branch against its base commit
+and read the review records under the child run directory
+(`.tracker/runs/<child-id>/Review*/status.json` and `ReReview*/status.json`).
+Either finish and close it by hand, or answer with guidance so the next run
+can finish it. Merge the PR stack oldest first. Then run the board again in
+the evening with the same command as before.
+
+`kata/answer` comments the text on the kata and releases the pipeline's claim,
+so the next board run can claim it. It refuses katas owned by anyone other than
+a pipeline actor. The label stays until the next claim removes it. The next run
+reads the comment thread and reuses the branch's work. Both commands run from
+the target Git root and change nothing else.
+
 ## Check
 
 With the matching tools plus ShellCheck available:
@@ -197,6 +256,9 @@ approvals, missing evidence, and changes to the task branch or workspace.
 Board orchestration tests also run real Tracker child processes and local Git
 commits, using tool-only child workflows and fixture Kata records without models
 or live GitHub publication. Stack-base tests verify the fetched predecessor SHA.
+Board tests also run the real handoff script inside child runs. Continue tests
+drive a real tracker restart; handoff, answer, and report tests use fixture Kata
+records and run directories.
 These checks do not prove that a model can solve an arbitrary issue. A live
 run needs a real, initialized target repository and working provider credentials.
 

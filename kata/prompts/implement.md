@@ -26,6 +26,19 @@ Do not treat a previous turn-limit failure or `needs-review` label as a new depe
 Preserve unrelated work; if you cannot distinguish it from this item's work, explain
 the conflict in the handoff and stop rather than committing it.
 
+When finishing this item needs a decision only a person can make, write the exact
+question to `question.md` in the same directory as `STATE_PATH`, keep `handoff.md`
+current, and finish with `STATUS: fail`. The pipeline then labels the kata `needs-decision`
+and a person answers it in a comment.
+
+When the issue's comments record an earlier pipeline attempt, that comment names its
+branch and base commit. Diff that branch against its base and reuse what is correct.
+Do not switch to it.
+
+This step may run again after a turn limit with a larger budget and the earlier
+episode summary. Continue from the current diff; do not repeat discovery or restart
+the plan.
+
 Keep discovery short: read applicable repository instructions, the selected issue, and
 only the code or plan sections needed for this item. Aim to start the first missing test
 or implementation step within three turns. If a concrete blocker requires more discovery,

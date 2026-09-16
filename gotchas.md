@@ -63,3 +63,11 @@ pipeline_dir with logical `pwd`, grepped that path in the resume hint, missed,
 and `set -e` exited 1 with no message, so `kata/check` went red silently. The
 same test passed when invoked by its physical path. Fixed with `pwd -P` on
 2026-09-15.
+
+Doctor Biz chose fail-forward boards with a morning review (2026-09-16): a failed
+child hands its kata off (label, comment, WIP commit, starting branch restored)
+and the board claims the next one; three consecutive failures stop it. A queue
+with only owned or blocked katas finishes the board. `kata/board-report`
+summarizes a board run and `kata/answer` comments a reply and releases the
+pipeline claim. Implement gets one automatic warm continue (450 turns) after a
+steady turn-limit breach; the second breach hands off.
