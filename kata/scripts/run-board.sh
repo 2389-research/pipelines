@@ -1,6 +1,6 @@
 #!/bin/sh
 # ABOUTME: Runs complete.dip once per kata with a durable ledger of isolated child runs.
-# ABOUTME: Carries verified stack bases forward and stops without abandoning failed claims.
+# ABOUTME: Carries verified stack bases forward, records clean failures for review, and stops on integrity problems.
 set -eu
 
 if [ "${1:-}" = --help ]; then
@@ -14,6 +14,8 @@ fi
 command -v tracker >/dev/null
 command -v kata >/dev/null
 command -v jq >/dev/null
+report=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)/board-report
+[ -x "$report" ] || { printf 'board report is missing or not executable: %s\n' "$report" >&2; exit 1; }
 workspace=$(cd "$TRACKER_WORKDIR" && pwd -P)
 pipeline=$(CDPATH='' cd -- "$(dirname "$1")" && printf '%s/%s' "$(pwd -P)" "$(basename "$1")")
 cd "$workspace"
@@ -45,26 +47,69 @@ fi
 jq -e --arg workspace "$workspace" --arg pipeline "$pipeline" '
   .workspace == $workspace and .pipeline == $pipeline and
   (.finished | type == "boolean") and (.runs | type == "array") and
+  (.stop_reason == null or (.stop_reason | type == "string")) and
   all(.runs[]; (.run_id | type == "string" and test("^[a-f0-9]{12}$")) and
-    (.kind == "completed" or .kind == "empty")) and
+    (.kind == "completed" or .kind == "failed" or .kind == "empty")) and
   ([.runs[].run_id] | length == (unique | length))
 ' "$state" >/dev/null || { printf 'invalid board state or changed workspace/pipeline: %s\n' "$state" >&2; exit 1; }
 
+write_state() {
+  jq "$@" "$state" >"$state.tmp"
+  mv "$state.tmp" "$state"
+}
+set_stop_reason() {
+  # $reason is a jq variable bound by --arg; ShellCheck cannot see the jq call behind write_state.
+  # shellcheck disable=SC2016
+  write_state --arg reason "$1" '.stop_reason = $reason'
+}
 stop_child() {
+  set_stop_reason "child $run_id needs inspection"
   printf 'Child run %s needs inspection; no next kata was started.\nLogs: %s\n' "$run_id" "$item/child.log" >&2
   printf 'Recover the child in %s with tracker -r %s %s, then resume board %s.\n' "$workspace" "$run_id" "$pipeline" "$TRACKER_RUN_ID" >&2
   exit 1
 }
 append_run() {
-  jq --argjson result "$result" '.runs += [$result]' "$state" >"$state.tmp"
-  mv "$state.tmp" "$state"
+  # $result is a jq variable bound by --argjson; ShellCheck cannot see the jq call behind write_state.
+  # shellcheck disable=SC2016
+  write_state --argjson result "$result" '.runs += [$result]'
+}
+# A clean failure left the kata open, labeled, and commented, and put the checkout back on the
+# branch the child started from. Anything else is an integrity problem and stops the board.
+record_failure() {
+  handoff="$child/handoff.json"
+  jq -e --arg run "$run_id" '.run_id == $run and
+    all(.issue_uid, .reason, .label, .branch, .start_branch; type == "string" and length > 0)' \
+    "$handoff" >/dev/null 2>&1 || stop_child
+  jq -e '.context_updates.tool_stdout | type == "string" and (split("\n") | any(. == "handoff-ok"))' \
+    "$child/Handoff/status.json" >/dev/null 2>&1 || stop_child
+  [ "$(git symbolic-ref --quiet --short HEAD)" = "$(jq -r '.start_branch' "$handoff")" ] || stop_child
+  [ -z "$(git status --porcelain --untracked-files=normal)" ] || stop_child
+  if [ -n "$KATA_STACK_BASE_FILE" ]; then
+    [ "$(git rev-parse HEAD)" = "$(jq -r '.commit' "$KATA_STACK_BASE_FILE")" ] || stop_child
+  fi
+  uid=$(jq -r '.issue_uid' "$handoff")
+  issue=$(kata show --workspace "$workspace" "$uid" --json)
+  printf '%s' "$issue" | jq -e --arg uid "$uid" --arg actor "kata-pipeline-$run_id" \
+    '.issue.uid == $uid and .issue.status == "open" and .issue.owner == $actor' >/dev/null || stop_child
+  result=$(jq --arg run "$run_id" '{run_id:$run,kind:"failed",issue_uid,branch,reason,label}' "$handoff")
+  append_run
+  printf 'Failed %s (%s); left open with %s on %s\n' "$uid" \
+    "$(jq -r '.reason' "$handoff")" "$(jq -r '.label' "$handoff")" "$(jq -r '.branch' "$handoff")"
+  if jq -e '[.runs[-3:][].kind] == ["failed","failed","failed"]' "$state" >/dev/null; then
+    set_stop_reason 'three consecutive failed children'
+    printf 'Board stopped after three consecutive failed children. Ledger: %s\n' "$state" >&2
+    "$report" "$TRACKER_RUN_ID"
+    exit 1
+  fi
 }
 
 while ! jq -e '.finished' "$state" >/dev/null; do
+  # A stop reason describes the previous controller's last iteration; this one decides afresh.
+  write_state 'del(.stop_reason)'
   index=$(jq '.runs | length + 1' "$state")
   item="$board/items/$(printf '%06d' "$index")"
   mkdir -p "$item"
-  # Empty attempts do not change the stack tip. Only verified child completions do.
+  # Empty and failed attempts do not change the stack tip. Only verified child completions do.
   jq '[.runs[] | select(.kind == "completed")] | last' "$state" >"$item/base.json"
   KATA_STACK_BASE_FILE=
   if jq -e '. != null' "$item/base.json" >/dev/null; then
@@ -95,11 +140,16 @@ while ! jq -e '.finished' "$state" >/dev/null; do
   child="$workspace/.tracker/runs/$run_id"
   # The child's activity log includes manual resumes; the initial CLI log does not.
   [ -f "$child/activity.jsonl" ] || stop_child
-  jq -Rne --arg run "$run_id" '[inputs | fromjson? |
+  terminal=$(jq -Rnr --arg run "$run_id" '[inputs | fromjson? |
     select(.source == "pipeline" and .run_id == $run and
       (.type == "pipeline_started" or .type == "pipeline_completed" or .type == "pipeline_failed"))] |
-    last | .type == "pipeline_completed" and .terminal_status == "success"' \
-    <"$child/activity.jsonl" >/dev/null || stop_child
+    last | if .type == "pipeline_completed" and .terminal_status == "success" then "completed"
+      elif .type == "pipeline_failed" then "failed" else "unknown" end' <"$child/activity.jsonl")
+  if [ "$terminal" = failed ]; then
+    record_failure
+    continue
+  fi
+  [ "$terminal" = completed ] || stop_child
   jq -e '.outcome == "success"' "$child/Exit/status.json" >/dev/null 2>&1 || stop_child
   if [ -f "$child/selected.json" ]; then
     selected="$child/selected.json"
@@ -117,7 +167,7 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     done
     issue=$(kata show --workspace "$workspace" "$uid" --json)
     printf '%s' "$issue" | jq -e --arg uid "$uid" '.issue.uid == $uid and .issue.status == "closed"' >/dev/null || stop_child
-    if jq -e --arg uid "$uid" 'any(.runs[]; .issue_uid == $uid)' "$state" >/dev/null; then
+    if jq -e --arg uid "$uid" 'any(.runs[]; .kind == "completed" and .issue_uid == $uid)' "$state" >/dev/null; then
       printf 'child repeated an already completed kata: %s\n' "$uid" >&2
       exit 1
     fi
@@ -135,16 +185,19 @@ while ! jq -e '.finished' "$state" >/dev/null; do
       "$child/ClaimNext/status.json" >/dev/null 2>&1 || stop_child
     open=$(kata list --workspace "$workspace" --status open --limit 0 --json)
     printf '%s' "$open" | jq -e '.issues | type == "array"' >/dev/null || { printf 'invalid open-board response\n' >&2; exit 1; }
-    remaining=$(printf '%s' "$open" | jq '.issues | length')
+    # Katas this board handed off stay open on purpose; only untouched ones count as remaining.
+    remaining=$(printf '%s' "$open" | jq --slurpfile state "$state" \
+      '[.issues[] | select(.uid as $uid | any($state[0].runs[]; .issue_uid == $uid) | not)] | length')
     result=$(jq -n --arg run "$run_id" '{run_id:$run,kind:"empty"}')
     append_run
     if [ "$remaining" -gt 0 ]; then
       printf '%s\n' "$open" >"$board/blocked.json"
-      printf 'Board incomplete: %s open katas remain, but none were ready and unowned. See %s\n' "$remaining" "$board/blocked.json" >&2
-      exit 1
+      printf 'Board incomplete: %s open katas remain, but none were ready and unowned. See %s\n' "$remaining" "$board/blocked.json"
     fi
-    jq '.finished = true' "$state" >"$state.tmp"
-    mv "$state.tmp" "$state"
+    write_state '.finished = true'
   fi
 done
-printf 'Board complete: %s katas finished. Ledger: %s\n' "$(jq '[.runs[] | select(.kind == "completed")] | length' "$state")" "$state"
+printf 'Board complete: %s katas finished, %s left open for review. Ledger: %s\n' \
+  "$(jq '[.runs[] | select(.kind == "completed")] | length' "$state")" \
+  "$(jq '[.runs[] | select(.kind == "failed")] | length' "$state")" "$state"
+"$report" "$TRACKER_RUN_ID"
