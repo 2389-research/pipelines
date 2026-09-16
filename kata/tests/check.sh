@@ -67,6 +67,8 @@ test_claim_and_persist() {
   repo=$TMP_ROOT/claim
   new_repo "$repo"
   repo=$(cd "$repo" && pwd -P)
+  mkdir -p "$repo/.tracker/turn_overrides"
+  printf '999\n' >"$repo/.tracker/turn_overrides/Implement"
   output=$(FAKE_KATA_MODE=ready run_preflight "$repo")
   assert_contains "$output" 'claim-ok'
   [ "$(git -C "$repo" branch --show-current)" = 'kata/5fav-test' ] || fail 'ready item did not create its deterministic task branch'
@@ -76,6 +78,10 @@ test_claim_and_persist() {
   grep -Fx 'keep-me' "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)" >/dev/null || fail 'existing local exclude entry changed'
   jq -e --arg repo "$repo" '.issue_uid == "01ARZ3NDEKTSV4RRFFQ69G5FAV" and .short_id == "5fav" and .qualified_id == "demo#5fav" and .workspace == $repo' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'selected identity was not persisted'
   grep -F -- '--if-unowned 01ARZ3NDEKTSV4RRFFQ69G5FAV --json' "$repo/.fake-kata-log" >/dev/null || fail 'claim did not use full immutable identity'
+  jq -e '.start_branch == "main"' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'starting branch was not persisted'
+  [ ! -e "$repo/.tracker/turn_overrides/Implement" ] || fail 'stale turn override survived the claim'
+  [ "$(grep -c '^label rm ' "$repo/.fake-kata-log")" -eq 1 ] || fail 'claim did not remove exactly one stale label'
+  grep -F -- '--as kata-pipeline-test 01ARZ3NDEKTSV4RRFFQ69G5FAV needs-review --agent' "$repo/.fake-kata-log" >/dev/null || fail 'stale needs-review label was not removed as the run actor'
   pass 'ready item is claimed once and its identity is persisted'
 }
 

@@ -10,7 +10,7 @@ if [ "$1" = ready ] && [ "${FAKE_READY_JSON+x}" = x ]; then
 fi
 case "$1:${FAKE_KATA_MODE:-ready}" in
   ready:ready|ready:conflict)
-    printf '%s\n' '{"issues":[{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAV","short_id":"5fav","qualified_id":"demo#5fav","status":"open"}]}'
+    printf '%s\n' '{"issues":[{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAV","short_id":"5fav","qualified_id":"demo#5fav","status":"open","labels":["needs-review","task"]}]}'
     ;;
   ready:empty)
     printf '%s\n' '{"issues":[]}'
@@ -26,5 +26,6 @@ case "$1:${FAKE_KATA_MODE:-ready}" in
     printf '%s\n' 'claim failed: already owned' >&2
     exit 5
     ;;
+  label:ready) ;;
   *) printf 'unexpected fake kata call: %s\n' "$*" >&2; exit 2 ;;
 esac

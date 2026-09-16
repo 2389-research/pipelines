@@ -27,7 +27,9 @@ if [ -n "$dirty" ]; then
   exit 1
 fi
 
-git symbolic-ref --quiet --short HEAD >/dev/null || { printf 'detached HEAD cannot be prepared automatically\n' >&2; exit 1; }
+start_branch=$(git symbolic-ref --quiet --short HEAD) || { printf 'detached HEAD cannot be prepared automatically\n' >&2; exit 1; }
+# A warm-continue override outlives its run; a stale one would inflate this run's worker budget.
+rm -f "$workspace/.tracker/turn_overrides/Implement"
 mkdir -p "$TRACKER_RUN_DIR"
 state_tmp="$TRACKER_RUN_DIR/selected.json.tmp"
 printf '' >"$state_tmp"
@@ -186,10 +188,20 @@ printf '%s' "$claim_json" | jq -e --arg uid "$uid" --arg actor "$actor" \
     exit 1
   }
 
+# A kata handed back after a review or decision still carries its handoff label; this run owns it now.
+for label in needs-review needs-decision; do
+  printf '%s' "$selected_json" | jq -e --arg label "$label" '(.labels // []) | any(. == $label)' >/dev/null || continue
+  kata label rm --workspace "$workspace" --as "$actor" "$uid" "$label" --agent >/dev/null || {
+    printf 'could not remove the %s label from %s\n' "$label" "$qualified_id" >&2
+    exit 1
+  }
+done
+
 jq -n --arg uid "$uid" --arg short "$short_id" --arg qualified "$qualified_id" \
   --arg workspace "$workspace" --arg branch "$branch" --arg base "$base_commit" --arg actor "$actor" --argjson github "$github" \
+  --arg start "$start_branch" \
   --argjson issue "$(printf '%s' "$claim_json" | jq '.issue')" \
-  '{issue_uid:$uid,short_id:$short,qualified_id:$qualified,workspace:$workspace,branch:$branch,base_commit:$base,actor:$actor,github:$github,issue:$issue}' >"$state_tmp"
+  '{issue_uid:$uid,short_id:$short,qualified_id:$qualified,workspace:$workspace,branch:$branch,base_commit:$base,actor:$actor,start_branch:$start,github:$github,issue:$issue}' >"$state_tmp"
 mv "$state_tmp" "$TRACKER_RUN_DIR/selected.json"
 git switch -c "$branch" "$base_commit" >/dev/null
 printf 'claim-ok\nSTATE_PATH=%s\n' "$TRACKER_RUN_DIR/selected.json"
