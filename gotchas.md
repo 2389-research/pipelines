@@ -21,11 +21,12 @@ Doctor Biz wants much larger kata turn ceilings so checks, evidence, and
 commits can finish: implementation 300, repair 150, each review 100. Bound
 discovery to relevant code; do not narrow the selected item's goal to fit a cap.
 
-Tracker resume continues at the saved node, including a terminal Handoff.
-After an implementation turn-limit failure, use kata/retry-implementation to
-back up and rewind only the failed worker state while retaining its claim.
-Check the repository-local checkpoint: tracker v0.73.1 can write fresh logs
-under ~/.local/state/tracker while leaving a stale checkpoint copy there.
+Tracker resume continues at the saved node, including a terminal Handoff. An
+implementation turn-limit breach with steady progress gets one automatic warm
+continue inside the pipeline (ContinueImplement); a second breach hands the kata
+off for the morning review, so there is no manual rewind command. Check the
+repository-local checkpoint: tracker v0.73.1 can write fresh logs under
+~/.local/state/tracker while leaving a stale checkpoint copy there.
 
 Live recovery and completion passed for todo-test#tzrg on 2026-09-13: both
 model reviews approved commit 510d313, closure succeeded, and the tree was clean.
@@ -58,11 +59,11 @@ board failure; the same runs left alone completed with the TUI on or off.
 kata scripts resolve every path physically (`pwd -P`), so a test that compares
 a path against script output must resolve its own path the same way. On this
 machine `~/workspace` is a symlink to `~/Public/src`, and the agent shell's cwd
-is the symlinked form: `kata/tests/retry-implementation.sh` computed its
-pipeline_dir with logical `pwd`, grepped that path in the resume hint, missed,
-and `set -e` exited 1 with no message, so `kata/check` went red silently. The
-same test passed when invoked by its physical path. Fixed with `pwd -P` on
-2026-09-15.
+is the symlinked form: a kata test once computed its pipeline_dir with logical
+`pwd`, grepped that path in a script's output, missed, and `set -e` exited 1
+with no message, so `kata/check` went red silently. The same test passed when
+invoked by its physical path. Every kata test now uses `pwd -P` (since
+2026-09-15).
 
 Doctor Biz chose fail-forward boards with a morning review (2026-09-16): a failed
 child hands its kata off (label, comment, WIP commit, starting branch restored)

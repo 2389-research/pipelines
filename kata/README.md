@@ -183,21 +183,6 @@ Closure stops with a recovery error for these runs. Inspect the existing branch,
 claim, and review evidence before recovering it; starting another run would leave
 the original claim behind.
 
-If `Implement` exhausted its turns and the run reached `Handoff`, stop tracker
-and prepare an implementation retry from the target repository:
-
-```sh
-/path/to/pipelines/kata/retry-implementation "<run-id>"
-```
-
-This command verifies the saved workspace, branch, base commit, and live issue
-ownership, backs up the repository-local checkpoint, and returns it to
-`Implement`. It restores the selected issue's prompt context and removes failed
-worker routing state. It preserves the claim and all source changes, then prints
-the tracker resume command. It requires `pgrep` and refuses while any tracker
-process is running. It only handles an implementation turn-limit failure before
-reviews; later failures need inspection rather than restarting the whole review cycle.
-
 For tracker v0.73.1, `-r` reads `.tracker/runs/<run-id>/checkpoint.json` in the
 target repository. A copy under `~/.local/state/tracker` can be stale even when
 that directory contains the current activity log. Inspect the repository-local
