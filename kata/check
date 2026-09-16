@@ -37,5 +37,6 @@ sh "$KATA_DIR/tests/github-setup.sh"
 "$KATA_DIR/tests/close.sh"
 sh "$KATA_DIR/tests/publish.sh"
 sh "$KATA_DIR/tests/board.sh"
+sh "$KATA_DIR/tests/answer.sh"
 "$KATA_DIR/tests/retry-implementation.sh"
-shellcheck "$KATA_DIR/check" "$KATA_DIR/retry-implementation" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh
+shellcheck "$KATA_DIR/check" "$KATA_DIR/retry-implementation" "$KATA_DIR/answer" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh

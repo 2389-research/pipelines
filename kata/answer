@@ -1,0 +1,34 @@
+#!/bin/sh
+# ABOUTME: Answers a kata the board handed off: comments the reply and releases the pipeline claim.
+# ABOUTME: Refuses katas owned by anyone but a pipeline actor so it never takes a person's claim.
+set -eu
+
+usage() {
+  printf 'Usage: answer <issue-ref> "<text>"\nRun from the target Git root. Comments the text on the kata and releases the pipeline claim so the next board run can pick it up.\n'
+}
+if [ "${1:-}" = --help ]; then
+  usage
+  exit 0
+fi
+[ "$#" -eq 2 ] || { usage >&2; exit 2; }
+ref=$1
+text=$2
+[ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || { printf 'answer text is empty\n' >&2; exit 2; }
+command -v git >/dev/null
+command -v jq >/dev/null
+command -v kata >/dev/null
+workspace=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)
+issue=$(kata show --workspace "$workspace" "$ref" --json)
+uid=$(printf '%s' "$issue" | jq -er '.issue.uid')
+status=$(printf '%s' "$issue" | jq -er '.issue.status')
+owner=$(printf '%s' "$issue" | jq -r '.issue.owner // ""')
+[ "$status" = open ] || { printf '%s is %s, not open\n' "$ref" "$status" >&2; exit 1; }
+case "$owner" in
+  '') printf '%s is unowned; nothing to hand back\n' "$ref" >&2; exit 1 ;;
+  kata-pipeline-*) ;;
+  *) printf '%s is owned by %s, not a pipeline actor; refusing to take a claim\n' "$ref" "$owner" >&2; exit 1 ;;
+esac
+kata unassign --workspace "$workspace" "$uid" --expect-owner "$owner" --comment "$text" --json >/dev/null
+printf 'Owner: %s\n' "$(kata show --workspace "$workspace" "$uid" --json | jq -r '.issue.owner // "nobody"')"
+printf 'Labels: %s\n' "$(kata list --workspace "$workspace" --status open --limit 0 --json |
+  jq -r --arg uid "$uid" '[.issues[] | select(.uid == $uid) | (.labels // [])[]] | if length == 0 then "none" else join(",") end')"
