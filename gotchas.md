@@ -62,8 +62,7 @@ machine `~/workspace` is a symlink to `~/Public/src`, and the agent shell's cwd
 is the symlinked form: a kata test once computed its pipeline_dir with logical
 `pwd`, grepped that path in a script's output, missed, and `set -e` exited 1
 with no message, so `kata/check` went red silently. The same test passed when
-invoked by its physical path. Every kata test now uses `pwd -P` (since
-2026-09-15).
+invoked by its physical path. Fixed with `pwd -P` on 2026-09-15.
 
 Doctor Biz chose fail-forward boards with a morning review (2026-09-16): a failed
 child hands its kata off (label, comment, WIP commit, starting branch restored)
