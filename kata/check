@@ -1,0 +1,42 @@
+#!/bin/sh
+# ABOUTME: Runs the kata pipeline's deterministic graph and shell checks.
+# ABOUTME: Uses temporary repositories and never touches a configured target project.
+set -eu
+
+KATA_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
+command -v dippin >/dev/null
+command -v tracker >/dev/null
+dippin validate "$KATA_DIR/complete.dip"
+check_json=$(dippin check --format json "$KATA_DIR/complete.dip")
+printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
+dippin validate "$KATA_DIR/board.dip"
+check_json=$(dippin check --format json "$KATA_DIR/board.dip")
+printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
+tracker validate "$KATA_DIR/board.dip"
+simulation_log=$(mktemp)
+trap 'rm -f "$simulation_log"' EXIT HUP INT TERM
+dippin simulate "$KATA_DIR/complete.dip" --all-paths >"$simulation_log" 2>&1
+grep -F 'ClaimNext' "$simulation_log" >/dev/null
+grep -F 'queue-empty' "$simulation_log" >/dev/null
+grep -F 'Repair' "$simulation_log" >/dev/null
+grep -F 'ContinueImplement' "$simulation_log" >/dev/null
+tracker_log=$(mktemp)
+trap 'rm -f "$simulation_log" "$tracker_log"' EXIT HUP INT TERM
+tracker validate "$KATA_DIR/complete.dip" >"$tracker_log" 2>&1
+grep -F 'complete.dip: valid (' "$tracker_log" >/dev/null
+if grep -F 'warning: unresolved condition variable' "$tracker_log" >/dev/null; then
+  printf 'note - tracker static validation reports unset runtime context; real preflight checks run below\n'
+fi
+"$KATA_DIR/tests/routes.sh"
+sh "$KATA_DIR/tests/continue.sh"
+sh "$KATA_DIR/tests/handoff.sh"
+"$KATA_DIR/tests/check.sh"
+sh "$KATA_DIR/tests/github-setup.sh"
+"$KATA_DIR/tests/approvals.sh"
+"$KATA_DIR/tests/preflight.sh"
+"$KATA_DIR/tests/close.sh"
+sh "$KATA_DIR/tests/publish.sh"
+sh "$KATA_DIR/tests/board.sh"
+sh "$KATA_DIR/tests/answer.sh"
+sh "$KATA_DIR/tests/report.sh"
+shellcheck "$KATA_DIR/check" "$KATA_DIR/board-report" "$KATA_DIR/answer" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh

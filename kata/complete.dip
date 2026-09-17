@@ -1,0 +1,144 @@
+# ABOUTME: Claims and completes one ready unowned kata with bounded implementation and review.
+# ABOUTME: Persists identity under .tracker and closes only after two fresh-eyes approvals.
+
+workflow CompleteOneKata
+  goal: "Claim the next ready unowned kata and complete only that item with TDD and independent review."
+  start: ClaimNext
+  exit: Exit
+
+  defaults
+    fidelity: summary:high
+
+  tool ClaimNext
+    label: "Guard workspace and claim one kata"
+    marker_grep: "^(claim-ok|queue-empty)"
+    timeout: 5m
+    command_file: scripts/claim-next.sh
+
+  agent Implement
+    label: "Scope and implement the selected kata"
+    model: glm-5.3
+    provider: openai-compat
+    goal_gate: true
+    auto_status: true
+    max_turns: 300
+    prompt_file: prompts/implement.md
+
+  parallel ReviewFreshEyes -> ReviewCorrectness, ReviewScope
+    params:
+      fan_in_policy: all
+
+  agent ReviewCorrectness
+    label: "Fresh-eyes correctness review"
+    model: glm-5.3
+    provider: openai-compat
+    max_turns: 100
+    max_retries: 1
+    retry_target: ReviewCorrectness
+    prompt_file: prompts/review-correctness.md
+
+  agent ReviewScope
+    label: "Fresh-eyes scope review"
+    model: deepseek-4.1-flash
+    provider: openai-compat
+    max_turns: 100
+    max_retries: 1
+    retry_target: ReviewScope
+    prompt_file: prompts/review-scope.md
+
+  fan_in ReviewsApproved <- ReviewCorrectness, ReviewScope
+    params:
+      fan_in_policy: all
+
+  tool CheckApprovals
+    label: "Require both SHA-bound review approvals"
+    marker_grep: "^approvals-ok$"
+    timeout: 30s
+    command_file: scripts/check-approvals.sh
+
+  agent Repair
+    label: "Apply the single allowed repair pass"
+    model: glm-5.3
+    provider: openai-compat
+    goal_gate: true
+    auto_status: true
+    max_turns: 150
+    prompt_file: prompts/repair.md
+
+  parallel ReReviewFreshEyes -> ReReviewCorrectness, ReReviewScope
+    params:
+      fan_in_policy: all
+
+  agent ReReviewCorrectness
+    label: "Fresh-eyes correctness re-review"
+    model: glm-5.3
+    provider: openai-compat
+    max_turns: 100
+    max_retries: 1
+    retry_target: ReReviewCorrectness
+    prompt_file: prompts/review-correctness.md
+
+  agent ReReviewScope
+    label: "Fresh-eyes scope re-review"
+    model: deepseek-4.1-flash
+    provider: openai-compat
+    max_turns: 100
+    max_retries: 1
+    retry_target: ReReviewScope
+    prompt_file: prompts/review-scope.md
+
+  fan_in ReReviewsApproved <- ReReviewCorrectness, ReReviewScope
+    params:
+      fan_in_policy: all
+
+  tool ReCheckApprovals
+    label: "Require both SHA-bound re-review approvals"
+    marker_grep: "^approvals-ok$"
+    timeout: 30s
+    command_file: scripts/check-approvals.sh
+
+  tool CloseSelected
+    label: "Publish the approved task and close the kata"
+    marker_grep: "^close-ok$"
+    timeout: 5m
+    command_file: scripts/close-selected.sh
+
+  tool ContinueImplement
+    label: "Grant one warm continue after a steady turn-limit breach"
+    timeout: 10s
+    command_file: scripts/continue-implement.sh
+
+  tool Handoff
+    label: "Leave failed work open for review"
+    timeout: 5m
+    command_file: scripts/handoff-selected.sh
+
+  tool Exit
+    label: "One-item run complete"
+    timeout: 5s
+    command:
+      true
+
+  edges
+    ClaimNext -> Implement  on claim-ok
+    ClaimNext -> Exit  on queue-empty
+    Implement -> ReviewFreshEyes  when ctx.outcome = success
+    Implement -> ContinueImplement  when ctx.turn_breach_class = operator_decision
+    Implement -> Handoff  when ctx.outcome = fail
+    ContinueImplement -> Implement  when ctx.outcome = success  restart: true
+    ContinueImplement -> Handoff  when ctx.outcome = fail
+    ReviewFreshEyes -> ReviewsApproved  when ctx.outcome = success
+    ReviewFreshEyes -> Repair  when ctx.outcome = fail
+    ReviewsApproved -> CheckApprovals
+    CheckApprovals -> CloseSelected  when ctx.outcome = success
+    CheckApprovals -> Repair  when ctx.outcome = fail
+    Repair -> ReReviewFreshEyes  on success
+    Repair -> Handoff  on fail
+    ReReviewFreshEyes -> ReReviewsApproved  when ctx.outcome = success
+    ReReviewFreshEyes -> Handoff  when ctx.outcome = fail
+    ReReviewsApproved -> ReCheckApprovals
+    ReCheckApprovals -> CloseSelected  when ctx.outcome = success
+    ReCheckApprovals -> Handoff  when ctx.outcome = fail
+    CloseSelected -> Exit  when ctx.outcome = success
+    CloseSelected -> Handoff  when ctx.outcome = fail
+    Handoff -> Exit

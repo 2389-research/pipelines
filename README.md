@@ -21,6 +21,13 @@ You will need API keys for the LLM providers used in each pipeline (Anthropic, O
 
 ## Projects
 
+### [Kata](kata/)
+
+| Pipeline | Description |
+|----------|-------------|
+| [`complete.dip`](kata/complete.dip) | Claims one ready, unowned kata item, plans only as needed, implements it, and requires two-model fresh-eyes review before evidence-backed closure. At most one repair pass. |
+| [`board.dip`](kata/board.dip) | Reuses the complete pipeline for the whole board with separate child runs and stacked task PRs. Stops on failure or remaining blocked work; leaves merging to the operator. |
+
 ### [Build & Ship](build-and-ship/)
 
 Single-pass build pipelines — fastest path from spec or bug report to shipped code.
