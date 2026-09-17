@@ -36,16 +36,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Satisfy the pinned dippin module's go directive (dippin v0.64.0 → go
-          # 1.25.5). setup-go with "1.25" resolves to the newest 1.25.x.
+          # Satisfy the pinned dippin module's go directive (dippin v0.72.0 → go
+          # 1.25.4). setup-go with "1.25" resolves to the newest 1.25.x.
           go-version: "1.25"
 
       - name: Install dippin (pinned — keep in lockstep with dev_loop_smoke.yml)
         env:
           # MUST match dev_loop_smoke.yml's DIPPIN_VERSION so every gate validates
-          # against the same language semantics. tracker v0.63.5 vendors dippin
-          # v0.64.0; bump both workflows together.
-          DIPPIN_VERSION: v0.64.0
+          # against the same language semantics. tracker v0.73.1 vendors dippin
+          # v0.72.0; bump both workflows together.
+          DIPPIN_VERSION: v0.72.0
         run: |
           go install "github.com/2389-research/dippin-lang/cmd/dippin@${DIPPIN_VERSION}"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"

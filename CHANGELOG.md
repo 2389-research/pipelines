@@ -99,6 +99,17 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Changed
 
+- Toolchain pin advanced to the current latest lockstep pair: tracker `v0.63.5`
+  → `v0.73.1`, dippin `v0.64.0` → `v0.72.0` in both `dev_loop_smoke.yml` and
+  `dip_check.yml`, and the README "currently pinned" pair updated to match.
+  tracker `v0.73.1` vendors dippin `v0.72.0`, so `dippin check/doctor/simulate`
+  still sees the same language semantics as `tracker validate`. `go-version`
+  stays `"1.25"` (dippin `v0.72.0` → go 1.25.4, tracker `v0.73.1` → go 1.25.5).
+  The README requirement **floor** (tracker `≥ v0.44.0`, dippin `≥ v0.48.0`) is
+  unchanged. Verified locally under the new pair: all 60 repo `.dip` files pass
+  `dippin check`; `dev_loop.dip` stays `check`-clean, Grade A (90/100),
+  simulate-clean (`pipeline_end` success), and `tracker validate`-clean; no
+  repo `.dip` was modified.
 - Toolchain pin advanced to the current latest lockstep pair: tracker `v0.44.0`
   → `v0.63.5`, dippin `v0.48.0` → `v0.64.0` (`dev_loop_smoke.yml`), and the
   README "currently pinned" pair updated to match. tracker `v0.63.5` vendors
