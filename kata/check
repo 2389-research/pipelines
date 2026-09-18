@@ -17,7 +17,6 @@ simulation_log=$(mktemp)
 trap 'rm -f "$simulation_log"' EXIT HUP INT TERM
 dippin simulate "$KATA_DIR/complete.dip" --all-paths >"$simulation_log" 2>&1
 grep -F 'ClaimNext' "$simulation_log" >/dev/null
-grep -F 'queue-empty' "$simulation_log" >/dev/null
 grep -F 'Repair' "$simulation_log" >/dev/null
 grep -F 'ContinueImplement' "$simulation_log" >/dev/null
 tracker_log=$(mktemp)
@@ -28,6 +27,7 @@ if grep -F 'warning: unresolved condition variable' "$tracker_log" >/dev/null; t
   printf 'note - tracker static validation reports unset runtime context; real preflight checks run below\n'
 fi
 "$KATA_DIR/tests/routes.sh"
+sh "$KATA_DIR/tests/tool-commands.sh"
 sh "$KATA_DIR/tests/continue.sh"
 sh "$KATA_DIR/tests/handoff.sh"
 "$KATA_DIR/tests/check.sh"

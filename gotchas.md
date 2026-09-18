@@ -71,3 +71,13 @@ with only owned or blocked katas finishes the board. `kata/board-report`
 summarizes a board run and `kata/answer` comments a reply and releases the
 pipeline claim. Implement gets one automatic warm continue (450 turns) after a
 steady turn-limit breach; the second breach hands off.
+
+Tracker inlines a `command_file:` script into the tool command and runs its
+variable expander over the text: every `${...}` containing a dot with a
+namespace other than ctx, params, graph, or inputs becomes an empty string, so
+`${1#https://github.com/}` and `${x%.git}` silently vanish. Verified on tracker
+v0.73.1 (2026-09-17): the same script printed empty values via `command_file:`
+and correct ones when a node ran `sh "${graph.workflow_dir}/scripts/x.sh"`.
+Kata tool nodes run scripts by path; `kata/tests/tool-commands.sh` fails on
+any expansion tracker would blank. The kata tests execute scripts with `sh`
+directly, so they cannot see this class of bug on their own.

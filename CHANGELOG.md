@@ -216,6 +216,22 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
 
+- `kata/complete.dip`: the six tool nodes ran their scripts through
+  `command_file:`, which tracker (v0.73.1, verified 2026-09-17) inlines into
+  the tool command and passes through its `${a.b}` expander. Every dotted
+  expansion outside the `ctx`, `params`, `graph`, and `inputs` namespaces
+  became an empty string, so `close-selected.sh` lost its
+  `${1#https://github.com/}` family of remote URL parsers and every GitHub
+  publication failed with "GitHub remote must have one supported fetch URL and
+  one push URL", although the script passed its tests when run directly. The
+  nodes now run their scripts by path (`sh "${graph.workflow_dir}/scripts/…"`),
+  which tracker never expands. New `kata/tests/tool-commands.sh` fails when
+  any `command_file`/`prompt_file` text carries an expansion tracker would
+  blank and checks that every path a DIP runs exists. `kata/check` no longer
+  greps the simulation log for `queue-empty`: that line only ever matched the
+  inlined script text, and `kata/tests/routes.sh` already proves the
+  queue-empty route.
+
 ### Security
 
 - `greenfield/greenfield.dip`: the orchestrator-level failure-breadcrumb
