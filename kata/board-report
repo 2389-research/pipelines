@@ -75,8 +75,9 @@ while IFS= read -r entry; do
     failed)
       [ -f "$child/handoff.json" ] ||
         { printf 'failed child %s has no handoff record: %s\n' "$run_id" "$child/handoff.json" >&2; exit 1; }
-      jq -c '{group:(if .reason == "decision" then "needs_decision" else "needs_review" end),
-        qualified_id,issue_uid,run_id,branch,base_commit,wip_commit,pr_url:null,reason,question}' \
+      # run_id always comes from the ledger-validated $run_id, never the worker-written handoff copy.
+      jq -c --arg run "$run_id" '{group:(if .reason == "decision" then "needs_decision" else "needs_review" end),
+        qualified_id,issue_uid,run_id:$run,branch,base_commit,wip_commit,pr_url:null,reason,question}' \
         "$child/handoff.json" >>"$tmp/items.jsonl"
       ;;
   esac

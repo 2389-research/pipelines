@@ -67,6 +67,15 @@ selected() {
   printf '%s\n' "$2" >"$runs/$1/selected.json"
 }
 
+handoff_jq() {
+  # Builds a handoff record whose value needs a literal control character; jq's own
+  # serializer escapes it correctly, so the byte never passes through the shell as text.
+  mkdir -p "$runs/$1"
+  out="$runs/$1/handoff.json"
+  shift
+  jq -n "$@" >"$out"
+}
+
 ledger older '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":false,"stop_reason":"three consecutive failed children","runs":[
   {"run_id":"b1b1b1b1b1b1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-b1b1b1b1b1b1","reason":"turn_limit","label":"needs-review"}]}'
 touch -t 202001010000 "$runs/older/board/state.json"
@@ -195,6 +204,31 @@ grep -F 'invalid board ledger' "$test_root/output" >/dev/null || fail 'badchild:
 printf 'ok - an inspection stop prints the resume command, and a malformed child id is refused\n'
 
 # Records a worker's run can write must not reach a pasteable command unchecked.
+# The run id printed and emitted as JSON always comes from the ledger, which is already
+# validated; a handoff's own run_id is worker-written and must never reach the terminal.
+ledger poison-run '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
+  {"run_id":"a3a3a3a3a3a3","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a3a3a3a3a3a3","reason":"review","label":"needs-review"}]}'
+# $base below is a jq variable from --arg, not a shell expansion; handoff_jq is not literally
+# named jq, so shellcheck can't tell.
+# shellcheck disable=SC2016
+handoff_jq a3a3a3a3a3a3 --arg base "$base" '{run_id:("x; rm -rf ~ " + ([27] | implode) + "[2J"),
+  issue_uid:"01REVIEW000000000000000000",qualified_id:"demo#bq4e",reason:"review",label:"needs-review",
+  branch:"kata/bq4e-a3a3a3a3a3a3",base_commit:$base,wip_commit:null,start_branch:"main",question:null}'
+(cd "$repo" && "$report" poison-run) >"$test_root/output" 2>&1 || fail 'poison-run: report exited nonzero'
+grep -Fx -- '- demo#bq4e: review rejected (run a3a3a3a3a3a3)' "$test_root/output" >/dev/null ||
+  fail 'poison-run: the review did not print the ledgers run id'
+if grep -F 'rm -rf' "$test_root/output" >/dev/null || grep -q '[[:cntrl:]]' "$test_root/output"; then
+  fail 'poison-run: the handoffs run id copy reached the text output'
+fi
+(cd "$repo" && "$report" --json poison-run) >"$test_root/report.json" 2>"$test_root/output" ||
+  fail 'poison-run: json report exited nonzero'
+jq -e '.needs_review[0].run_id == "a3a3a3a3a3a3"' "$test_root/report.json" >/dev/null ||
+  fail 'poison-run: json did not use the ledgers run id'
+if grep -F 'rm -rf' "$test_root/report.json" >/dev/null || grep -q '[[:cntrl:]]' "$test_root/report.json"; then
+  fail 'poison-run: the handoffs run id copy reached the json output'
+fi
+printf 'ok - the review prints the ledger run id, not an unsafe handoff copy\n'
+
 ledger poison-branch '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
   {"run_id":"b2b2b2b2b2b2","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/x","reason":"review","label":"needs-review"}]}'
 # The $(id) below is the payload under test, not an expansion.
@@ -209,18 +243,27 @@ selected d2d2d2d2d2d2 '{"issue_uid":"01COMPLETED000000000000000","qualified_id":
 ledger poison-id '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
   {"run_id":"f2f2f2f2f2f2","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-f2f2f2f2f2f2","commit":"'"$head"'","github":null,"pr_url":""}]}'
 selected f2f2f2f2f2f2 '{"issue_uid":"01COMPLETED000000000000000","qualified_id":"demo#5fav; id"}'
+ledger poison-commit '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
+  {"run_id":"a4a4a4a4a4a4","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a4a4a4a4a4a4","reason":"review","label":"needs-review"}]}'
+handoff a4a4a4a4a4a4 '{"run_id":"a4a4a4a4a4a4","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/bq4e-a4a4a4a4a4a4","base_commit":"deadbeef; rm -rf /","wip_commit":null,"start_branch":"main","question":null}'
+ledger poison-ctrl '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
+  {"run_id":"a5a5a5a5a5a5","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a5a5a5a5a5a5","reason":"review","label":"needs-review"}]}'
+# shellcheck disable=SC2016 # $base is a jq variable from --arg, see above.
+handoff_jq a5a5a5a5a5a5 --arg base "$base" '{run_id:"a5a5a5a5a5a5",issue_uid:"01REVIEW000000000000000000",
+  qualified_id:"demo#bq4e",reason:"review",label:"needs-review",branch:("kata/x" + ([27] | implode) + "y"),
+  base_commit:$base,wip_commit:null,start_branch:"main",question:null}'
 refuse() {
   status=0
   (cd "$repo" && "$report" "$@") >"$test_root/output" 2>&1 || status=$?
   [ "$status" -eq 1 ] || fail "$*: exited $status, expected 1"
   grep -F 'unsafe' "$test_root/output" >/dev/null || fail "$*: the refusal message is missing"
-  if grep -F 'git diff' "$test_root/output" >/dev/null; then fail "$*: a command was printed"; fi
+  if grep -F 'Completed (' "$test_root/output" >/dev/null; then fail "$*: a review was printed before the refusal"; fi
 }
-for poison in poison-branch poison-dots poison-pr poison-id; do
+for poison in poison-branch poison-dots poison-pr poison-id poison-commit poison-ctrl; do
   refuse "$poison"
   refuse --json "$poison"
 done
-printf 'ok - a record with an unsafe branch, id, or pull request URL is refused whole\n'
+printf 'ok - a record with an unsafe branch, commit, id, or pull request URL is refused whole\n'
 
 (cd "$repo" && "$report" -h) >"$test_root/output" 2>&1 || fail '-h failed'
 grep -F 'Usage: board-report' "$test_root/output" >/dev/null || fail '-h lacks usage'
