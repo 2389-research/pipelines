@@ -7,6 +7,7 @@ workflow CompleteKataBoard
 
   defaults
     # Each "Sweep again" is one restart; Tracker's default of five would end a week-long board early.
+    # The 51st "Sweep again" ends the run with a restart-limit failure; start a new board run then.
     max_restarts: 50
 
   tool RunBoard
@@ -23,12 +24,13 @@ workflow CompleteKataBoard
   human MorningReview
     label: "Morning review"
     mode: choice
-    default: done
     prompt:
       The board stopped with katas that need you; the review below lists each one.
-      From another shell in the target Git root, answer a kata with
-        ${graph.workflow_dir}/answer <issue-ref> "<your answer>"
-      then choose Sweep again to claim the katas you released, or Done to end this run.
+      In a terminal, pick with the arrow keys and Enter; Escape chooses Done.
+      With a numbered list, type the number or the choice text and press Enter.
+      Answer or finish katas from another shell in the target Git root with the
+      commands the review shows, then choose Sweep again to claim the katas you
+      released, or Done to end this run.
       ${ctx.tool_stdout}
 
   tool Exit
@@ -40,5 +42,6 @@ workflow CompleteKataBoard
     RunBoard -> Report  on board-needs-human
     RunBoard -> Exit  on board-clean
     Report -> MorningReview
-    MorningReview -> Exit  label: "[D] Done"  choice: done
-    MorningReview -> RunBoard  label: "[S] Sweep again"  choice: sweep  restart: true
+    # Done is first on purpose: with no default, Escape and --auto-approve take the first choice.
+    MorningReview -> Exit  label: "Done"  choice: done
+    MorningReview -> RunBoard  label: "Sweep again"  choice: sweep  restart: true

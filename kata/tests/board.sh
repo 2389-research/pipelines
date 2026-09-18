@@ -216,6 +216,14 @@ cp "$pipeline_dir/scripts/run-board.sh" "$test_root/workflow/scripts/run-board.s
 cp "$pipeline_dir/board-report" "$test_root/workflow/board-report"
 chmod +x "$test_root/workflow/board-report"
 
+# Every assertion names what it expected; the tail of the named log (the controller output by default) follows.
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  fail_log=${2:-$test_root/output}
+  [ ! -f "$fail_log" ] || tail -n 60 "$fail_log" >&2
+  exit 1
+}
+
 new_case() {
   repo="$test_root/$1 repository"
   git init -q -b main "$repo"
@@ -567,20 +575,24 @@ grep -Fx "Board $TRACKER_RUN_ID in $repo: stopped" "$test_root/output" >/dev/nul
 grep -Fx 'Stop reason: invalid open-board response' "$test_root/output" >/dev/null
 printf 'ok - a board that stops outside a child records why, and the review says it stopped\n'
 
-# Invoke the actual parent workflow so nested tool environments and failure routing are real.
+# Invoke the actual parent workflow so nested tool environments and routing are real. A clean board must end
+# without a gate, and stdin is closed so a gate that did open could not be answered by accident.
 new_case nested 1
-if ! tracker --git off --workdir "$repo" --json --no-tui "$test_root/workflow/board.dip" \
-  >"$test_root/parent.log" 2>&1; then
-  printf 'FAIL: real Tracker parent did not complete its child workflow\n' >&2
-  tail -n 20 "$test_root/parent.log" >&2
-  exit 1
-fi
-parent_id=$(jq -Rnr '[inputs | fromjson? | select(.source == "pipeline" and .type == "pipeline_started")][0].run_id' \
+tracker --git off --workdir "$repo" --json --no-tui "$test_root/workflow/board.dip" \
+  >"$test_root/parent.log" 2>&1 </dev/null ||
+  fail 'real Tracker parent did not complete its child workflow' "$test_root/parent.log"
+# Tracker prints some events on the same console line as a prompt, so strip anything before the first brace.
+parent_id=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.source == "pipeline" and .type == "pipeline_started")][0].run_id' \
   <"$test_root/parent.log")
+case "$parent_id" in ''|null) fail 'nested: the parent log has no pipeline_started event' "$test_root/parent.log" ;; esac
 parent_ledger="$repo/.tracker/runs/$parent_id/board/state.json"
 jq -e --arg parent "$parent_id" '.finished == true and (has("stop_reason") | not) and
-  [.runs[].kind] == ["completed","empty"] and all(.runs[]; .run_id != $parent)' "$parent_ledger" >/dev/null
-[ "$(claim_count)" -eq 2 ]
+  [.runs[].kind] == ["completed","empty"] and all(.runs[]; .run_id != $parent)' "$parent_ledger" >/dev/null ||
+  fail 'nested: the ledger does not show one completed kata and one empty sweep under a distinct parent id'
+[ "$(claim_count)" -eq 2 ] || fail "nested: claim count is $(claim_count), expected 2"
+jq -Rne '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_opened")] | length == 0' \
+  <"$test_root/parent.log" >/dev/null || fail 'nested: a clean board opened the morning review gate' "$test_root/parent.log"
+printf 'ok - a real Tracker parent sweeps a clean board and ends without a gate\n'
 new_case nested-failure 1
 : >"$fixture/fail-close"
 if tracker --git off --workdir "$repo" --json --no-tui "$test_root/workflow/board.dip" \
@@ -622,3 +634,31 @@ responses=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "
 [ "$responses" = 'sweep,done' ] || gate_fail "gate responses are \"$responses\", expected sweep,done"
 grep -Fx 'Needs review (1)' "$test_root/parent-gate.log" >/dev/null || gate_fail 'the gate prompt does not show the review'
 printf 'ok - real Tracker parent opens the morning review for a handed-off kata and sweeps again on request\n'
+
+# Nobody is on stdin. With no default choice the gate must fail the run rather than pick an answer.
+new_case nested-gate-eof 1
+printf '1\n' >"$fixture/fail-implement"
+if tracker --git off --workdir "$repo" --json --no-tui "$test_root/workflow/board.dip" \
+  >"$test_root/parent-gate-eof.log" 2>&1 </dev/null; then
+  fail 'the morning review answered itself with stdin closed' "$test_root/parent-gate-eof.log"
+fi
+jq -Rne '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_opened")] | length == 1' \
+  <"$test_root/parent-gate-eof.log" >/dev/null || fail 'nested-gate-eof: the gate did not open exactly once' "$test_root/parent-gate-eof.log"
+# Tracker still emits gate_resolved on the failure, carrying the error text; only a real choice is wrong here.
+jq -Rne '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolved") |
+  select(.gate_response == "done" or .gate_response == "sweep")] | length == 0' \
+  <"$test_root/parent-gate-eof.log" >/dev/null || fail 'nested-gate-eof: the gate resolved without a person' "$test_root/parent-gate-eof.log"
+[ "$(claim_count)" -eq 2 ] || fail "nested-gate-eof: claim count is $(claim_count), expected 2"
+printf 'ok - a real Tracker parent fails at the morning review when nobody can answer it\n'
+
+# --auto-approve takes the first choice when there is no default; Done must be first so an unattended run ends.
+new_case nested-auto-approve 1
+printf '1\n' >"$fixture/fail-implement"
+tracker --git off --workdir "$repo" --json --no-tui --auto-approve "$test_root/workflow/board.dip" \
+  >"$test_root/parent-auto.log" 2>&1 </dev/null ||
+  fail 'a real Tracker parent under --auto-approve did not end' "$test_root/parent-auto.log"
+responses=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolved") | .gate_response] | join(",")' \
+  <"$test_root/parent-auto.log")
+[ "$responses" = 'done' ] || fail "nested-auto-approve: gate responses are \"$responses\", expected done" "$test_root/parent-auto.log"
+[ "$(claim_count)" -eq 2 ] || fail "nested-auto-approve: claim count is $(claim_count), expected 2"
+printf 'ok - a real Tracker parent under --auto-approve ends after one sweep\n'

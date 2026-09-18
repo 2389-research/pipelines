@@ -20,8 +20,28 @@ grep -F 'ClaimNext' "$simulation_log" >/dev/null
 grep -F 'Repair' "$simulation_log" >/dev/null
 grep -F 'ContinueImplement' "$simulation_log" >/dev/null
 dippin simulate "$KATA_DIR/board.dip" --all-paths >"$simulation_log" 2>&1
-grep -F 'MorningReview' "$simulation_log" >/dev/null
-grep -F '"restart":true' "$simulation_log" >/dev/null
+# Every route the board relies on, as dippin prints it; a renamed label or a dropped restart fails here.
+for edge in \
+  '"from":"RunBoard","to":"Report","condition":"ctx.tool_marker = board-needs-human"' \
+  '"from":"RunBoard","to":"Exit","condition":"ctx.tool_marker = board-clean"' \
+  '"from":"Report","to":"MorningReview"' \
+  '"from":"MorningReview","to":"Exit","label":"Done"' \
+  '"from":"MorningReview","to":"RunBoard","label":"Sweep again","restart":true'; do
+  grep -F "$edge" "$simulation_log" >/dev/null || {
+    printf 'board.dip simulation lacks the edge %s\n' "$edge" >&2
+    exit 1
+  }
+done
+# A default choice would let a closed stdin or --auto-approve answer the morning review by itself.
+if grep -nE '^[[:space:]]*default:' "$KATA_DIR/board.dip"; then
+  printf 'board.dip gives the morning review a default choice\n' >&2
+  exit 1
+fi
+# With no default, --auto-approve and the TUI's Escape take the first choice, which must be Done.
+grep -E '^[[:space:]]*MorningReview ->' "$KATA_DIR/board.dip" | sed -n '1p' | grep -F 'choice: done' >/dev/null || {
+  printf 'board.dip must list Done as the first morning review choice\n' >&2
+  exit 1
+}
 tracker_log=$(mktemp)
 trap 'rm -f "$simulation_log" "$tracker_log"' EXIT HUP INT TERM
 tracker validate "$KATA_DIR/complete.dip" >"$tracker_log" 2>&1
