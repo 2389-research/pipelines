@@ -337,7 +337,8 @@ jq -r '.runs[].run_id' "$ledger" | while IFS= read -r child; do
 done
 grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null
 grep -Fx 'Completed (2)' "$test_root/output" >/dev/null
-grep -Fx '  fixture#fixture-item-2  kata/item-2  https://github.com/fixture/board/pull/2' "$test_root/output" >/dev/null
+grep -Fx -e '- fixture#fixture-item-2 on kata/item-2' "$test_root/output" >/dev/null
+grep -Fx '  https://github.com/fixture/board/pull/2' "$test_root/output" >/dev/null
 expect_marker board-clean 'two stacked tasks'
 # Re-entering a finished ledger (the morning review's "Sweep again") claims again in the same ledger.
 must_succeed 'a finished ledger on re-entry'
@@ -385,7 +386,7 @@ grep -Fx 'Failed fixture-item-1 (implement); left open with needs-review on kata
 grep -F 'Board complete: 1 katas finished, 1 left open for review.' "$test_root/output" >/dev/null
 grep -Fx 'Completed (1)' "$test_root/output" >/dev/null
 grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null
-grep -F '  fixture#fixture-item-1  worker stopped; branch kata/item-1' "$test_root/output" >/dev/null
+grep -F -e '- fixture#fixture-item-1: worker stopped (run ' "$test_root/output" >/dev/null
 expect_marker board-needs-human 'a handed-off kata'
 # The morning review answered the kata; the next sweep reclaims it and finishes it from the stack tip.
 printf 'fixture-item-1\n' >"$fixture/reclaim"
@@ -448,7 +449,7 @@ jq -e '.finished == true and (has("stop_reason") | not) and [.runs[].kind] == ["
 jq -e '.issues[0].uid == "blocked-item"' "$TRACKER_RUN_DIR/board/blocked.json" >/dev/null
 grep -F 'Board incomplete: 1 open katas remain, but none were ready and unowned.' "$test_root/output" >/dev/null
 grep -Fx 'Remaining open (1)' "$test_root/output" >/dev/null
-grep -Fx '  blocked-item  owned by another-actor' "$test_root/output" >/dev/null
+grep -Fx -e '- blocked-item owned by another-actor' "$test_root/output" >/dev/null
 expect_marker board-needs-human 'a blocked queue'
 rm "$fixture/blocked"
 must_succeed 'a re-entry after the blocked katas closed'

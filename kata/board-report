@@ -11,16 +11,16 @@ if [ "${1:-}" = --json ]; then
   format=json
   shift
 fi
-if [ "${1:-}" = --help ]; then
-  usage
-  exit 0
-fi
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 [ "$#" -le 1 ] || { usage >&2; exit 2; }
 command -v git >/dev/null
 command -v jq >/dev/null
 command -v kata >/dev/null
 kata_dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
-workspace=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)
+top=$(git rev-parse --show-toplevel 2>/dev/null) || { printf 'run this from inside the target Git repository\n' >&2; exit 1; }
+workspace=$(cd -- "$top" && pwd -P)
+# Commands print as ~/... when the pipeline lives under the operator's home, so they stay short and pasteable.
+home=$(CDPATH='' cd -- "${HOME:-/nonexistent}" 2>/dev/null && pwd -P || true)
 runs="$workspace/.tracker/runs"
 board_id=${1:-}
 if [ -z "$board_id" ]; then
@@ -38,12 +38,19 @@ fi
 case "$board_id" in ''|*/*|.|..) printf 'invalid board run id: %s\n' "$board_id" >&2; exit 2 ;; esac
 ledger="$runs/$board_id/board/state.json"
 [ -f "$ledger" ] || { printf 'no board ledger at %s\n' "$ledger" >&2; exit 1; }
+# The controller writes the ledger, but every child run id in it names a directory this script reads,
+# so each id is checked before it touches a path.
 jq -e '(.finished | type == "boolean") and (.runs | type == "array") and
-  all(.runs[]; (.run_id | type == "string" and length > 0) and
-    (.kind == "completed" or .kind == "failed" or .kind == "empty"))' "$ledger" >/dev/null ||
+  (.stop_reason == null or (.stop_reason | type == "string")) and
+  (.stop_child == null or ((.stop_child | type == "string" and test("^[a-f0-9]{12}$")) and
+    (.pipeline | type == "string" and length > 0))) and
+  all(.runs[]; (.run_id | type == "string" and test("^[a-f0-9]{12}$")) and
+    (.kind == "completed" or .kind == "failed" or .kind == "empty") and
+    (.kind == "empty" or (.issue_uid | type == "string" and length > 0)))' "$ledger" >/dev/null ||
   { printf 'invalid board ledger: %s\n' "$ledger" >&2; exit 1; }
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' HUP INT TERM
 kata list --workspace "$workspace" --status open --limit 0 --json >"$tmp/open.json"
 jq -e '.issues | type == "array"' "$tmp/open.json" >/dev/null || { printf 'invalid open-board response\n' >&2; exit 1; }
 
@@ -56,38 +63,54 @@ jq -c '.runs as $runs | $runs | to_entries[] | select(.value.kind != "empty") |
 while IFS= read -r entry; do
   kind=$(printf '%s' "$entry" | jq -r '.kind')
   run_id=$(printf '%s' "$entry" | jq -r '.run_id')
-  case "$run_id" in *[!a-f0-9]*) printf 'invalid child run id %s in %s\n' "$run_id" "$ledger" >&2; exit 1 ;; esac
   child="$runs/$run_id"
   case "$kind" in
     completed)
       qualified=$(jq -er '.qualified_id' "$child/selected.json" 2>/dev/null) ||
         { printf 'completed child %s has no selection record: %s\n' "$run_id" "$child/selected.json" >&2; exit 1; }
       printf '%s' "$entry" | jq -c --arg qualified "$qualified" '{group:"completed",qualified_id:$qualified,issue_uid,run_id,branch,
-        base_commit:null,wip_commit:null,pr_url:(if .pr_url == "" then null else .pr_url end),
-        reason:null,question:null,owner:null,labels:[],next:[]}' >>"$tmp/items.jsonl"
+        base_commit:null,wip_commit:null,pr_url:(if .pr_url == "" then null else .pr_url end),reason:null,question:null}' \
+        >>"$tmp/items.jsonl"
       ;;
     failed)
       [ -f "$child/handoff.json" ] ||
         { printf 'failed child %s has no handoff record: %s\n' "$run_id" "$child/handoff.json" >&2; exit 1; }
-      jq -c --arg answer "$kata_dir/answer" '
-        (if .reason == "decision" then "needs_decision" else "needs_review" end) as $group |
-        {group:$group,qualified_id,issue_uid,run_id,branch,base_commit,wip_commit,pr_url:null,reason,question,owner:null,labels:[],
-         next:(if $group == "needs_decision" then ["\($answer) \(.qualified_id) \"<your answer>\""]
-               else ["git diff \(.base_commit)..\(.branch)", "\($answer) \(.qualified_id) \"<guidance>\""] end)}' \
+      jq -c '{group:(if .reason == "decision" then "needs_decision" else "needs_review" end),
+        qualified_id,issue_uid,run_id,branch,base_commit,wip_commit,pr_url:null,reason,question}' \
         "$child/handoff.json" >>"$tmp/items.jsonl"
       ;;
   esac
 done <"$tmp/runs.jsonl"
 
-jq -n --arg board "$board_id" --arg workspace "$workspace" \
+# Child records are written by the worker's run. Every field that reaches a pasteable command
+# must look like what it claims to be, or the whole review is refused.
+jq -se --arg qid '^[A-Za-z0-9._-]+(#[A-Za-z0-9._-]+)?$' --arg branch '^[A-Za-z0-9][A-Za-z0-9._/-]*$' \
+  --arg commit '^([0-9a-f]{40}|[0-9a-f]{64})$' --arg pr '^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+$' '
+  def clean: type == "string" and (test("[[:cntrl:]]") | not);
+  def commit_or_null: . == null or (clean and test($commit));
+  all(.[]; (.qualified_id | clean and test($qid)) and
+    (.branch | clean and test($branch) and (contains("..") | not)) and
+    (.base_commit | commit_or_null) and (.wip_commit | commit_or_null) and
+    (.pr_url == null or (.pr_url | clean and test($pr))))
+' "$tmp/items.jsonl" >/dev/null ||
+  { printf 'refusing to print the review: a child record under %s has a missing or unsafe id, branch, commit, or pull request URL\n' "$runs" >&2; exit 1; }
+
+jq -n --arg board "$board_id" --arg workspace "$workspace" --arg answer "$kata_dir/answer" \
   --slurpfile state "$ledger" --slurpfile listing "$tmp/open.json" --slurpfile entries "$tmp/items.jsonl" '
+  def short: if . == null then "none" else .[0:12] end;
+  def next: if .group == "needs_decision" then ["\($answer) \(.qualified_id) \"<your answer>\""]
+    elif .group == "needs_review" then
+      (if .base_commit == null then [] else ["git diff \(.base_commit | short)..\(.branch)"] end) +
+      ["\($answer) \(.qualified_id) \"<guidance>\""]
+    else [] end;
   $state[0] as $ledger | $listing[0].issues as $issues |
-  ($ledger.runs | map(.issue_uid // empty)) as $touched |
+  [$ledger.runs[] | .issue_uid // empty] as $touched |
   # Handed-off katas are still open: show their live owner and labels beside the handoff record.
-  ($entries | map(. as $item | ($issues | map(select(.uid == $item.issue_uid)) | first) as $live |
-    if $item.group == "completed" then $item
-    else $item + {owner:($live.owner // null), labels:($live.labels // [])} end)) as $items |
-  {board_run_id:$board, workspace:$workspace, finished:$ledger.finished, stop_reason:($ledger.stop_reason // null),
+  ($entries | map(. as $item | ([$issues[] | select(.uid == $item.issue_uid)] | first) as $live |
+    $item + (if $item.group == "completed" then {owner:null, labels:[]}
+             else {owner:($live.owner // null), labels:($live.labels // [])} end) + {next:($item | next)})) as $items |
+  {board_run_id:$board, workspace:$workspace, pipeline:($ledger.pipeline // null), finished:$ledger.finished,
+   stop_reason:($ledger.stop_reason // null), stop_child:($ledger.stop_child // null),
    completed:[$items[] | select(.group == "completed")],
    needs_decision:[$items[] | select(.group == "needs_decision")],
    needs_review:[$items[] | select(.group == "needs_review")],
@@ -101,21 +124,31 @@ if [ "$format" = json ]; then
   cat "$tmp/report.json"
   exit 0
 fi
-jq -r '
+# Tracker reflows this text at 76 columns and strips indentation before a person sees it, so every
+# line is short, no line depends on its indent, and each command is whole on one line.
+jq -r --arg kata "$kata_dir" --arg home "$home" --arg q "'" '
+  def sq: $q + gsub($q; $q + "\\" + $q + $q) + $q;
+  def flat: if . == null then "" else tostring | gsub("[[:cntrl:]]+"; " ") end;
+  def short: if . == null then "none" else .[0:12] end;
+  def path_arg: if $home != "" and startswith($home + "/") and test("^[A-Za-z0-9._/-]+$")
+    then "~" + .[($home | length):] else sq end;
   def reason_text: . as $reason |
-    {decision:"needs a decision", publish:"publication failed", review:"review rejected",
-     turn_limit:"turn limit reached twice", implement:"worker stopped",
-     unexpected_checkout:"handoff found the wrong branch"} | .[$reason]? // $reason;
-  def short: if . == null then "none" else .[0:8] end;
-  def next_lines: .next[] | "      \(.)";
+    ({decision:"needs a decision", publish:"publication failed", review:"review rejected",
+      turn_limit:"turn limit reached twice", implement:"worker stopped",
+      unexpected_checkout:"handoff found the wrong branch"} | .[$reason]?) //
+    (if $reason == null or $reason == "" then "handed off" else ($reason | flat) end);
+  def next_lines: .next[] | "  " + (if startswith($kata + "/answer ") then (($kata + "/answer") | path_arg) + ltrimstr($kata + "/answer") else . end);
+  def kata_lines: "- \(.qualified_id): \(.reason | reason_text) (run \(.run_id))",
+    "  branch \(.branch), base \(.base_commit | short), wip \(.wip_commit | short)";
   "Board \(.board_run_id) in \(.workspace): \(if .stop_reason != null then "stopped" elif .finished then "finished" else "in progress" end)",
+  (if .stop_reason != null then "Stop reason: \(.stop_reason | flat)" else empty end),
+  (if .stop_child != null then "  tracker -r \(.stop_child) \(.pipeline | path_arg)" else empty end),
   "Completed (\(.completed | length))",
-  (.completed[] | "  \(.qualified_id)  \(.branch)  \(.pr_url // "no pull request")"),
+  (.completed[] | "- \(.qualified_id) on \(.branch)", "  \(.pr_url // "no pull request")"),
   "Needs decision (\(.needs_decision | length))",
-  (.needs_decision[] | "  \(.qualified_id)  Q: \((.question // "") | gsub("\n"; " "))", next_lines),
+  (.needs_decision[] | kata_lines, "  Q: \(.question | flat)", next_lines),
   "Needs review (\(.needs_review | length))",
-  (.needs_review[] | "  \(.qualified_id)  \(.reason | reason_text); branch \(.branch) (base \(.base_commit | short), wip \(.wip_commit | short)); run \(.run_id)", next_lines),
+  (.needs_review[] | kata_lines, next_lines),
   "Remaining open (\(.remaining | length))",
-  (.remaining[] | "  \(.qualified_id)  owned by \(.owner // "nobody")\(if (.labels | length) > 0 then ", labels \(.labels | join(","))" else "" end)"),
-  (if .stop_reason != null then "Stop reason: \(.stop_reason)" else empty end)
+  (.remaining[] | "- \(.qualified_id | flat) owned by \(.owner | flat | if . == "" then "nobody" else . end)\(if (.labels | length) > 0 then ", labels \(.labels | map(flat) | join(","))" else "" end)")
 ' "$tmp/report.json"
