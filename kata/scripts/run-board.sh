@@ -113,6 +113,11 @@ record_failure() {
   fi
 }
 
+# A finished ledger ended at an empty queue. Re-entry, such as the morning review's "Sweep again",
+# sweeps the board again in the same ledger.
+if jq -e '.finished' "$state" >/dev/null; then
+  write_state '.finished = false'
+fi
 while ! jq -e '.finished' "$state" >/dev/null; do
   # A stop reason describes the previous controller's last iteration; this one decides afresh.
   write_state 'del(.stop_reason)'
@@ -202,11 +207,21 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     if [ "$remaining" -gt 0 ]; then
       printf '%s\n' "$open" >"$board/blocked.json"
       printf 'Board incomplete: %s open katas remain, but none were ready and unowned. See %s\n' "$remaining" "$board/blocked.json"
+    else
+      rm -f "$board/blocked.json"
     fi
     write_state '.finished = true'
   fi
 done
+# Only a kata's latest ledger entry describes it: a handoff that a later sweep finished no longer needs review.
+open_for_review=$(jq '.runs as $runs | [$runs | to_entries[] | select(.value.kind == "failed") |
+  select(.key as $i | .value.issue_uid as $uid | any($runs[$i + 1:][]; .issue_uid == $uid) | not)] | length' "$state")
 printf 'Board complete: %s katas finished, %s left open for review. Ledger: %s\n' \
-  "$(jq '[.runs[] | select(.kind == "completed")] | length' "$state")" \
-  "$(jq '[.runs[] | select(.kind == "failed")] | length' "$state")" "$state"
+  "$(jq '[.runs[] | select(.kind == "completed")] | length' "$state")" "$open_for_review" "$state"
 "$report" "$TRACKER_RUN_ID"
+# The last line routes board.dip: a clean board ends the run; anything else opens the morning review.
+if [ "$open_for_review" -eq 0 ] && [ "$remaining" -eq 0 ]; then
+  printf 'board-clean\n'
+else
+  printf 'board-needs-human\n'
+fi

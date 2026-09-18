@@ -199,6 +199,20 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   audits recognize these as reviewed exceptions rather than missed instances.
   No `.dip` behavior change (comment-only); the write-bounding prose stays as
   the only available guard until a scoped read-only primitive lands upstream.
+- `kata/board.dip`: the board no longer ends silently with katas left open. The
+  controller's last line routes the run: `board-clean` exits, and
+  `board-needs-human` prints the morning review and holds a `Morning review`
+  human gate whose choices are `Sweep again` (run the controller again in the
+  same ledger, up to 50 times) and `Done`. Tracker never prints a tool node's
+  output in `--no-tui`, so the gate is the board's only console output; run it
+  in a terminal that stays open, and expect a run without stdin to fail at the
+  gate. `kata/scripts/run-board.sh` re-enters a finished ledger as a new sweep
+  and drops `board/blocked.json` once a sweep finds nothing blocked;
+  `kata/board-report` describes each kata by its latest ledger entry, so a
+  handoff a later sweep finished no longer shows under `Needs review`.
+  `kata/tests/board.sh` covers the markers, the second-sweep finish, blocked
+  re-entry, and a real Tracker parent answering the gate (`Sweep again`, then
+  `Done`); `kata/tests/report.sh` covers the latest-entry view.
 
 ### Fixed
 

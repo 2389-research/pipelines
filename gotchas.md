@@ -95,3 +95,17 @@ before claiming; push the binding commit first.
 Related: `kata assign <ref> none` creates an actor literally named `none`.
 `kata ready --unowned` then skips the kata and the board report reads
 "owned by none". Release it with `kata unassign <ref> --expect-owner none`.
+
+## Tracker prints human gates, not tool output (verified 2026-09-18)
+
+Under `--no-tui` Tracker 0.73.1 never prints a tool node's stdout or stderr, so
+a board sweep is silent for hours and `kata/board.dip` used to end without a
+word. A `human` node does print: its label, the prompt with `${ctx.tool_stdout}`
+rendered as a fenced `## Tool Stdout` block, the choices numbered in edge order,
+and `Enter choice [default]:`, which reads the choice NUMBER (not the letter)
+from stdin. Closed stdin fails the gate and the run; `--auto-approve` picks the
+default. Under `--json --no-tui` the prompt still prints among the event lines,
+and `gate_resolved` shares the `Enter choice` line (no newline), so strip
+everything before the first `{` before `fromjson`. `max_restarts` is accepted
+only inside a `defaults` block; at workflow level dippin 0.72.0 and tracker
+0.73.1 fail to parse ("unexpected top-level identifier").

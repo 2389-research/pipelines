@@ -123,6 +123,41 @@ grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null || fail 'null reason:
 grep -F '  demo#bq4e  ' "$test_root/output" >/dev/null || fail 'null reason: the kata is not named'
 printf 'ok - a handoff record without a reason still reports its kata\n'
 
+# A board that swept more than once carries several entries for one kata; the latest one is its state.
+ledger resweep '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
+  {"run_id":"b1b1b1b1b1b1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-b1b1b1b1b1b1","reason":"turn_limit","label":"needs-review"},
+  {"run_id":"e1e1e1e1e1e1","kind":"empty"},
+  {"run_id":"f1f1f1f1f1f1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-f1f1f1f1f1f1","reason":"review","label":"needs-review"},
+  {"run_id":"c1c1c1c1c1c1","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-c1c1c1c1c1c1","commit":"'"$head"'","github":{"remote":"origin","repository":"o/r","base_branch":"main"},"pr_url":"https://github.com/o/r/pull/12"},
+  {"run_id":"e2e2e2e2e2e2","kind":"empty"},
+  {"run_id":"a2a2a2a2a2a2","kind":"completed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a2a2a2a2a2a2","commit":"'"$wip"'","github":null,"pr_url":""},
+  {"run_id":"e3e3e3e3e3e3","kind":"empty"}]}'
+mkdir -p "$runs/a2a2a2a2a2a2"
+printf '%s\n' '{"issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e"}' >"$runs/a2a2a2a2a2a2/selected.json"
+cat >"$test_root/expected" <<EXPECTED
+Board resweep in $repo: finished
+Completed (2)
+  demo#5fav  kata/5fav-c1c1c1c1c1c1  https://github.com/o/r/pull/12
+  demo#bq4e  kata/bq4e-a2a2a2a2a2a2  no pull request
+Needs decision (0)
+Needs review (0)
+Remaining open (3)
+  demo#n4vr  owned by kata-pipeline-d1d1d1d1d1d1, labels needs-decision
+  demo#a2j0  owned by kata-pipeline-b20d9e898b16
+  demo#zz11  owned by nobody, labels task
+EXPECTED
+(cd "$repo" && "$report" resweep) >"$test_root/output" 2>&1 || fail 'report failed for a ledger with several sweeps'
+diff -u "$test_root/expected" "$test_root/output" || fail 'resweep: text report differs from the expected output'
+ledger twice '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
+  {"run_id":"b1b1b1b1b1b1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-b1b1b1b1b1b1","reason":"turn_limit","label":"needs-review"},
+  {"run_id":"e1e1e1e1e1e1","kind":"empty"},
+  {"run_id":"f1f1f1f1f1f1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-f1f1f1f1f1f1","reason":"review","label":"needs-review"},
+  {"run_id":"e2e2e2e2e2e2","kind":"empty"}]}'
+(cd "$repo" && "$report" --json twice) >"$test_root/report.json" 2>"$test_root/output" || fail 'json report failed for a kata handed off twice'
+jq -e '.completed == [] and [.needs_review[] | .run_id] == ["f1f1f1f1f1f1"] and .needs_review[0].reason == "review"' \
+  "$test_root/report.json" >/dev/null || { cat "$test_root/report.json" >&2; fail 'twice: the latest handoff is not the only one reported'; }
+printf 'ok - a kata handed off and later finished, or handed off twice, is reported once by its latest run\n'
+
 status=0
 (cd "$repo" && "$report" missing) >"$test_root/output" 2>&1 || status=$?
 [ "$status" -eq 1 ] || fail "missing run exited $status, expected 1"

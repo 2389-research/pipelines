@@ -119,7 +119,13 @@ if [ "$remaining" -eq 0 ]; then
   exit 0
 fi
 number=$(wc -l <"$fixture/claims" | tr -d ' ')
-uid="fixture-item-$number"
+# A reclaim names a kata an earlier child handed off; this claim takes it instead of a new one.
+if [ -s "$fixture/reclaim" ]; then
+  uid=$(cat "$fixture/reclaim")
+  : >"$fixture/reclaim"
+else
+  uid="fixture-item-$number"
+fi
 actor="kata-pipeline-$TRACKER_RUN_ID"
 base=$(git rev-parse HEAD)
 start_branch=$(git branch --show-current)
@@ -288,6 +294,15 @@ claim_count() {
   wc -l <"$fixture/claims" | tr -d ' '
 }
 
+# The controller's last line routes board.dip: a clean board exits, anything else opens the morning review.
+expect_marker() {
+  last=$(tail -n 1 "$test_root/output")
+  [ "$last" = "$1" ] || {
+    printf 'FAIL: %s: last controller line is "%s", expected %s\n' "$2" "$last" "$1" >&2
+    exit 1
+  }
+}
+
 # Integration coverage: Tracker and Git are real; the Kata boundary is a fixture.
 new_case stacked 2
 must_succeed 'two stacked tasks'
@@ -315,11 +330,15 @@ done
 grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null
 grep -Fx 'Completed (2)' "$test_root/output" >/dev/null
 grep -Fx '  fixture#fixture-item-2  kata/item-2  https://github.com/fixture/board/pull/2' "$test_root/output" >/dev/null
-cp "$ledger" "$test_root/completed-ledger.json"
-must_succeed 'already-finished parent resume'
-cmp "$ledger" "$test_root/completed-ledger.json"
-[ "$(claim_count)" -eq 3 ]
-printf 'ok - real Tracker children use distinct IDs and stack commits without duplicate parent resume\n'
+expect_marker board-clean 'two stacked tasks'
+# Re-entering a finished ledger (the morning review's "Sweep again") claims again in the same ledger.
+must_succeed 'a finished ledger on re-entry'
+jq -e '.finished == true and (has("stop_reason") | not) and
+  [.runs[].kind] == ["completed","completed","empty","empty"]' "$ledger" >/dev/null
+[ "$(claim_count)" -eq 4 ]
+grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null
+expect_marker board-clean 'a finished ledger on re-entry'
+printf 'ok - real Tracker children use distinct IDs and stack commits, and a finished ledger sweeps again on re-entry\n'
 
 new_case empty 0
 must_succeed 'initially empty board'
@@ -327,6 +346,7 @@ jq -e '.finished == true and (has("stop_reason") | not) and [.runs[].kind] == ["
 [ "$(claim_count)" -eq 1 ]
 grep -F 'list --status open --limit 0 --json' "$fixture/kata.log" >/dev/null
 grep -F 'Board complete: 0 katas finished, 0 left open for review.' "$test_root/output" >/dev/null
+expect_marker board-clean 'an empty board'
 printf 'ok - an empty board requires the full open-issue query\n'
 
 new_case failing 2
@@ -358,7 +378,24 @@ grep -F 'Board complete: 1 katas finished, 1 left open for review.' "$test_root/
 grep -Fx 'Completed (1)' "$test_root/output" >/dev/null
 grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null
 grep -F '  fixture#fixture-item-1  worker stopped; branch kata/item-1' "$test_root/output" >/dev/null
-printf 'ok - a clean worker failure is handed off and the next kata starts from the same base\n'
+expect_marker board-needs-human 'a handed-off kata'
+# The morning review answered the kata; the next sweep reclaims it and finishes it from the stack tip.
+printf 'fixture-item-1\n' >"$fixture/reclaim"
+printf '1\n' >"$fixture/remaining"
+rm "$fixture/fail-implement"
+must_succeed 'a second sweep that finishes the handed-off kata'
+jq -e '.finished == true and (has("stop_reason") | not) and
+  [.runs[].kind] == ["failed","completed","empty","completed","empty"] and
+  .runs[3].issue_uid == "fixture-item-1" and .runs[3].branch == "kata/item-4" and
+  .runs[3].github.base_branch == "kata/item-2"' "$ledger" >/dev/null
+[ "$(claim_count)" -eq 5 ]
+[ ! -s "$fixture/reclaim" ]
+grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null
+grep -Fx 'Completed (2)' "$test_root/output" >/dev/null
+grep -Fx 'Needs review (0)' "$test_root/output" >/dev/null
+[ "$(grep -c 'fixture#fixture-item-1' "$test_root/output")" -eq 1 ]
+expect_marker board-clean 'a second sweep that finishes the handed-off kata'
+printf 'ok - a clean worker failure is handed off, and the next sweep finishes the answered kata once\n'
 
 new_case stacked-failure 2
 printf '2\n' >"$fixture/fail-implement"
@@ -375,6 +412,7 @@ first_commit=$(jq -r '.runs[0].commit' "$ledger")
 jq -e --arg commit "$first_commit" '.branch == "kata/item-1" and .commit == $commit' \
   "$fixture/stack-2.json" >/dev/null
 grep -F 'Board complete: 1 katas finished, 1 left open for review.' "$test_root/output" >/dev/null
+expect_marker board-needs-human 'a failure after a completion'
 printf 'ok - a failure after a completion restores the stack tip and keeps the completed base\n'
 
 new_case three-failures 4
@@ -391,6 +429,7 @@ must_succeed 'parent resume after the failure streak'
 jq -e '.finished == true and (has("stop_reason") | not) and
   [.runs[].kind] == ["failed","failed","failed","completed","empty"]' "$ledger" >/dev/null
 [ "$(claim_count)" -eq 5 ]
+expect_marker board-needs-human 'a resume after the failure streak'
 printf 'ok - three consecutive failures stop the board and a parent resume claims again\n'
 
 new_case blocked 0
@@ -402,7 +441,13 @@ jq -e '.issues[0].uid == "blocked-item"' "$TRACKER_RUN_DIR/board/blocked.json" >
 grep -F 'Board incomplete: 1 open katas remain, but none were ready and unowned.' "$test_root/output" >/dev/null
 grep -Fx 'Remaining open (1)' "$test_root/output" >/dev/null
 grep -Fx '  blocked-item  owned by another-actor' "$test_root/output" >/dev/null
-printf 'ok - a blocked queue finishes the board and lists the untouched katas\n'
+expect_marker board-needs-human 'a blocked queue'
+rm "$fixture/blocked"
+must_succeed 'a re-entry after the blocked katas closed'
+jq -e '.finished == true and [.runs[].kind] == ["empty","empty"]' "$ledger" >/dev/null
+[ ! -e "$TRACKER_RUN_DIR/board/blocked.json" ]
+expect_marker board-clean 'a re-entry after the blocked katas closed'
+printf 'ok - a blocked queue finishes the board and lists the untouched katas until a later sweep finds none\n'
 
 new_case recovery 1
 : >"$fixture/fail-close"
@@ -451,8 +496,11 @@ jq -e --arg child "$failed_child" \
     [.runs[].kind] == ["completed","empty"] and .runs[0].run_id == $child' "$ledger" >/dev/null
 [ "$(claim_count)" -eq 2 ]
 [ "$(git -C "$repo" rev-list --count HEAD)" -eq 2 ]
-must_succeed 'completed recovered parent resume'
-[ "$(claim_count)" -eq 2 ]
+must_succeed 'a re-entry after the recovered child completed'
+jq -e --arg child "$failed_child" '[.runs[].kind] == ["completed","empty","empty"] and .runs[0].run_id == $child' \
+  "$ledger" >/dev/null
+[ "$(claim_count)" -eq 3 ]
+expect_marker board-clean 'a re-entry after the recovered child completed'
 printf 'ok - an integrity stop halts claims; a real child resume reconciles once without duplicate work\n'
 
 new_case unexpected-checkout 1
@@ -547,3 +595,30 @@ parent_id=$(jq -Rnr '[inputs | fromjson? | select(.source == "pipeline" and .typ
 jq -e '.finished == false and (.stop_reason | startswith("child "))' \
   "$repo/.tracker/runs/$parent_id/board/state.json" >/dev/null
 printf 'ok - real Tracker parent isolates child identity and reports a child integrity stop as failure\n'
+
+# A handed-off kata opens the morning-review gate; its answers (sweep again, then done) drive the parent.
+new_case nested-gate 1
+printf '1\n' >"$fixture/fail-implement"
+if ! printf '2\n1\n' | tracker --git off --workdir "$repo" --json --no-tui "$test_root/workflow/board.dip" \
+  >"$test_root/parent-gate.log" 2>&1; then
+  printf 'FAIL: real Tracker parent did not complete the morning review\n' >&2
+  tail -n 20 "$test_root/parent-gate.log" >&2
+  exit 1
+fi
+gate_fail() {
+  printf 'FAIL: nested gate: %s\n' "$1" >&2
+  tail -n 30 "$test_root/parent-gate.log" >&2
+  exit 1
+}
+parent_id=$(jq -Rnr '[inputs | fromjson? | select(.source == "pipeline" and .type == "pipeline_started")][0].run_id' \
+  <"$test_root/parent-gate.log")
+jq -e '.finished == true and (has("stop_reason") | not) and [.runs[].kind] == ["failed","empty","empty"]' \
+  "$repo/.tracker/runs/$parent_id/board/state.json" >/dev/null ||
+  gate_fail 'the ledger does not show one handoff and two empty sweeps'
+[ "$(claim_count)" -eq 3 ] || gate_fail "claim count is $(claim_count), expected 3"
+# The gate prints its "Enter choice" prompt without a newline, so the resolution event shares that line.
+responses=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolved") | .gate_response] | join(",")' \
+  <"$test_root/parent-gate.log")
+[ "$responses" = 'sweep,done' ] || gate_fail "gate responses are \"$responses\", expected sweep,done"
+grep -Fx 'Needs review (1)' "$test_root/parent-gate.log" >/dev/null || gate_fail 'the gate prompt does not show the review'
+printf 'ok - real Tracker parent opens the morning review for a handed-off kata and sweeps again on request\n'

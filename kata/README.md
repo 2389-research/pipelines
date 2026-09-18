@@ -74,8 +74,14 @@ Do not run the board in Tracker's TUI. The whole board is one long tool node, so
 the TUI shows one running node for hours. Leaving that screen with `q` or Ctrl-C
 cancels the run: Tracker 0.73.1 kills the controller and its child Tracker, then
 labels the failure `command timed out after 168h0m0s` (verified 2026-09-15).
-Both modes print nothing until the board ends; follow progress under the parent
-run's `board/` directory as described below.
+Tracker never prints a tool node's output, so the board is silent while it
+sweeps; follow progress under the parent run's `board/` directory as described
+below. When a sweep ends with katas that need you, the run holds at the
+`Morning review` gate: Tracker prints the review with two numbered choices and
+reads the choice number from stdin. Run the board in a terminal that stays
+open, such as a tmux window. A run without a terminal on stdin fails at the
+gate; `tracker --auto-approve` answers every gate with its default, which ends
+the run after one sweep (verified 2026-09-18).
 
 The board runner calls this same `complete.dip` once per item, with separate
 Tracker run IDs, claims, reviews, and checkpoints. It runs sequentially. After
@@ -101,7 +107,8 @@ runner rechecks the live board after each child, so newly added eligible work
 is included. The controller exits 0 at the end of the queue and 1 on every
 early stop. It prints the morning review at the end of the queue and after
 three consecutive failures. An inspection stop prints recovery instructions
-instead of the review.
+instead of the review. Its last line routes the parent run: `board-clean` ends
+the run, and `board-needs-human` opens the morning review gate.
 
 The parent run's `board/state.json` records every child: `completed` entries
 carry the commit and PR URL, `failed` entries carry the branch, reason, and
@@ -119,10 +126,11 @@ A child killed with its parent (a closed TUI or Ctrl-C) still owns its kata as
 The controller verifies the existing child's outcome before advancing, so
 resuming the parent does not silently claim a replacement item. A board stopped
 by three consecutive failures can be resumed; it claims again from the same
-stack base. A finished board is not resumed; start a new board run after
-answering or unblocking its katas. Keep the checkout on the last task branch
-with a clean working tree. Runs claimed before the handoff recorded a starting
-branch stop for inspection at handoff.
+stack base. A finished ledger sweeps again on re-entry: `Sweep again` at the
+gate claims the katas released since and records them in the same ledger. A
+run that ended with `Done` is over; start a new board run to sweep again. Keep
+the checkout on the last task branch with a clean working tree. Runs claimed
+before the handoff recorded a starting branch stop for inspection at handoff.
 
 Board runs require the source `.dip` directory; packed `.dipx` bundles are not
 supported. Tracker 0.73.1 native subgraphs share the parent's artifact directory,
@@ -197,7 +205,9 @@ work has been accounted for.
 Katas the board could not finish stay open, owned by `kata-pipeline-<child-id>`,
 with a `needs-review` or `needs-decision` label and a comment naming the branch,
 base commit, WIP commit, and question. This section is written for the agent or
-person working that inbox. From the target Git root:
+person working that inbox. The board run holds at its `Morning review` gate with
+the review on screen. To print it again, or after the run ended, from the target
+Git root:
 
 ```sh
 /path/to/pipelines/kata/board-report
@@ -205,7 +215,8 @@ person working that inbox. From the target Git root:
 
 prints the newest board run: completed katas with branches and PR URLs, katas
 that need a decision with their questions, katas that need review with their
-branches, and open katas the board never touched. `board-report --json
+branches, and open katas the board never touched. A kata the board swept more
+than once appears once, as its latest run left it. `board-report --json
 <board-run-id>` prints the same for one run as JSON.
 
 For each kata that needs a decision, read the question and answer it:
@@ -218,15 +229,17 @@ For each kata that needs review, diff the WIP branch against its base commit
 and read the review records under the child run directory
 (`.tracker/runs/<child-id>/Review*/status.json` and
 `.tracker/runs/<child-id>/ReReview*/status.json`).
-Either finish and close it by hand, or answer with guidance so the next run
-can finish it. Merge the PR stack oldest first. Then run the board again in
-the evening with the same command as before.
+Either finish and close it by hand, or answer with guidance so the next sweep
+can finish it. Merge the PR stack oldest first. Then choose `Sweep again` at
+the gate: the board claims the katas you released and holds the review again
+when that sweep ends. Each `Sweep again` is one of the run's 50 restarts.
+Choose `Done` to end the run; start a new board run to sweep again later.
 
 `kata/answer` comments the text on the kata and releases the pipeline's claim,
-so the next board run can claim it. It refuses katas owned by anyone other than
-a pipeline actor. The label stays until the next claim removes it. The next run
-reads the comment thread and reuses the branch's work. Both commands run from
-the target Git root and change nothing else.
+so the next sweep can claim it. It refuses katas owned by anyone other than
+a pipeline actor. The label stays until the next claim removes it. The next
+sweep reads the comment thread and reuses the branch's work. Both commands run
+from another shell in the target Git root and change nothing else.
 
 ## Check
 
