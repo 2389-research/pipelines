@@ -174,6 +174,13 @@ if [ -n "$github_remote" ]; then
   if [ -n "$stack_branch" ] && [ "$base_commit" != "$stack_commit" ]; then
     printf 'fetched stack branch differs from the frozen commit\n' >&2; exit 1
   fi
+  # kata binds a workspace through a committed .kata.toml (kata init). Cutting the task branch from
+  # a base without it removes the file at checkout, and no later kata call in this run can resolve
+  # the project, so the claim could never be closed or handed off from the task branch.
+  if git ls-files --error-unmatch -- .kata.toml >/dev/null 2>&1 && ! git cat-file -e "$base_commit:.kata.toml" 2>/dev/null; then
+    printf 'GitHub base %s (%s) has no .kata.toml; push the commit that binds this workspace to kata before claiming\n' "$base_branch" "$base_commit" >&2
+    exit 1
+  fi
   github=$(jq -n --arg remote "$github_remote" --arg repository "$repository" --arg base "$base_branch" '{remote:$remote,repository:$repository,base_branch:$base}')
 fi
 actor="kata-pipeline-$TRACKER_RUN_ID"

@@ -231,6 +231,18 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   greps the simulation log for `queue-empty`: that line only ever matched the
   inlined script text, and `kata/tests/routes.sh` already proves the
   queue-empty route.
+- `kata/scripts/claim-next.sh`: a GitHub run cuts its task branch from the
+  fetched default branch. When the workspace's `.kata.toml` binding is
+  committed locally but not on that branch, the checkout removes the file and
+  every kata call after the claim fails with "no project bound to this
+  workspace": `close-selected.sh` cannot close the approved commit, so each run
+  hands its kata off instead of publishing it (typesafe-go, 2026-09-17: five
+  katas left claimed by finished runs). Claim setup now refuses a base commit
+  that lacks a `.kata.toml` the workspace tracks, before any claim, naming the
+  branch and commit and asking for the binding commit to be pushed first. An
+  ignored binding file survives the checkout and stays allowed.
+  `kata/tests/github-setup.sh` covers the refusal, a bound base, and an ignored
+  binding.
 
 ### Security
 

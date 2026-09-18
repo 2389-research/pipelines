@@ -81,3 +81,17 @@ and correct ones when a node ran `sh "${graph.workflow_dir}/scripts/x.sh"`.
 Kata tool nodes run scripts by path; `kata/tests/tool-commands.sh` fails on
 any expansion tracker would blank. The kata tests execute scripts with `sh`
 directly, so they cannot see this class of bug on their own.
+
+## The kata binding must be on the GitHub base branch (verified 2026-09-17)
+
+`kata init` binds a workspace with a committed `.kata.toml`. In pr mode
+`kata/scripts/claim-next.sh` cuts the task branch from origin's default branch,
+not local main. If the binding commit is only local, the checkout drops
+`.kata.toml`, every later `kata` call fails with "no project bound to this
+workspace", and `close-selected.sh` hands an approved commit off instead of
+publishing it, one stranded kata per run. claim-next now refuses such a base
+before claiming; push the binding commit first.
+
+Related: `kata assign <ref> none` creates an actor literally named `none`.
+`kata ready --unowned` then skips the kata and the board report reads
+"owned by none". Release it with `kata unassign <ref> --expect-owner none`.
