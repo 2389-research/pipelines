@@ -4,12 +4,9 @@
 set -eu
 
 usage() {
-  printf 'Usage: answer <issue-ref> "<text>"\nRun from the target Git root. Comments the text on the kata and releases the pipeline claim so the next board run can pick it up.\n'
+  printf 'Usage: answer <issue-ref> "<text>"\nRun from the target Git root. Comments the text on the kata and releases the pipeline claim so the next board sweep can claim it.\n'
 }
-if [ "${1:-}" = --help ]; then
-  usage
-  exit 0
-fi
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 [ "$#" -eq 2 ] || { usage >&2; exit 2; }
 ref=$1
 text=$2
@@ -17,9 +14,13 @@ text=$2
 command -v git >/dev/null
 command -v jq >/dev/null
 command -v kata >/dev/null
-workspace=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)
-issue=$(kata show --workspace "$workspace" "$ref" --json)
+top=$(git rev-parse --show-toplevel 2>/dev/null) || { printf 'run this from inside the target Git repository\n' >&2; exit 1; }
+workspace=$(cd -- "$top" && pwd -P)
+# kata prints its own error for an unknown reference; this line says which command failed and for what.
+issue=$(kata show --workspace "$workspace" "$ref" --json) ||
+  { printf 'kata show %s failed with status %s; check the reference and the workspace binding\n' "$ref" "$?" >&2; exit 1; }
 uid=$(printf '%s' "$issue" | jq -er '.issue.uid')
+qualified=$(printf '%s' "$issue" | jq -r '.issue.qualified_id // empty')
 status=$(printf '%s' "$issue" | jq -er '.issue.status')
 owner=$(printf '%s' "$issue" | jq -r '.issue.owner // ""')
 [ "$status" = open ] || { printf '%s is %s, not open\n' "$ref" "$status" >&2; exit 1; }
@@ -29,6 +30,8 @@ case "$owner" in
   *) printf '%s is owned by %s, not a pipeline actor; refusing to take a claim\n' "$ref" "$owner" >&2; exit 1 ;;
 esac
 kata unassign --workspace "$workspace" "$uid" --expect-owner "$owner" --comment "$text" --json >/dev/null
+# The claim is gone from here on; say so before the queries below, which can fail on their own.
+printf 'Released %s\n' "${qualified:-$ref}"
 released=$(kata show --workspace "$workspace" "$uid" --json)
 open_issues=$(kata list --workspace "$workspace" --status open --limit 0 --json)
 owner=$(printf '%s' "$released" | jq -r '.issue.owner // "nobody"')

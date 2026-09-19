@@ -372,7 +372,7 @@ for child in $(jq -r '.runs[].run_id' "$ledger"); do
   [ -f "$repo/.tracker/runs/$child/activity.jsonl" ] || fail "stacked: child $child has no activity log"
   jq -e '.outcome == "success"' "$repo/.tracker/runs/$child/Exit/status.json" >/dev/null || fail "stacked: child $child did not reach Exit"
 done
-grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null || fail 'stacked: the sweep summary is missing'
+grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'stacked: the sweep summary is missing'
 grep -Fx 'Completed (2)' "$test_root/output" >/dev/null || fail 'stacked: the review does not list two completed katas'
 grep -Fx -e '- fixture#fixture-item-2 on kata/item-2' "$test_root/output" >/dev/null || fail 'stacked: the review does not name the second kata'
 grep -Fx '  https://github.com/fixture/board/pull/2' "$test_root/output" >/dev/null || fail 'stacked: the review lacks the second pull request'
@@ -382,7 +382,7 @@ must_succeed 'a finished ledger on re-entry'
 jq -e '.finished == true and (has("stop_reason") | not) and
   [.runs[].kind] == ["completed","completed","empty","empty"]' "$ledger" >/dev/null || fail 'stacked: the re-entry did not add one empty sweep'
 [ "$(claim_count)" -eq 4 ] || fail "stacked: claim count is $(claim_count), expected 4"
-grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null || fail 'stacked: the re-entry summary is missing'
+grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'stacked: the re-entry summary is missing'
 expect_marker board-clean 'a finished ledger on re-entry'
 printf 'ok - real Tracker children use distinct IDs and stack commits, and a finished ledger sweeps again on re-entry\n'
 
@@ -391,7 +391,7 @@ must_succeed 'initially empty board'
 jq -e '.finished == true and (has("stop_reason") | not) and [.runs[].kind] == ["empty"]' "$ledger" >/dev/null || fail 'empty: the ledger does not show one empty sweep'
 [ "$(claim_count)" -eq 1 ] || fail "empty: claim count is $(claim_count), expected 1"
 grep -F 'list --status open --limit 0 --json' "$fixture/kata.log" >/dev/null || fail 'empty: the board did not query every open kata' "$fixture/kata.log"
-grep -F 'Board complete: 0 katas finished, 0 left open for review.' "$test_root/output" >/dev/null || fail 'empty: the sweep summary is missing'
+grep -F 'Sweep finished: 0 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'empty: the sweep summary is missing'
 expect_marker board-clean 'an empty board'
 printf 'ok - an empty board requires the full open-issue query\n'
 
@@ -426,7 +426,7 @@ grep -F "Branch: kata/item-1 (base $main_commit, wip $wip_commit)" "$fixture/fix
 [ ! -e "$fixture/stack-2.json" ] || fail 'failing: the second child received a stack base after a handoff'
 grep -Fx 'Failed fixture-item-1 (implement); left open with needs-review on kata/item-1' "$test_root/output" >/dev/null ||
   fail 'failing: the handoff line is missing'
-grep -F 'Board complete: 1 katas finished, 1 left open for review.' "$test_root/output" >/dev/null || fail 'failing: the sweep summary is missing'
+grep -F 'Sweep finished: 1 katas completed and 1 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'failing: the sweep summary is missing'
 grep -Fx 'Completed (1)' "$test_root/output" >/dev/null || fail 'failing: the review does not list one completed kata'
 grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null || fail 'failing: the review does not list one kata for review'
 grep -F -e '- fixture#fixture-item-1: worker stopped (run ' "$test_root/output" >/dev/null || fail 'failing: the review does not describe the handoff'
@@ -443,7 +443,7 @@ jq -e '.finished == true and (has("stop_reason") | not) and
   fail 'failing: the second sweep did not finish the handed-off kata from the stack tip'
 [ "$(claim_count)" -eq 5 ] || fail "failing: claim count is $(claim_count), expected 5"
 [ ! -s "$fixture/reclaim" ] || fail 'failing: the reclaim list was not consumed'
-grep -F 'Board complete: 2 katas finished, 0 left open for review.' "$test_root/output" >/dev/null || fail 'failing: the second sweep summary is missing'
+grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'failing: the second sweep summary is missing'
 grep -Fx 'Completed (2)' "$test_root/output" >/dev/null || fail 'failing: the review does not list two completed katas'
 grep -Fx 'Needs review (0)' "$test_root/output" >/dev/null || fail 'failing: the finished kata still shows under Needs review'
 [ "$(grep -c 'fixture#fixture-item-1' "$test_root/output")" -eq 1 ] || fail 'failing: the finished kata is not listed exactly once'
@@ -466,7 +466,7 @@ first_commit=$(jq -r '.runs[0].commit' "$ledger")
 [ "$(git -C "$repo" rev-parse kata/item-2~2)" = "$first_commit" ] || fail 'stacked-failure: kata/item-2 is not stacked on the completed commit'
 jq -e --arg commit "$first_commit" '.branch == "kata/item-1" and .commit == $commit' \
   "$fixture/stack-2.json" >/dev/null || fail 'stacked-failure: the failed child did not receive the completed branch as its base'
-grep -F 'Board complete: 1 katas finished, 1 left open for review.' "$test_root/output" >/dev/null || fail 'stacked-failure: the sweep summary is missing'
+grep -F 'Sweep finished: 1 katas completed and 1 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'stacked-failure: the sweep summary is missing'
 expect_marker board-needs-human 'a failure after a completion'
 printf 'ok - a failure after a completion restores the stack tip and keeps the completed base\n'
 

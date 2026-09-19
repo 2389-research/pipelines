@@ -103,7 +103,8 @@ grep -Fx 'unassign 01ARZ3NDEKTSV4RRFFQ69G5FAV --expect-owner kata-pipeline-abc -
 [ "$(cat "$fixture/comment")" = 'Ship it' ] || fail 'comment text was not passed through'
 grep -Fx 'Owner: nobody' "$test_root/output" >/dev/null || fail 'owner line is missing'
 grep -Fx 'Labels: needs-decision,task' "$test_root/output" >/dev/null || fail 'labels line is missing'
-printf 'ok - answer comments the reply, releases the pipeline claim, and reports owner and labels\n'
+grep -Fx 'Released demo#5fav' "$test_root/output" >/dev/null || fail 'released line is missing'
+printf 'ok - answer comments the reply, releases the pipeline claim, and reports the release, owner, and labels\n'
 
 reset_fixture open kata-pipeline-abc
 : >"$fixture/show-fails-after-release"
@@ -112,6 +113,7 @@ run_answer demo#5fav 'Ship it'
 grep -F 'daemon unreachable' "$test_root/output" >/dev/null || fail 'post-release show failure is not reported'
 if grep -F 'Owner:' "$test_root/output" >/dev/null; then fail 'owner line was printed after a failed show'; fi
 grep -F 'unassign' "$fixture/kata.log" >/dev/null || fail 'claim was not released before the failed show'
+grep -Fx 'Released demo#5fav' "$test_root/output" >/dev/null || fail 'released line is missing after a failed show'
 reset_fixture open kata-pipeline-abc
 : >"$fixture/list-fails"
 run_answer demo#5fav 'Ship it'
@@ -120,10 +122,26 @@ grep -F 'daemon unreachable' "$test_root/output" >/dev/null || fail 'post-releas
 if grep -F 'Labels:' "$test_root/output" >/dev/null; then fail 'labels line was printed after a failed list'; fi
 printf 'ok - answer fails loudly when the post-release show or list fails\n'
 
-run_answer --help
-[ "$status" -eq 0 ] || fail "--help exited $status"
-grep -F 'Usage: answer' "$test_root/output" >/dev/null || fail '--help lacks usage'
+reset_fixture open kata-pipeline-abc
+run_answer demo#nope 'Ship it'
+[ "$status" -eq 1 ] || fail "unknown reference exited $status, expected 1"
+grep -Fx 'kata show demo#nope failed with status 92; check the reference and the workspace binding' "$test_root/output" >/dev/null ||
+  fail 'unknown reference: message is missing'
+if grep -F 'unassign' "$fixture/kata.log" >/dev/null; then fail 'unknown reference: unassign was called'; fi
+status=0
+(cd "$test_root" && "$answer" demo#5fav 'Ship it') >"$test_root/output" 2>&1 || status=$?
+[ "$status" -eq 1 ] || fail "outside a repository exited $status, expected 1"
+grep -Fx 'run this from inside the target Git repository' "$test_root/output" >/dev/null || fail 'outside a repository: message is wrong'
+printf 'ok - answer names an unknown reference and refuses to run outside a repository\n'
+
+for flag in -h --help; do
+  run_answer "$flag"
+  [ "$status" -eq 0 ] || fail "$flag exited $status"
+  grep -F 'Usage: answer' "$test_root/output" >/dev/null || fail "$flag lacks usage"
+  grep -F 'next board sweep' "$test_root/output" >/dev/null || fail "$flag usage does not say next board sweep"
+  if grep -F 'next board run' "$test_root/output" >/dev/null; then fail "$flag usage still says next board run"; fi
+done
 run_answer demo#5fav
 [ "$status" -eq 2 ] || fail "missing text exited $status, expected 2"
 grep -F 'Usage: answer' "$test_root/output" >/dev/null || fail 'missing text lacks usage'
-printf 'ok - answer prints usage for --help and wrong arguments\n'
+printf 'ok - answer prints usage for -h, --help, and wrong arguments\n'

@@ -230,7 +230,8 @@ done
 # Only a kata's latest ledger entry describes it: a handoff that a later sweep finished no longer needs review.
 open_for_review=$(jq '.runs as $runs | [$runs | to_entries[] | select(.value.kind == "failed") |
   select(.key as $i | .value.issue_uid as $uid | any($runs[$i + 1:][]; .issue_uid == $uid) | not)] | length' "$state")
-printf 'Board complete: %s katas finished, %s left open for review. Ledger: %s\n' \
+# Every earlier exit is a stop or a refusal; only a sweep that reached the end of its queue prints this line.
+printf 'Sweep finished: %s katas completed and %s left open for review so far in this board run. Ledger: %s\n' \
   "$(jq '[.runs[] | select(.kind == "completed")] | length' "$state")" "$open_for_review" "$state"
 review_ok=true
 print_review || review_ok=false
