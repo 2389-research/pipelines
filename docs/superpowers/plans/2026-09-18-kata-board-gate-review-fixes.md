@@ -846,7 +846,7 @@ Facts this task relies on (probed 2026-09-18 on Tracker 0.73.1 in a disposable r
 
 Edit `kata/tests/board.sh`. Every edit below anchors on text that is in the file after Tasks 1 and 2.
 
-Replace the three helpers from the line `must_stop() {` through the closing `}` of `must_not_report` (the block starts with the text below and ends with the line `}` that follows `printf 'FAIL: the morning review was printed after %s\n' "$1" >&2` and `exit 1`):
+Replace the three helpers from the line `must_stop() {` through the closing `}` of `must_not_report` (the block starts with the text below and ends with the line `}` that follows `printf 'FAIL: the morning review was printed after %s\n' "$1" >&2`, `cat "$test_root/output" >&2`, `exit 1`, and `fi`):
 
 ```sh
 must_stop() {
@@ -1128,7 +1128,7 @@ printf '%s\n' "$gate_prompt" | grep -F "  tracker -r $failed_child " >/dev/null 
   fail 'nested-failure: the gate prompt lacks the child resume command' "$test_root/parent-failure.log"
 responses=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolved") | .gate_response] | join(",")' \
   <"$test_root/parent-failure.log")
-[ "$responses" = done ] || fail "nested-failure: gate responses are \"$responses\", expected done" "$test_root/parent-failure.log"
+[ "$responses" = 'done' ] || fail "nested-failure: gate responses are \"$responses\", expected done" "$test_root/parent-failure.log"
 printf 'ok - a real Tracker parent holds the morning review after a child integrity stop and names the child\n'
 
 # Three consecutive failed children under a real parent open the morning review with the reason in the prompt.
@@ -1152,7 +1152,7 @@ printf '%s\n' "$gate_prompt" | grep -F 'Needs review (3)' >/dev/null ||
   fail 'nested-stop: the gate prompt does not list the three katas' "$test_root/parent-stop.log"
 responses=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolved") | .gate_response] | join(",")' \
   <"$test_root/parent-stop.log")
-[ "$responses" = done ] || fail "nested-stop: gate responses are \"$responses\", expected done" "$test_root/parent-stop.log"
+[ "$responses" = 'done' ] || fail "nested-stop: gate responses are \"$responses\", expected done" "$test_root/parent-stop.log"
 printf 'ok - a real Tracker parent holds the morning review after three consecutive failed children\n'
 ```
 
@@ -1330,7 +1330,7 @@ grep -c 'stop_for_inspection' kata/scripts/run-board.sh
 grep -n 'stop_child' kata/scripts/run-board.sh
 ```
 
-Expected: `19` (18 calls and the definition), then exactly three lines, all inside jq text: the validation line with `test("^[a-f0-9]{12}$")`, the `write_state` line in `stop_board`, and `del(.stop_reason, .stop_child)`. `set_stop_reason` must no longer appear: `grep -c set_stop_reason kata/scripts/run-board.sh` prints `0`.
+Expected: `19` (18 calls and the definition), then exactly three lines, all inside jq text: the `.stop_child` validation line, the `write_state` line in `stop_board`, and `del(.stop_reason, .stop_child)`. `set_stop_reason` must no longer appear: `grep -c set_stop_reason kata/scripts/run-board.sh` prints `0`.
 
 - [ ] **Step 4: Run the board tests and watch them pass**
 
@@ -1853,7 +1853,7 @@ add:
 [ -x "$pipeline_dir/scripts/run-board.sh" ] || { printf 'FAIL: scripts/run-board.sh is not executable\n' >&2; exit 1; }
 ```
 
-In the `implement.sh` fixture (the heredoc that starts `cat >"$test_root/workflow/implement.sh" <<'SH'`), directly after the line
+In the `implement.sh` fixture (the heredoc that starts `cat >"$test_root/workflow/implement.sh" <<'SH'`), directly after the line below (the same line also appears in the `claim.sh` heredoc; edit the copy inside `implement.sh`)
 
 ```sh
 number=$(wc -l <"$fixture/claims" | tr -d ' ')
@@ -2438,7 +2438,7 @@ git add kata/check kata/tests/isolate.sh kata/tests/isolation.sh kata/tests/appr
 git commit -m "test(kata): isolate every test from the operator's Git and Tracker configuration"
 ```
 
-Expected: `git status` lists `kata/check` and the fourteen existing test files as modified and the two new files as untracked, apart from `kata/complete.dip`, `HANDOFF.md`, and the plan and spec documents, which stay unstaged.
+Expected: `git status` lists `kata/check` and the thirteen existing test files as modified and the two new files as untracked, apart from `kata/complete.dip`, `HANDOFF.md`, and the plan and spec documents, which stay unstaged.
 
 - [ ] **Step 10: Run the exported-tree check**
 
