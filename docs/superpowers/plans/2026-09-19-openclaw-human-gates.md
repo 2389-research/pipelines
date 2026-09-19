@@ -32,18 +32,18 @@ Interfaces: `tracker --no-tui -w TARGET openclaw/agent.dip` starts the session.
 `sh openclaw/check` runs offline checks with dippin, tracker, jq, and shellcheck.
 No tests contact a configured target repository.
 
-- [ ] Write tests that fail because the workflow is missing. Check actual parsed
+- [x] Write tests that fail because the workflow is missing. Check actual parsed
   graph reachability so Execute can only be entered through Approval's explicit
   Approve choice. Check safe defaults, tool catalog bounds, and retry policy.
-- [ ] Implement Start → Request → Propose → Approval → Execute → Remember →
+- [x] Implement Start → Request → Propose → Approval → Execute → Remember →
   Review, with Approval → Feedback → RevisePlan → Approval and human Stop/Next
   choices. Plan failures return a problem gate. Use explicit failure edges.
-- [ ] Use `${ctx.response.Request}` for the request, `${ctx.last_response}` for
+- [x] Use `${ctx.response.Request}` for the request, `${ctx.last_response}` for
   the current proposal across Approval/Feedback, and `${ctx.response.Remember}`
   for prior memory. Do not declare synthetic writes requiring JSON extraction.
-- [ ] Add real-runtime gate tests covering stop, invalid/missing input, and
+- [x] Add real-runtime gate tests covering stop, invalid/missing input, and
   resume. Test helper fixtures must not pretend to be real agent end-to-end tests.
-- [ ] Run `sh openclaw/check`; require no new warnings. Record red and green
+- [x] Run `sh openclaw/check`; require no new warnings. Record red and green
   commands/results in an implementation report, review files, then commit.
 
 ## Task 2: Live use, documentation, and integration
@@ -51,16 +51,16 @@ No tests contact a configured target repository.
 Files: `openclaw/tests/live.sh`, `openclaw/README.md`, `.github/workflows/openclaw_check.yml`,
 root `README.md`, `CHANGELOG.md`, `gotchas.md`. Owned by the parent agent.
 
-- [ ] Add an opt-in real-provider smoke script using isolated temporary workdirs.
-  Drive gates through a persistent stdin pipe or pseudo-terminal (piped multiple
-  lines can be swallowed by gate readers); verify actual filesystem effects.
-- [ ] Run an approved harmless file task, revision, a second task recalling the
+- [x] Add an opt-in real-provider smoke script using isolated temporary workdirs.
+  Drive gates through stdin; Tracker 0.73.1 uses a shared scanner, so piped
+  multiple lines survive between gates. Verify actual filesystem effects.
+- [x] Run an approved harmless file task, revision, a second task recalling the
   first, rejection without execution, and resume at a waiting gate. Capture logs
   without exposing credentials. Fix any defects with regression coverage.
-- [ ] Document launch and resume commands, stop/revise/approve behavior, bounded
+- [x] Document launch and resume commands, stop/revise/approve behavior, bounded
   memory and turn budgets, provider setup, and partial-effect recovery.
-- [ ] Add CI for `sh openclaw/check`, pinning existing toolchain versions.
-- [ ] Run the canonical new check plus repository-wide `dippin check`, review
+- [x] Add CI for `sh openclaw/check`, pinning existing toolchain versions.
+- [x] Run the canonical new check plus repository-wide `dippin check`, review
   the full diff, address findings, and commit. Keep the branch/worktree for
   Doctor Biz; do not merge.
 
@@ -69,3 +69,35 @@ root `README.md`, `CHANGELOG.md`, `gotchas.md`. Owned by the parent agent.
 - Baseline: all 60 existing DIP files pass `dippin check`.
 - Design approved: bounded-task approval (A).
 - Compactions: 0.
+- Task 1: committed in `d44923c`, review fixes in `6649255`. Both P2 findings
+  closed by independent re-review; spec and quality pass.
+- Task 2: complete. Offline check (including empty XDG configuration), shellcheck,
+  actionlint, all 62 DIP checks, and the real-provider suite passed. Independent
+  review and fresh-eyes review found no remaining blocking defects.
+
+## Final verification evidence
+
+`sh openclaw/tests/live.sh` passed on 2026-09-19 with Tracker 0.73.1 and the
+final workflow. It used real Lunaroute providers and temporary workspaces.
+No pricing warnings remain: the harness uses token and wall-time limits.
+Logs and artifacts were retained at
+`/var/folders/rc/cyjg3p3x0cb4w4xlb8yqm_1h0000gn/T/openclaw-live.hxKDt9`.
+
+| Scenario | Run ID | Result |
+|---|---|---|
+| Reject proposal | `a23c49da8bc8` | No Execute visit or file write |
+| Close approval input | `984c1cab6ef8` | Defaults to Stop; no execution |
+| Revise and run two tasks | `d781c111b04e` | Approved filename only; second task recalled session code |
+| Resume approval gate | `3db1b818090b` | One planning pass and one execution across resume |
+| Missing required input | `a2efc65f6d48` | Failed task reviewed once, stopped nonzero, no retry or invented input |
+
+Review fixes made missing execution verdicts fail closed and kept revised-away
+scope out of current memory. A credential-free CI rehearsal found Tracker's
+unused-client startup requirement; `faecd25` isolates the offline fixture and
+asserts it contains no agents before starting Tracker. No fake model responses
+are used. The original checkout still has only its pre-existing changes.
+
+Remaining limits: task scope and memory content are prompt-enforced; execution
+resume is not exactly once. Use an isolated target workspace and inspect partial
+effects before resuming an interrupted executor. No known code defect remains
+that must be fixed before using the documented bounded-task workflow.

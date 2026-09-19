@@ -112,6 +112,12 @@ Human-in-the-loop games and debates.
 | [`story-engine.dip`](interactive/story-engine.dip) | Choose-your-own-adventure with branching narrative. |
 | [`model-debate.dip`](interactive/model-debate.dip) | Multi-model debate arena — Claude, GPT, and Gemini argue, you judge. |
 
+### [Conversational Agent](openclaw/)
+
+| Pipeline | Description |
+|----------|-------------|
+| [`agent.dip`](openclaw/agent.dip) | OpenClaw-style conversation with session memory: propose a bounded task, get human approval, execute, and review before the next request. |
+
 ## How It Works
 
 Each `.dip` file defines a workflow in the [Dippin language](https://github.com/2389-research/dippin-lang) — a DSL for describing agentic pipelines. Workflows declare nodes (agents, tools, human gates, parallel branches, conditionals) and edges with optional conditions.

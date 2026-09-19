@@ -27,10 +27,25 @@ the existing session. There is no second application state store.
 Choice gates put Stop first and default to Stop. Freeform input has no default.
 Planning failures return to a human gate without reaching Execute. Execution
 failures report partial work and require fresh approval before another attempt.
+Hard provider errors and billing pauses may halt Tracker directly instead.
+Execute is a goal gate so a missing STATUS marker cannot become success.
+Choosing Stop after a failed task ends the run with a nonzero exit; Next task
+clears the failed gate through the Request restart and requires fresh approval.
+Execution reports restate approved scope, and memory treats the original
+request as historical when a revision superseded it.
 Use `retry_policy: none`, because this Tracker version drops `max_retries: 0`
 in the DIP adapter. Bound model turns and conversation restarts. Do not retry
 an interrupted side effect blindly; document inspection before execution-node
-resume. Use full fidelity and explicit reads to preserve response state.
+resume. Use full fidelity to preserve response state. Reference the built-in
+response keys directly in prompts; Dippin 0.72.0 flags `reads:` declarations for
+those automatically populated keys as unwritten. Do not invent JSON writes to
+satisfy that lint rule.
+
+The working provider is the existing Lunaroute `openai-compat` configuration.
+Planning, revision, and memory use `deepseek-4.1-flash`; Execute uses `glm-5.3`.
+Real probes established this configuration after the configured Anthropic
+endpoint rejected its key. Proposals stay under 200 words and memory under
+500 words by instruction.
 
 ## Verification
 

@@ -1,0 +1,39 @@
+name: openclaw check
+
+on:
+  pull_request:
+    paths:
+      - "openclaw/**"
+      - ".github/workflows/openclaw_check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "openclaw/**"
+      - ".github/workflows/openclaw_check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Install check tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq shellcheck
+      - name: Install the repository's tested runtime and compiler
+        env:
+          TRACKER_VERSION: v0.73.1
+          DIPPIN_VERSION: v0.72.0
+        run: |
+          go install "github.com/2389-research/tracker/cmd/tracker@${TRACKER_VERSION}"
+          go install "github.com/2389-research/dippin-lang/cmd/dippin@${DIPPIN_VERSION}"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Offline graph, gate, and shell checks
+        run: sh openclaw/check
