@@ -41,7 +41,9 @@ email = operator@example.invalid
 [commit]
 gpgsign = false
 GITCONFIG
-printf 'OPENAI_API_KEY=operator-key-must-stay-unread\n' >"$operator_home/xdg/tracker/.env"
+# No provider key here: if the snippet ever stopped exporting XDG_CONFIG_HOME, Tracker would read this
+# file and refuse with "no providers configured", so the tool-only run below failing proves the fixture key, not this decoy, was read.
+printf 'KATA_ISOLATION_DECOY=operator-config-must-stay-unread\n' >"$operator_home/xdg/tracker/.env"
 
 # Control: with that home in force, a fresh repository is born on trunk and the hook refuses the commit.
 status=0
