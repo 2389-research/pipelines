@@ -1,7 +1,7 @@
 # ABOUTME: Runs a persistent human-gated agent session with approval scoped to one task.
 # ABOUTME: Keeps planning and memory tool-free and gives tools only to approved execution.
 
-workflow OpenClawHumanGates
+workflow TrackerClawHumanGates
   goal: "Handle a sequence of bounded tasks, each planned and explicitly approved by a human before execution."
   start: Start
   exit: Stop

@@ -1,7 +1,7 @@
 # ABOUTME: Exercises Tracker's real console human gate without calling a model.
 # ABOUTME: Supplies only tool and human nodes, so it is not a fake agent end-to-end test.
 
-workflow OpenClawGateProbe
+workflow TrackerClawGateProbe
   goal: "Exercise console gate stop, failure, and resume behavior."
   start: Request
   exit: Exit

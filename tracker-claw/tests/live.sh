@@ -5,7 +5,7 @@ set -eu
 
 case ${1:-} in
   --help|-h)
-    printf '%s\n' 'Usage: sh openclaw/tests/live.sh' \
+    printf '%s\n' 'Usage: sh tracker-claw/tests/live.sh' \
       'Runs real model calls (billable) in temporary directories; keeps logs for inspection.' \
       'Requires tracker, jq, and provider credentials configured with tracker setup.'
     exit 0 ;;
@@ -20,7 +20,7 @@ test -f "$PIPELINE_DIR/agent.dip" || {
 }
 command -v tracker >/dev/null
 command -v jq >/dev/null
-LIVE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/openclaw-live.XXXXXX")
+LIVE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/tracker-claw-live.XXXXXX")
 export XDG_STATE_HOME="$LIVE_ROOT/state"
 printf 'Live test artifacts: %s\n' "$LIVE_ROOT"
 

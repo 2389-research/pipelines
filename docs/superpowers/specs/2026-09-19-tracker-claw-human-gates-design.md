@@ -1,4 +1,4 @@
-# OpenClaw-style agent with human gates
+# tracker-claw agent with human gates
 
 Doctor Biz approved bounded-task approval on 2026-09-19 (option A).
 
@@ -59,9 +59,9 @@ Run structural validation, shellcheck, and the repository-wide DIP check.
 
 ## Deliverables
 
-- `openclaw/agent.dip`: the workflow.
-- `openclaw/check` and `openclaw/tests/`: repeatable local verification.
-- `openclaw/README.md`: launch, approval scope, state, recovery, and limits.
+- `tracker-claw/agent.dip`: the workflow.
+- `tracker-claw/check` and `tracker-claw/tests/`: repeatable local verification.
+- `tracker-claw/README.md`: launch, approval scope, state, recovery, and limits.
 - Root README and changelog entries; a focused CI check.
 
 ## Review

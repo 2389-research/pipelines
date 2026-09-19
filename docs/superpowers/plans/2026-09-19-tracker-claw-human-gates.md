@@ -1,4 +1,4 @@
-# OpenClaw Human Gates Implementation Plan
+# tracker-claw Human Gates Implementation Plan
 
 > **For agentic workers:** Use subagent-driven-development to implement the
 > workflow task, then review the whole change. Doctor Biz already prefers
@@ -14,8 +14,8 @@ executor. Tracker owns checkpoints, input, routing, and response persistence.
 
 ## Global constraints
 
-- Work only in `/Users/harper/Public/src/2389/pipelines-openclaw` on
-  `feat/openclaw-human-gates`; preserve the original checkout.
+- Work only in `/Users/harper/Public/src/2389/pipelines-tracker-claw` on
+  `feat/tracker-claw-human-gates`; preserve the original checkout.
 - User chose approval of each bounded task, not each tool invocation.
 - Stop is first and default at choice gates; freeform gates have no default.
 - Only Execute has tools. No automatic execution retry (`retry_policy: none`).
@@ -25,11 +25,11 @@ executor. Tracker owns checkpoints, input, routing, and response persistence.
 
 ## Task 1: Workflow and deterministic checks
 
-Files: create `openclaw/agent.dip`, `openclaw/check`, and focused shell tests
-under `openclaw/tests/`. These paths are owned by the implementation agent.
+Files: create `tracker-claw/agent.dip`, `tracker-claw/check`, and focused shell tests
+under `tracker-claw/tests/`. These paths are owned by the implementation agent.
 
-Interfaces: `tracker --no-tui -w TARGET openclaw/agent.dip` starts the session.
-`sh openclaw/check` runs offline checks with dippin, tracker, jq, and shellcheck.
+Interfaces: `tracker --no-tui -w TARGET tracker-claw/agent.dip` starts the session.
+`sh tracker-claw/check` runs offline checks with dippin, tracker, jq, and shellcheck.
 No tests contact a configured target repository.
 
 - [x] Write tests that fail because the workflow is missing. Check actual parsed
@@ -43,12 +43,12 @@ No tests contact a configured target repository.
   for prior memory. Do not declare synthetic writes requiring JSON extraction.
 - [x] Add real-runtime gate tests covering stop, invalid/missing input, and
   resume. Test helper fixtures must not pretend to be real agent end-to-end tests.
-- [x] Run `sh openclaw/check`; require no new warnings. Record red and green
+- [x] Run `sh tracker-claw/check`; require no new warnings. Record red and green
   commands/results in an implementation report, review files, then commit.
 
 ## Task 2: Live use, documentation, and integration
 
-Files: `openclaw/tests/live.sh`, `openclaw/README.md`, `.github/workflows/openclaw_check.yml`,
+Files: `tracker-claw/tests/live.sh`, `tracker-claw/README.md`, `.github/workflows/tracker_claw_check.yml`,
 root `README.md`, `CHANGELOG.md`, `gotchas.md`. Owned by the parent agent.
 
 - [x] Add an opt-in real-provider smoke script using isolated temporary workdirs.
@@ -59,7 +59,7 @@ root `README.md`, `CHANGELOG.md`, `gotchas.md`. Owned by the parent agent.
   without exposing credentials. Fix any defects with regression coverage.
 - [x] Document launch and resume commands, stop/revise/approve behavior, bounded
   memory and turn budgets, provider setup, and partial-effect recovery.
-- [x] Add CI for `sh openclaw/check`, pinning existing toolchain versions.
+- [x] Add CI for `sh tracker-claw/check`, pinning existing toolchain versions.
 - [x] Run the canonical new check plus repository-wide `dippin check`, review
   the full diff, address findings, and commit. Keep the branch/worktree for
   Doctor Biz; do not merge.
@@ -77,7 +77,7 @@ root `README.md`, `CHANGELOG.md`, `gotchas.md`. Owned by the parent agent.
 
 ## Final verification evidence
 
-`sh openclaw/tests/live.sh` passed on 2026-09-19 with Tracker 0.73.1 and the
+The live suite (then `sh openclaw/tests/live.sh`) passed on 2026-09-19 with Tracker 0.73.1 and the
 final workflow. It used real Lunaroute providers and temporary workspaces.
 No pricing warnings remain: the harness uses token and wall-time limits.
 Logs and artifacts were retained at

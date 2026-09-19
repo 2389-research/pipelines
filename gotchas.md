@@ -74,7 +74,7 @@ steady turn-limit breach; the second breach hands off.
 
 ## Conversational task gates (decided 2026-09-19)
 
-Doctor Biz chose approval per bounded task for `openclaw/agent.dip`. Planning
+Doctor Biz chose approval per bounded task for `tracker-claw/agent.dip`. Planning
 and memory have no tools; only an approved executor does. Scope inside that
 execution is prompt-enforced, not per-tool authorization. Tracker 0.73.1 drops
 `max_retries: 0` during DIP adaptation: use `retry_policy: none` to disable
@@ -95,3 +95,6 @@ Tracker also constructs a native client for graphs containing no agents. Offline
 gate fixtures must isolate config and bootstrap an unused client; an empty
 config otherwise fails before reaching any gate. Assert the fixture has no
 agent nodes, and leave real-provider end-to-end checks separate.
+
+Doctor Biz named this agent `tracker-claw`; use that name in workflow paths,
+documentation, and new references. Historical test logs retain their original paths.

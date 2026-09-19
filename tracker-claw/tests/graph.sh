@@ -1,5 +1,5 @@
 #!/bin/sh
-# ABOUTME: Verifies the OpenClaw workflow's parsed routes and bounded agent configuration.
+# ABOUTME: Verifies the tracker-claw workflow's parsed routes and bounded agent configuration.
 # ABOUTME: Proves execution needs explicit approval and every human choice fails safe.
 set -eu
 

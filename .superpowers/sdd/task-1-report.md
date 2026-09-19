@@ -1,5 +1,8 @@
 # Task 1 implementation report
 
+This report preserves commands and output from before the tracker-claw rename.
+Current workflow and check paths live under `tracker-claw/`.
+
 ## Result
 
 Implemented `openclaw/agent.dip`, `openclaw/check`, and focused offline tests.

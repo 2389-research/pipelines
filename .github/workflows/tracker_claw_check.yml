@@ -1,15 +1,15 @@
-name: openclaw check
+name: tracker-claw check
 
 on:
   pull_request:
     paths:
-      - "openclaw/**"
-      - ".github/workflows/openclaw_check.yml"
+      - "tracker-claw/**"
+      - ".github/workflows/tracker_claw_check.yml"
   push:
     branches: [main]
     paths:
-      - "openclaw/**"
-      - ".github/workflows/openclaw_check.yml"
+      - "tracker-claw/**"
+      - ".github/workflows/tracker_claw_check.yml"
 
 permissions:
   contents: read
@@ -36,4 +36,4 @@ jobs:
           go install "github.com/2389-research/dippin-lang/cmd/dippin@${DIPPIN_VERSION}"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
       - name: Offline graph, gate, and shell checks
-        run: sh openclaw/check
+        run: sh tracker-claw/check

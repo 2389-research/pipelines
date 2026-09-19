@@ -1,11 +1,11 @@
-# Conversational agent with human gates
+# tracker-claw
 
-An OpenClaw-style request/action/reply loop expressed in DIP. Give it a task,
+A request/action/reply loop expressed in DIP. Give it a task,
 review its proposed scope, approve it, and inspect the result. The session
 remembers completed work and decisions for your next request.
 
-This uses Tracker's terminal interface and checkpoints. It does not provide
-OpenClaw's messaging gateway, heartbeat, scheduler, or plugin ecosystem.
+tracker-claw uses Tracker's terminal interface and checkpoints. Messaging
+gateways, heartbeats, scheduling, and plugins are outside its scope.
 
 ## Run
 
@@ -22,7 +22,7 @@ From the pipelines checkout, point Tracker at the directory where the agent
 should work:
 
 ```sh
-tracker --no-tui -w /absolute/path/to/workspace openclaw/agent.dip
+tracker --no-tui -w /absolute/path/to/workspace tracker-claw/agent.dip
 ```
 
 Use a workspace whose files you intend the agent to access. Planning has no
@@ -71,7 +71,7 @@ Resume the same workflow and workspace using the saved run ID:
 
 ```sh
 tracker --no-tui -w /absolute/path/to/workspace \
-  --resume RUN_ID openclaw/agent.dip
+  --resume RUN_ID tracker-claw/agent.dip
 ```
 
 A checkpoint at Approval reopens that gate with its proposal. Do not blindly
@@ -104,7 +104,7 @@ The offline check validates the graph and exercises real human-gate behavior
 without calling a model:
 
 ```sh
-sh openclaw/check
+sh tracker-claw/check
 ```
 
 Offline checks need no credentials. The gate fixture has no agents; its test
@@ -117,7 +117,7 @@ approval, proposal revision, actual file writes, memory on a second task,
 approval-gate resume, and task failure without an automatic retry:
 
 ```sh
-sh openclaw/tests/live.sh
+sh tracker-claw/tests/live.sh
 ```
 
 Prerequisites for checks: `tracker`, `dippin`, `jq`, and `shellcheck`. No mocked

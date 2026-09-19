@@ -112,11 +112,11 @@ Human-in-the-loop games and debates.
 | [`story-engine.dip`](interactive/story-engine.dip) | Choose-your-own-adventure with branching narrative. |
 | [`model-debate.dip`](interactive/model-debate.dip) | Multi-model debate arena — Claude, GPT, and Gemini argue, you judge. |
 
-### [Conversational Agent](openclaw/)
+### [tracker-claw](tracker-claw/)
 
 | Pipeline | Description |
 |----------|-------------|
-| [`agent.dip`](openclaw/agent.dip) | OpenClaw-style conversation with session memory: propose a bounded task, get human approval, execute, and review before the next request. |
+| [`agent.dip`](tracker-claw/agent.dip) | Conversation with session memory: propose a bounded task, get human approval, execute, and review before the next request. |
 
 ## How It Works
 

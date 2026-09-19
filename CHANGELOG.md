@@ -16,7 +16,7 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
-- `openclaw/agent.dip`: a conversational agent with human approval for each
+- `tracker-claw/agent.dip`: a conversational agent with human approval for each
   bounded task, proposal revision, result review, checkpoint-backed session
   memory, and no automatic execution retry. Includes offline gate checks and
   an opt-in real-provider smoke test.
