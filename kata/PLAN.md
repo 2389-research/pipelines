@@ -11,12 +11,12 @@ review in parallel using fresh-eyes checks. Allow at most one repair pass
 and close with evidence only after approval. Failed work stays open with
 a needs-review handoff.
 An empty queue is a clean no-op; claim races stop without selecting again.
-Create a fresh task branch for each claimed item. For GitHub repositories,
-start from the fetched default branch, which must carry the committed
-`.kata.toml` binding (`claim-next.sh` refuses a base without it: the checkout
-would drop the binding and strand the claim), and publish a PR after review,
-before closing the kata. For other repositories, start from current HEAD and finish
-locally. Preserve existing branches and never merge automatically. Locally
+Create a fresh task branch for each claimed item from the checked-out local
+trunk. Refuse detached HEAD and `kata/*` as a trunk. After both reviews approve
+the same commit, fast-forward the trunk with a compare-and-swap, close the kata,
+switch back to trunk, and delete the task branch. Never fetch, push, inspect a
+remote, or call GitHub; the operator decides when to push. Preserve unrelated
+branches and commits. Locally
 exclude tracker artifacts. Keep runtime state under .tracker, bind the selected
 full issue identity and workspace,
 and require a clean target tree apart from runtime artifacts before changes. Scope containment is
@@ -120,8 +120,9 @@ ready queue skipped x3hz and chose ac2b. The mistaken epic claim was released
 with an expected-owner guard after verifying no source changes or commits;
 the checkout returned to main. No replacement issue was claimed in this check.
 
-Branch and PR update (2026-09-14): every confirmed claim creates a fresh kata
-branch. GitHub repositories start from their fetched default branch, after a
+Historical branch and PR update (2026-09-14; superseded by landing on close):
+every confirmed claim creates a fresh kata branch. GitHub repositories start
+from their fetched default branch, after a
 check that it carries `.kata.toml` (added 2026-09-17: a binding that exists
 only locally vanishes from the checkout and strands the claim); other
 repositories start from current HEAD. GitHub identity and base are saved before
@@ -141,3 +142,12 @@ Final `./kata/check` and `git diff --check` passed, including graph validation,
 ShellCheck, real tracker preflight, setup, publication, and recovery tests.
 Fresh-eyes review is complete; both remote-name and tag-scope findings are fixed.
 Removing the tag guard in an isolated copy reproduces its regression failure.
+
+Landing-on-close update (2026-09-19): the current pipeline records the branch
+checked out at claim as `trunk` and cuts the task branch from that local tip.
+It performs no remote or GitHub operation. The close step accepts trunk movement
+only while the current trunk tip remains an ancestor of the reviewed head, so an
+already-landed retry is valid; divergent movement requires a rebase and both
+reviews again. Legacy selections without `trunk` stop for manual inspection.
+The committed model mapping is worker, repair, and correctness on
+`deepseek-4.1-flash`, with scope on `glm-5.3`.

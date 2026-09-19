@@ -20,7 +20,7 @@ The worker and repair agent also use `deepseek-4.1-flash`. All six agent nodes u
 tracker's `openai-compat` provider through Lunaroute. The adapter does not
 forward `reasoning_effort`; reasoning behavior follows the gateway defaults.
 
-Both must approve publication and closure. Rejected work gets at most one repair pass and
+Both must approve landing and closure. Rejected work gets at most one repair pass and
 another review. A worker that hits its turn limit while still making progress gets one
 automatic continue. Unfinished work stays open, labeled `needs-review` or `needs-decision`,
 for the morning review.
@@ -50,8 +50,8 @@ Configure `OPENAI_COMPAT_API_KEY` with your Lunaroute API key and
 `OPENAI_COMPAT_BASE_URL` with `https://gw.lunaroute.com/v1`. Tracker accepts
 these from your environment or `~/.config/tracker/.env`; `tracker setup`
 can configure them. Existing Lunaroute settings can be reused.
-You also need `kata`, `git`, and `jq` on PATH. GitHub repositories additionally
-need an authenticated `gh` CLI and permission to push a branch and open a PR.
+You also need `kata`, `git`, and `jq` on PATH. The pipeline makes no remote Git
+or GitHub calls. Pushing the landed trunk is an operator action.
 
 Use the validated toolchain: tracker **v0.73.1** with Dippin **v0.72.0**.
 Dippin **v0.68.0** lacks `openai-compat` lint support and fails `kata/check`
@@ -103,19 +103,20 @@ is the unattended mode: it takes the first choice, `Done`, so the run ends
 after one sweep.
 
 The board runner calls this same `complete.dip` once per item, with separate
-Tracker run IDs, claims, reviews, and checkpoints. It runs sequentially. After
-the first item, each task branches from the previous approved commit and opens
-its PR against the previous task branch. This keeps later work available while
-the PRs await your review. Merge the stack from oldest to newest; the pipeline
-does not merge it. Standalone `complete.dip` retains the default-branch behavior
-described below.
+Tracker run IDs, claims, reviews, and checkpoints. It runs sequentially from
+the branch checked out when the board starts. Each successful child
+fast-forwards that local trunk to its reviewed commit before closing the kata;
+the next child starts at the new trunk tip. Run the board from the branch where
+the work should land. The pipeline does not fetch, push, open a PR, or inspect
+a remote. Push the trunk when you choose.
 
 A child that fails cleanly does not stop the board. The handoff labels the kata
 `needs-review` (or `needs-decision` when the worker wrote a question), comments
 the branch and base commit, commits any uncommitted work as a WIP commit on the
-task branch, and returns the checkout to the branch the child started on. The
-board records the failure in its ledger and claims the next kata from the same
-stack base, so a failed kata never becomes the base of a later one. Three
+task branch, and returns the checkout to the recorded trunk. The board records
+the failure in its ledger and claims the next kata from the current trunk, so a
+failed worker or unlanded task branch never becomes the base of a later one. A
+close failure after the ref update leaves the approved commit on trunk. Three
 consecutive failed children stop the sweep with `stop_reason` set in the ledger.
 If no item is ready and unowned, the controller lists all open items: katas it
 already handed off are expected, and any other open kata is written to
@@ -155,7 +156,7 @@ in this board run` included, is in the same file under
 `.context_updates.tool_stdout`.
 
 The parent run's `board/state.json` records every child: `completed` entries
-carry the commit and PR URL, `failed` entries carry the branch, reason, and
+carry the landed commit, `failed` entries carry the branch, reason, and
 label, and `empty` entries mark an empty queue. A stop adds `stop_reason`, an
 inspection stop adds `stop_child`, and the next sweep clears both. Each child's
 console output is under `board/items/<attempt>/child.log`; full artifacts
@@ -178,15 +179,15 @@ controller then removes the child's `child.pid` and its own lock and exits
 on the next sweep once that process is gone; while the process lives, the
 sweep stops with `child process <pid> is still running; wait before resuming
 the board`. A sweep stopped by three consecutive failures claims again from
-the same stack base on the next `Sweep again`. A finished ledger sweeps again
+the current trunk on the next `Sweep again`. A finished ledger sweeps again
 on re-entry: `Sweep again` at the gate claims the katas released since and
 records them in the same ledger. A run that ended with `Done` is over. So is
 a run that took its 51st `Sweep again`: the restart budget (`max_restarts: 50`
 in `board.dip`) belongs to the run, not to a kata or a repository, and never
 resets, so the 51st fails the run with a restart-limit error. Start a new
-board run to sweep again. Keep the checkout on the last task branch with a
-clean working tree. Runs claimed before the handoff recorded a starting branch
-stop for inspection at handoff.
+board run to sweep again. Keep the checkout on the recorded trunk with a clean
+working tree. Runs claimed before landing on close have no recorded trunk and
+stop for manual inspection.
 
 Board runs require the source `.dip` directory; packed `.dipx` bundles are not
 supported. Tracker 0.73.1 native subgraphs share the parent's artifact directory,
@@ -204,31 +205,34 @@ environment, passes every provider key into each tool command (verified
 across sweeps and a worker can write one, so check that file before a board
 run. The records a child writes under `.tracker/runs/<child-id>` (the
 selection, the handoff, the review approvals) come from the worker's own run.
-`board-report` validates every id, branch, commit, and PR URL it pastes into a
+`board-report` validates every id, branch, and commit it pastes into a
 command and refuses the whole review when one is unsafe; the controller checks
 both approvals against the child's final commit before it records a
 completion. Those checks defend against model error, not against a worker
 that sets out to forge its records.
 
-For a standalone one-item run, `complete.dip` creates a branch named
-`kata/<short-id>-<run-id>`, even when starting on another feature branch.
-For GitHub repositories, it fetches the remote's default branch and starts
-from that commit. Existing local branches and commits remain intact. For
-repositories without GitHub, the task branch starts from current HEAD.
-An empty queue leaves the current branch unchanged.
+For a standalone one-item run, `complete.dip` records the checked-out branch as
+`trunk` and creates `kata/<short-id>-<run-id>` from its current `HEAD`. It
+refuses a detached `HEAD` or a checked-out `kata/*` branch. Existing unrelated
+branches and commits remain intact. An empty queue leaves the current branch
+unchanged.
 Each one-item run never claims a second issue, including when a competing agent wins
 the claim. Candidate filtering happens before that single claim attempt.
-The pipeline recognizes GitHub.com SSH and HTTPS remotes. It prefers a GitHub
-`origin`; otherwise it requires exactly one GitHub remote. It verifies remote
-and authentication setup before claiming and records the repository and PR base.
+After both reviews approve the same commit, the final tool step checks that the
+current trunk tip is an ancestor of that commit, then updates the local trunk
+with a compare-and-swap. Movement that remains in the reviewed task's history
+is safe, including a retry after the same commit already landed. Divergence is
+refused with both the claimed base and current trunk tip named; rebase the task
+branch, rerun both reviews, and retry. After landing, the tool closes the kata,
+switches to trunk, and deletes the task branch.
 
-After both reviews approve the same commit, the final tool step pushes that
-commit to the task branch and opens a PR with the completion summary and
-verification evidence. A retry reuses a matching open PR. The URL is saved in
-`pr-url.txt` under the run directory and included in the kata closure message.
-Only then does the pipeline close the kata. Push or PR failures leave it open
-with a handoff. It never force-pushes or merges. Repositories without GitHub
-finish with the local commit and kata closure.
+If the Kata close call fails after the ref update, the kata remains open while
+trunk already points at the reviewed commit; retrying the close is safe. If the
+kata closes but the final switch or branch deletion fails, handoff refuses to
+write a normal failure record and the board stops with `child <id> needs
+inspection`. Check that trunk points at the approved commit and reconcile the
+closed child, its saved `CloseSelected` state, checkout, and task branch before
+resuming the board. The pipeline does not automate recovery from this state.
 
 Runtime artifacts live under `.tracker`. The preflight adds only `/.tracker/`
 to `.git/info/exclude`; it does not edit the repository's `.gitignore`. Unrelated
@@ -255,10 +259,11 @@ The saved checkpoint preserves the completed claim step; resume keeps the
 selected issue and run actor instead of claiming another item. Resume continues
 at the checkpoint's current node; it does not automatically retry a failed worker.
 
-Runs claimed before GitHub publication was added lack the saved `github` setting.
-Closure stops with a recovery error for these runs. Inspect the existing branch,
-claim, and review evidence before recovering it; starting another run would leave
-the original claim behind.
+Runs claimed before landing on close lack the saved `trunk` setting. Closure
+and handoff stop with `selected.json has no trunk; this run predates landing on
+close and needs manual inspection`. Inspect the branch, claim, and review
+evidence before recovering it; starting another run would leave the original
+claim behind.
 
 For tracker v0.73.1, `-r` reads `.tracker/runs/<run-id>/checkpoint.json` in the
 target repository. A copy under `~/.local/state/tracker` can be stale even when
@@ -295,8 +300,7 @@ Board <board-run-id> in <workspace>: stopped
 Stop reason: three consecutive failed children
   tracker -r <child-id> ~/src/pipelines/kata/complete.dip
 Completed (1)
-- demo#1abc on kata/1abc-<child-id>
-  https://github.com/org/repo/pull/12
+- demo#1abc: landed 0123456789ab (run <child-id>)
 Needs decision (1)
 - demo#2def: needs a decision (run <child-id>)
   branch kata/2def-<child-id>, base 0123456789ab, wip 89abcdef0123
@@ -314,15 +318,14 @@ Remaining open (1)
 The header ends with `finished`, `stopped`, or `in progress`. `Stop reason:`
 appears only after a stop, and the `tracker -r` line only when a child needs
 inspection. The reason after each kata comes from its handoff: `needs a
-decision`, `review rejected`, `publication failed`, `turn limit reached
-twice`, `worker stopped`, or `handoff found the wrong branch`. A completed
-kata without a PR prints `no pull request`. A kata the board swept more than
-once appears once, as its latest run left it. Paths print as `~/...` when the
+decision`, `review rejected`, `landing failed`, `turn limit reached twice`,
+`worker stopped`, or `handoff found the wrong branch`. A kata the board swept
+more than once appears once, as its latest run left it. Paths print as `~/...` when the
 pipeline lives under your home directory and single-quoted otherwise. Every
-id, branch, commit, and PR URL that reaches a pasteable command is checked
+id, branch, and commit that reaches a pasteable command is checked
 against a fixed character set first; when a child record fails that check,
 `board-report` prints `refusing to print the review: a child record under
-<runs dir> has a missing or unsafe id, branch, commit, or pull request URL`
+<runs dir> has a missing or unsafe id, branch, or commit`
 and exits 1. Inside a board run that failure fails the `Report` node
 (`node "Report" failed with no conditional edges to handle failure`) after a
 checkpoint; read `.tracker/runs/<board-run-id>/Report/status.json`, fix or
@@ -341,7 +344,7 @@ and read the review records under the child run directory
 (`.tracker/runs/<child-id>/Review*/status.json` and
 `.tracker/runs/<child-id>/ReReview*/status.json`).
 Either finish and close it by hand, or answer with guidance so the next sweep
-can finish it. Merge the PR stack oldest first. Then choose `Sweep again` at
+can finish it. Then choose `Sweep again` at
 the gate (arrow keys and Enter in a terminal; `2` or `Sweep again` on piped
 stdin): the board claims the katas you released and holds the review again
 when that sweep ends, or ends the run when the sweep is clean. Each `Sweep
@@ -369,13 +372,14 @@ With the matching tools plus ShellCheck available:
 ```
 
 Graph simulation checks routing without making model calls. Unit tests use
-kata/GitHub response fixtures and real Git repositories, including pushes to
-temporary bare remotes; the preflight smoke test
+Kata response fixtures and real local Git repositories; a source guard rejects
+remote Git and `gh` commands in live kata scripts. The preflight smoke test
 runs the actual tracker binary. Closure guards reject stale or missing
 approvals, missing evidence, and changes to the task branch or workspace.
 Board orchestration tests also run real Tracker child processes and local Git
-commits, using tool-only child workflows and fixture Kata records without models
-or live GitHub publication. Stack-base tests verify the fetched predecessor SHA.
+commits, using tool-only child workflows and fixture Kata records without models.
+Landing tests verify successive children and fresh board runs start from the
+advanced trunk.
 Board tests also run the real handoff script inside child runs. Continue tests
 drive a real tracker restart; handoff, answer, and report tests use fixture Kata
 records and run directories.

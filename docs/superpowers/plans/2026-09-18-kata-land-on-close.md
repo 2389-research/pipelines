@@ -4,7 +4,7 @@
 
 **Goal:** Land each approved kata task on the trunk it was claimed from as part of the close step — fast-forward the trunk ref to the reviewed commit, close the kata, delete the task branch — with no remote Git or GitHub actions anywhere in the pipeline.
 
-**Architecture:** `claim-next.sh` records the branch checked out at claim time as `trunk` in `selected.json` and refuses to start on a detached HEAD or a `kata/*` task branch. After both SHA-bound approvals, `close-selected.sh` fast-forwards `refs/heads/<trunk>` to the approved commit with `git update-ref`, closes the kata, switches to the trunk, and deletes the task branch; it refuses when the trunk moved, is missing, or is checked out in another worktree. `handoff-selected.sh` restores the trunk on failure and stops if the close step already landed the kata. `run-board.sh` records `landed` completions and `land` failures and no longer carries a stack base forward; every GitHub node, PR-stacking path, and remote command is removed, and `kata/check` grows a guard that fails if any kata script runs a remote Git or `gh` command.
+**Architecture:** `claim-next.sh` records the branch checked out at claim time as `trunk` in `selected.json` and refuses to start on a detached HEAD or a `kata/*` task branch. After both SHA-bound approvals, `close-selected.sh` fast-forwards `refs/heads/<trunk>` to the approved commit with `git update-ref`, closes the kata, switches to the trunk, and deletes the task branch; it refuses when the current trunk tip is not an ancestor of the reviewed head, is missing, or is checked out in another worktree. `handoff-selected.sh` restores the trunk on failure and stops if the close step already closed the kata. `run-board.sh` records `landed` completions and `land` failures and no longer carries a stack base forward; every GitHub node, PR-stacking path, and remote command is removed, and `kata/check` grows a guard that fails if any kata script runs a remote Git or `gh` command.
 
 **Tech Stack:** POSIX `sh`, `jq` 1.8.2, `git` 2.50.1, Tracker 0.73.1, Dippin 0.72.0, ShellCheck 0.11.0. No new dependencies.
 
@@ -14,8 +14,10 @@
 
 - 2026-09-19 execution: Doctor Biz authorized reviewing and merging the prerequisite branch locally, then executing this plan; no push. Doctor Biz approved grouping Tasks 4–6 into one integration commit so their shared state-format changes pass the full suite together, followed by the documentation work required by the binding spec (Task 7 below).
 - Prerequisite complete: `da6b07f` fixes failed Kata command routing with three regressions; fresh-eyes review and 77 canonical check cases passed. Main advanced concurrently with tracker-claw; local merge `d966275` preserves both projects and passes `./kata/check` and `sh tracker-claw/check`. Landing branch starts at `d966275`; no remote commands were run.
-- Task 1 complete: `e750610`, graph-contract red/green verified, ShellCheck and controller-captured `./kata/check` exit 0, independent spec/code review clean. Next: Task 2.
-- Tasks 2–3 complete: `bc76214` records trunk at claim; `6204f9c` lands at close and removes publication. Focused red/green, real Tracker preflight, full canonical checks, and ShellCheck pass; independent reviews are clean. Task 3 adds `kata/check-no-remotes` and its focused test to share one live-file scanner. Review found and fixed extensionless-helper and line-continuation gaps before commit. Next: grouped Tasks 4–6, then Task 7 documentation and final review. Compactions so far: 0.
+- Task 1 complete: `e750610`, graph-contract red/green verified, ShellCheck and controller-captured `./kata/check` exit 0, independent spec/code review clean.
+- Tasks 2–3 complete: `bc76214` records trunk at claim; `6204f9c` lands at close and removes publication. Focused red/green, real Tracker preflight, full canonical checks, and ShellCheck pass; independent reviews are clean. Task 3 adds `kata/check-no-remotes` and its focused test to share one live-file scanner. Review found and fixed extensionless-helper and line-continuation gaps before commit. Compactions so far: 1.
+- Tasks 4–6 complete: `b746a2d` carries trunk through handoff, records and reports landed commits, and makes board runs advance the local trunk. Focused checks, ShellCheck, the canonical suite, and independent review passed before the grouped commit.
+- Task 7 complete in this documentation commit. Final canonical check: 93 passing cases and ShellCheck; independent whole-branch review approves with no open findings. Final fixes `1d31327` make failed Git inspections stop closure and cover shell delimiters in the remote-command scanner. All seven tasks are complete; the feature branch remains local, ready for integration. No push or feature-branch merge was performed.
 - Execution corrections: the binding spec governs code examples. Task 3 scans live runtime files (including untracked files), includes `git remote`, and refuses scan errors; it preserves existing close refusal coverage. Task 5 requires a non-null valid commit for completed items. Task 6 validates selected fields and keeps guarded Kata lookups so malformed state or failed commands reach inspection rather than escaping through `set -e`.
 - 2026-09-18: spec approved ("ok cool. let's go") and committed at `ab9cebb`. Doctor Biz chose "Land inside the close step", "let's skip remote git actions altogether", and "commit the swap first".
 - Branch: `feat/kata-land-on-close`, cut from `main` **after** `fix/kata-scripts-by-path` (the gate-review fixes) merges to `main` locally. Do not start this plan until that merge has landed; the anchors below assume the gate-review work is in `main`.
@@ -735,7 +737,7 @@ git commit -m "feat(kata): land the approved task on trunk at close instead of o
 
 ---
 
-### Task 4: The handoff restores the trunk and stops if the close already landed
+### Task 4: The handoff restores the trunk and stops if the kata already closed
 
 `handoff-selected.sh` reads `trunk` instead of `start_branch`, restores the checkout with `git switch -q <trunk>`, and renames the close-failure reason from `publish` to `land`. Its `handoff.json` carries `trunk` in place of `start_branch`. Before it labels or comments, it checks that the kata is still open; a kata the close step already closed (it landed the commit but failed a later step) stops the handoff for inspection instead of relabeling a closed kata.
 
@@ -747,7 +749,7 @@ git commit -m "feat(kata): land the approved task on trunk at close instead of o
 - Consumes: `selected.json.trunk` (from Task 2); `CloseSelected/status.json` outcome (from Task 3, which still records `fail` on any close refusal); `kata show --workspace <ws> <uid> --json` returning `{issue:{uid,status,...}}`.
 - Produces: `handoff.json` shaped `{run_id, issue_uid, qualified_id, reason, label, branch, base_commit, wip_commit, trunk, question}`, consumed by Task 5 (board-report) and Task 6 (board). On a closed kata it writes no `handoff.json` and exits 1, so Task 6's failed-child path finds no valid record and stops the sweep with `child <id> needs inspection`.
 
-- [ ] **Step 1: Teach the fixture kata `show` and move the cases onto trunk (red first)**
+- [x] **Step 1: Teach the fixture kata `show` and move the cases onto trunk (red first)**
 
 In `kata/tests/handoff.sh`, the fixture kata answers only `label` and `comment` today. `kata show` carries no `--as`, so it must be handled before the `--as` check. After the line
 
@@ -774,7 +776,7 @@ In `new_repo`, the `selected.json` builder ends with `start_branch:"main",github
     trunk:"main"}' >"$run_dir/selected.json"
 ```
 
-- [ ] **Step 2: Move the `implement` keys assertion onto trunk**
+- [x] **Step 2: Move the `implement` keys assertion onto trunk**
 
 In the `implement` case, the `handoff.json` assertion pins `start_branch` and the full key list. Replace `.start_branch == "main"` with `.trunk == "main"` and swap `start_branch` for `trunk` in the sorted `keys`:
 
@@ -786,7 +788,7 @@ jq -e --arg base "$base" --arg wip "$wip" '.run_id == "test" and .issue_uid == "
   "$run_dir/handoff.json" >/dev/null || fail 'implement: handoff.json fields are wrong'
 ```
 
-- [ ] **Step 3: Rename the `publish` case to `land` and add the closed-kata case**
+- [x] **Step 3: Rename the `publish` case to `land` and add the closed-kata case**
 
 Replace the whole `new_repo publish` block (from `new_repo publish` through its `printf 'ok - ...'`) with a `land` case plus a new closed-kata case:
 
@@ -820,7 +822,7 @@ printf 'ok - a kata the close step already closed stops the handoff for inspecti
 
 The `land` case leaves no `closed` marker, so the fixture reports the kata open and the handoff records `land` as before. The `closed-after-land` case sets the marker, so the open-kata guard (added in Step 6) fires after the branch restore and before any label.
 
-- [ ] **Step 4: Move the `legacy` case onto trunk**
+- [x] **Step 4: Move the `legacy` case onto trunk**
 
 The `legacy` case strips the field the script refuses to run without. Change it from `start_branch` to `trunk`:
 
@@ -835,12 +837,12 @@ grep -F 'selected.json has no trunk' "$test_root/output" >/dev/null || fail 'leg
 printf 'ok - a run claimed before the trunk was recorded stops for inspection\n'
 ```
 
-- [ ] **Step 5: Run handoff.sh and watch the trunk cases fail**
+- [x] **Step 5: Run handoff.sh and watch the trunk cases fail**
 
 Run: `sh kata/tests/handoff.sh`
 Expected: FAIL — the `implement` case fails first, because the live script still writes `start_branch` and the assertion now demands `trunk`.
 
-- [ ] **Step 6: Move the script onto trunk and add the open-kata guard**
+- [x] **Step 6: Move the script onto trunk and add the open-kata guard**
 
 In `kata/scripts/handoff-selected.sh`, replace the `start_branch` read (lines 17-20):
 
@@ -891,7 +893,7 @@ printf '%s' "$issue" | jq -e --arg uid "$uid" '.issue.uid == $uid and .issue.sta
 
 The guard runs after the branch restore and before any label, comment, or `handoff.json`. A closed kata means the close step landed and closed it but failed a later step; relabeling it would be wrong, so the handoff stops and the board treats the missing `handoff.json` as a child needing inspection.
 
-- [ ] **Step 7: Move the `handoff.json` build onto trunk**
+- [x] **Step 7: Move the `handoff.json` build onto trunk**
 
 Replace the `handoff.json` builder (lines 70-74):
 
@@ -913,12 +915,12 @@ jq -n --arg run "$run_id" --arg uid "$uid" --arg qualified "$qualified_id" --arg
     question:(if $question == "" then null else $question end)}' >"$TRACKER_RUN_DIR/handoff.json.tmp"
 ```
 
-- [ ] **Step 8: Run handoff.sh and watch it pass**
+- [x] **Step 8: Run handoff.sh and watch it pass**
 
 Run: `sh kata/tests/handoff.sh`
 Expected: PASS (every `ok -` line prints).
 
-- [ ] **Step 9: Verify and commit**
+- [x] **Step 9: Verify and commit**
 
 Run: `sh kata/tests/handoff.sh`, `./kata/check`, and `shellcheck kata/check kata/board-report kata/answer kata/scripts/*.sh kata/tests/*.sh`. All clean.
 
@@ -942,7 +944,7 @@ git commit -m "feat(kata): restore the trunk on handoff and stop when the close 
 - Consumes: a completed ledger entry `{run_id, kind:"completed", issue_uid, branch, commit}` (Task 6 writes this) and its `selected.json.qualified_id`; a failed child's `handoff.json` (Task 4) with `reason == "land"`.
 - Produces: the text and `--json` report. No later task depends on it.
 
-- [ ] **Step 1: Drop github and pr_url from the completed ledger fixtures (red first)**
+- [x] **Step 1: Drop github and pr_url from the completed ledger fixtures (red first)**
 
 In `kata/tests/report.sh`, four completed ledger entries carry `github` and `pr_url`; a landed ledger entry carries neither. Trim each to `{run_id, kind, issue_uid, branch, commit}`.
 
@@ -970,7 +972,7 @@ The `poison-id` completed entry (line 245):
 
 (The `poison-pr` entry on line 242 is replaced whole in Step 4.)
 
-- [ ] **Step 2: Rewrite the expected completed text**
+- [x] **Step 2: Rewrite the expected completed text**
 
 The `newer` expected block (lines 96-99) drops the PR line and prints the landed commit. Replace:
 
@@ -1009,7 +1011,7 @@ Completed (2)
 
 (`$head` is `9abcdef0...`, so its 12-char prefix is `9abcdef09abc`; `$wip` is `5678ef01...`, prefix `5678ef015678`.)
 
-- [ ] **Step 3: Move the JSON assertions onto commit**
+- [x] **Step 3: Move the JSON assertions onto commit**
 
 Add `--arg head "$head"` to the JSON-shape `jq` (line 119):
 
@@ -1029,7 +1031,7 @@ Replace `pr_url` with `commit` in the keys list (line 134), keeping it sorted:
     all(keys == ["base_commit","branch","commit","issue_uid","labels","next","owner","qualified_id","question","reason","run_id","wip_commit"]))
 ```
 
-- [ ] **Step 4: Replace the PR-poison case with a landed-commit poison case**
+- [x] **Step 4: Replace the PR-poison case with a landed-commit poison case**
 
 The `poison-pr` case (lines 241-243) proved an unsafe PR URL was refused. With `pr_url` gone, poison the landed `commit` instead. Replace those three lines:
 
@@ -1051,7 +1053,7 @@ And drop "or pull request URL" from its summary (line 267):
 printf 'ok - a record with an unsafe branch, commit, or id is refused whole\n'
 ```
 
-- [ ] **Step 5: Rename the handoff fixtures' start_branch to trunk (fidelity)**
+- [x] **Step 5: Rename the handoff fixtures' start_branch to trunk (fidelity)**
 
 `board-report` ignores this field, but Task 4 renamed it in the real `handoff.json`, so the fixtures should match. `start_branch` appears only in the nine handoff fixtures:
 
@@ -1061,12 +1063,12 @@ sed -i '' 's/start_branch/trunk/g' kata/tests/report.sh
 
 Confirm nothing else changed: `grep -n start_branch kata/tests/report.sh` prints nothing, and `grep -c '"trunk":"main"\|trunk:"main"' kata/tests/report.sh` counts nine.
 
-- [ ] **Step 6: Run report.sh and watch the completed cases fail**
+- [x] **Step 6: Run report.sh and watch the completed cases fail**
 
 Run: `sh kata/tests/report.sh`
 Expected: FAIL — the first `ok` check fails because the live `board-report` still prints `- demo#5fav on kata/5fav-c1c1c1c1c1c1` and a PR line, not the landed line.
 
-- [ ] **Step 7: Record the landed commit in board-report's item builders**
+- [x] **Step 7: Record the landed commit in board-report's item builders**
 
 In `kata/board-report`, the completed item builder (lines 71-72) reads `pr_url` from the entry. Read `commit` instead:
 
@@ -1084,7 +1086,7 @@ The failed item builder (lines 79-80) carries `pr_url:null` for a uniform shape.
         "$child/handoff.json" >>"$tmp/items.jsonl"
 ```
 
-- [ ] **Step 8: Drop the PR URL from the safe-list and validate the commit**
+- [x] **Step 8: Drop the PR URL from the safe-list and validate the commit**
 
 Replace the safe-list (lines 88-97). Drop the `--arg pr ...`, drop the `pr_url` clause, add a `commit` clause, and reword the refusal to name "id, branch, or commit":
 
@@ -1103,7 +1105,7 @@ jq -se --arg qid '^[A-Za-z0-9._-]+(#[A-Za-z0-9._-]+)?$' --arg branch '^[A-Za-z0-
 
 A landed commit is a full 40-hex SHA, so `commit_or_null` accepts it and rejects the `deadbeef; rm -rf /` payload from Step 4. Failed and remaining items carry `commit:null`, which `commit_or_null` also accepts.
 
-- [ ] **Step 9: Move the remaining item, reason text, and completed line onto commit**
+- [x] **Step 9: Move the remaining item, reason text, and completed line onto commit**
 
 The remaining item (line 119) carries `pr_url:null`; carry `commit:null`:
 
@@ -1130,12 +1132,12 @@ The completed text line (lines 147-148) prints a PR URL on a second line; print 
 
 `short` (defined earlier in the same filter) takes the 12-char prefix; a completed commit is never null.
 
-- [ ] **Step 10: Run report.sh and watch it pass**
+- [x] **Step 10: Run report.sh and watch it pass**
 
 Run: `sh kata/tests/report.sh`
 Expected: PASS (every `ok -` line prints).
 
-- [ ] **Step 11: Verify and commit**
+- [x] **Step 11: Verify and commit**
 
 Run: `sh kata/tests/report.sh`, `./kata/check`, and `shellcheck kata/check kata/board-report kata/answer kata/scripts/*.sh kata/tests/*.sh`. All clean.
 
@@ -1165,7 +1167,7 @@ This task is one TDD cycle for an integration test: change the fixtures and ever
 - Consumes: `selected.json` with `trunk` and `qualified_id` (Task 2), the landed post-close git state (Task 3), `handoff.json` with `trunk` (Task 4), and `board-report`'s landed-commit output (Task 5).
 - Produces: the ledger completed entry `{run_id, kind:"completed", issue_uid, branch, commit}` that `board-report` reads (Task 5). No later task consumes run-board.
 
-- [ ] **Step 1: Rewrite the claim fixture to cut from trunk and drop the stack**
+- [x] **Step 1: Rewrite the claim fixture to cut from trunk and drop the stack**
 
 Replace the `claim.sh` heredoc body (`kata/tests/board.sh` l.114-173, between `cat >"$test_root/workflow/claim.sh" <<'SH'` and its closing `SH`) with:
 
@@ -1214,7 +1216,7 @@ printf 'claim-ok\n'
 
 The stack-base verification, the `github` object, the `base_branch` variable, and `pr-url.txt` all go; `trunk` (the branch checked out when the child starts) replaces `start_branch`.
 
-- [ ] **Step 2: Rewrite the close fixture to land the task on trunk**
+- [x] **Step 2: Rewrite the close fixture to land the task on trunk**
 
 Replace the `close.sh` heredoc body (`kata/tests/board.sh` l.207-223) with:
 
@@ -1245,7 +1247,7 @@ printf 'close-ok\n'
 
 The `fail-close` hook stays first, so a forced close failure happens before any land. `git branch -d` safe-deletes the task branch, which succeeds because trunk now points at the same commit.
 
-- [ ] **Step 3: Point the leave-branch worker at the trunk**
+- [x] **Step 3: Point the leave-branch worker at the trunk**
 
 In the `implement.sh` fixture's leave-branch handler (l.189-191), read `trunk` instead of `start_branch`. Change:
 
@@ -1263,7 +1265,7 @@ to:
 
 The worker still wanders off the task branch (now onto the trunk), which the handoff records as an `unexpected_checkout` — the `unexpected-checkout` case still holds.
 
-- [ ] **Step 4: Turn the stacked case into a lands-on-trunk case**
+- [x] **Step 4: Turn the stacked case into a lands-on-trunk case**
 
 Rename the case and drop every stack/PR assertion. Change the header (l.351-352):
 
@@ -1330,7 +1332,7 @@ with:
 printf 'ok - real Tracker children use distinct IDs and land on trunk, and a finished ledger sweeps again on re-entry\n'
 ```
 
-- [ ] **Step 5: Add a fresh-board case that claims from the advanced trunk**
+- [x] **Step 5: Add a fresh-board case that claims from the advanced trunk**
 
 After the `lands-on-trunk` case (before `new_case empty 0`), add a case that runs one board to a landing, then starts a brand-new board run in the same repository and proves its child cuts from the trunk the first run advanced:
 
@@ -1360,7 +1362,7 @@ expect_marker board-clean 'a fresh board run from the advanced trunk'
 printf 'ok - a fresh board run claims from the trunk tip a previous run advanced\n'
 ```
 
-- [ ] **Step 6: Migrate the failing case to trunk landing**
+- [x] **Step 6: Migrate the failing case to trunk landing**
 
 In the `failing` case, replace the completed-run clause of the ledger assertion (l.405-406):
 
@@ -1429,7 +1431,7 @@ with:
   fail 'failing: the second sweep did not finish the handed-off kata from the trunk tip'
 ```
 
-- [ ] **Step 7: Turn the stacked-failure case into a landed-then-failure case**
+- [x] **Step 7: Turn the stacked-failure case into a landed-then-failure case**
 
 Rename the case (l.453):
 
@@ -1488,7 +1490,7 @@ with:
 printf 'ok - a failure after a landing restores the trunk and keeps the landed commit\n'
 ```
 
-- [ ] **Step 8: Migrate the recovery, unexpected-checkout, and refused-record cases**
+- [x] **Step 8: Migrate the recovery, unexpected-checkout, and refused-record cases**
 
 In the `recovery` case, the wrong-checkout guard (l.532-534) currently switches to `main` and back to `kata/item-1`. After a land the child ends on `main` with `kata/item-1` gone, so switching to `main` no longer trips the guard. Replace:
 
@@ -1540,12 +1542,12 @@ must_succeed 'a re-entry with a landed commit the review refuses'
 
 The refusal greps (l.657-660) stay: `board-report` still prints `refusing to print the review` and the controller still prints the review-failed line.
 
-- [ ] **Step 9: Run the board test and watch it fail**
+- [x] **Step 9: Run the board test and watch it fail**
 
 Run: `sh kata/tests/board.sh`
 Expected: FAIL. The fixtures now land the task and delete its branch, but the unchanged `run-board.sh` still expects a stack and a `github` field on `selected.json`, so the first completed child trips `stop_for_inspection` (its `has("github")` check and its `HEAD == branch` check both fail against a landed tree). The `lands-on-trunk` case is the first to break.
 
-- [ ] **Step 10: Drop the stack block from the controller**
+- [x] **Step 10: Drop the stack block from the controller**
 
 In `kata/scripts/run-board.sh`, delete lines 138-144 (the comment through `export KATA_STACK_BASE_FILE`):
 
@@ -1561,7 +1563,7 @@ In `kata/scripts/run-board.sh`, delete lines 138-144 (the comment through `expor
 
 Leave `index`/`item`/`mkdir -p "$item"` (l.135-137) and the child-launch block (l.145+) in place.
 
-- [ ] **Step 11: Read trunk in record_failure and drop the frozen-stack check**
+- [x] **Step 11: Read trunk in record_failure and drop the frozen-stack check**
 
 In `record_failure`, change the handoff-shape assertion (l.99-101) to require `.trunk`:
 
@@ -1585,7 +1587,7 @@ Delete the frozen-stack HEAD check (l.110-112):
   fi
 ```
 
-- [ ] **Step 12: Verify the landed tree and record the landed commit**
+- [x] **Step 12: Verify the landed tree and record the landed commit**
 
 Replace the completed block (l.184-210) with the trunk-aware version. The `has("github")` check becomes `has("trunk")`; the checkout must be on trunk with the task branch gone; the `pr_url` block goes; the ledger entry drops `github`/`pr_url`; the board line becomes the `Landed` line:
 
@@ -1618,7 +1620,7 @@ Replace the completed block (l.184-210) with the trunk-aware version. The `has("
     printf 'Landed %s on %s at %s\n' "$qualified" "$trunk" "$head"
 ```
 
-- [ ] **Step 13: Retitle board.dip for landing**
+- [x] **Step 13: Retitle board.dip for landing**
 
 In `kata/board.dip`, replace the second ABOUTME line (l.2):
 
@@ -1634,7 +1636,7 @@ and the goal (l.4):
 
 The `RunBoard`/`Report`/`MorningReview`/`Exit` nodes and every edge stay.
 
-- [ ] **Step 14: Run the board test to green, then the full suite, then commit**
+- [x] **Step 14: Run the board test to green, then the full suite, then commit**
 
 Run: `sh kata/tests/board.sh`
 Expected: PASS — every case, including `lands-on-trunk`, `fresh-board`, `landed-then-failure`, and `recovery`.
@@ -1662,7 +1664,21 @@ git commit -m "feat(kata): land the approved task on trunk at close in the board
 
 The binding spec's Docs section defines the required changes. Update `kata/README.md`, the `README.md` board row, `kata/BOARD-PLAN.md`, `kata/PLAN.md`, `CHANGELOG.md`, and the affected entries in `gotchas.md`. Document claim-time trunk selection, local landing and task-branch deletion, landing failures and legacy-run refusal, the commit-based morning review, and operator-controlled pushing. Remove current instructions for GitHub publication and stacked bases; preserve historical changelog entries.
 
-- [ ] Update the documents and superseded gotchas entries, including the committed model mapping.
-- [ ] Search current operator instructions for stale GitHub publication, stacking, `start_branch`, and PR-report claims; inspect each result rather than rewriting historical plans or changelog records.
-- [ ] Record task completion, review evidence, and known limitations in this plan.
-- [ ] Run `./kata/check`, review the documentation against the final scripts, and commit named files only. No remote action.
+- [x] Update the documents and superseded gotchas entries, including the committed model mapping.
+- [x] Search current operator instructions for stale GitHub publication, stacking, `start_branch`, and PR-report claims; inspect each result rather than rewriting historical plans or changelog records.
+- [x] Record Tasks 1–6 completion and the remaining verification, review, and known limitations in this plan.
+- [x] Run `./kata/check`, review the documentation against the final scripts, and commit named files only. No remote action.
+
+Documentation read-back confirms the current operator path uses the local
+checked-out trunk, no remote calls, completed ledger commits, `land` failures,
+and legacy-state refusal. Historical PR and stack records remain labeled as
+superseded. Known limitations remain: approvals and child artifacts are not a
+hostile-worker security boundary; a failed Kata close can leave an open item
+whose reviewed commit is already on trunk; and a close followed by failed
+checkout cleanup requires manual child reconciliation. The final canonical
+check passed all 93 cases, including ShellCheck, using real local Git and
+Tracker with fixture Kata records and no model calls. The pre-existing Tracker
+static-validation note about unset runtime context remains; real preflight
+checks passed. Independent whole-branch review found three Git-read/scanner
+issues, all fixed with red/green regressions in `1d31327` and re-reviewed.
+No live model-backed run was attempted, as required by the test constraints.

@@ -1,8 +1,8 @@
 # Kata board runner implementation plan
 
 Goal: process the target repository's board through the existing complete.dip,
-one ready, unowned item at a time. Doctor Biz chose stacked task branches and
-PRs, with merging left to the operator.
+one ready, unowned item at a time. Run it from the local branch where approved
+work should land.
 
 Design: board.dip calls a shell controller through graph.workflow_dir. The
 controller launches separate Tracker CLI runs of complete.dip, since native
@@ -10,10 +10,11 @@ subgraphs in Tracker 0.73.1 share run identity/artifacts and lack child checkpoi
 Child logs and a board ledger live under the parent run directory. Child runs
 retain standard .tracker/runs locations so ordinary Tracker resume works.
 
-Each completed child supplies a frozen branch, commit, and GitHub identity for
-the next child. First items retain the normal default-branch base. Later items
-fetch and verify the previous task branch, use it as their PR base, and retain
-the existing reviews and closure gates. No automatic merges or force pushes.
+Each completed child lands its SHA-bound, two-model-approved commit on the
+recorded trunk and returns the checkout there. The next child starts from that
+advanced local tip. The controller records the landed commit and verifies the
+checkout, clean tree, deleted task branch, approvals, and closed kata. The
+pipeline performs no remote Git or GitHub action; pushing belongs to the operator.
 
 A failed child hands its kata off for review and the board claims the next one;
 three consecutive failed children, or a failure that leaves the handoff record,
@@ -26,6 +27,12 @@ blocked board may query again. No source changes or claims for other repositorie
 Constraints: source .dip only; nested Tracker reloads stored provider configuration
 because tool subprocesses filter environment-only credentials. Parent budget and
 token summaries do not aggregate nested CLI runs. Never create practice issues.
+
+The checklist and validation below describe the 2026-09-14 stacked-PR release
+and are retained as history. They are superseded by the landing-on-close
+behavior above. Current completed ledger entries contain `commit`, not a PR
+URL; failures record `trunk` in their handoff. A closed kata after landing with
+an incomplete switch or branch deletion stops the board for inspection.
 
 - [x] Add and test optional verified stack-base input in claim-next.sh.
 - [x] Add board.dip and controller with durable child tracking and recovery.

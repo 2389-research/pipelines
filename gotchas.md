@@ -13,8 +13,8 @@ unrelated uncommitted work and report its paths. Keep preflight failures on
 ClaimNext rather than masking them with a generic Stop node.
 
 Doctor Biz wants kata agents routed through the configured Lunaroute gateway
-using `openai-compat`: `glm-5.3` for worker/repair/correctness and
-`deepseek-4.1-flash` for scope. After post-claim authentication failures, resume
+using `openai-compat`: `deepseek-4.1-flash` for worker/repair/correctness and
+`glm-5.3` for scope. After post-claim authentication failures, resume
 the saved run with the same pipeline to preserve its claim; do not start over.
 
 Doctor Biz wants much larger kata turn ceilings so checks, evidence, and
@@ -36,16 +36,18 @@ not count as blocking predecessors. Filter ready results by child_counts.open
 before claiming. Preserve explicit priority order (unset last, received order
 for ties), and never try another claim after losing an ownership race.
 
-Doctor Biz wants a fresh branch for every claimed kata and a PR when GitHub
-is configured. GitHub tasks start from the fetched default branch; local-only
-tasks start from current HEAD. Publish only the SHA approved by both reviewers,
-reuse a matching open PR, and leave the kata open if publication fails.
+Doctor Biz wants a fresh branch for every claimed kata, cut from the checked-out
+local trunk. After both reviewers approve the same SHA, the close step lands it
+on trunk, closes the kata, returns to trunk, and deletes the task branch. The
+pipeline makes no remote Git or GitHub calls; the operator decides when to push.
 
-Doctor Biz chose stacked branches and PRs for whole-board runs, leaving merging
-to the operator. Each kata uses the previous approved task as its base. Tracker
-0.73.1 native subgraphs share run identity/artifacts, so board.dip calls separate
-complete.dip CLI runs and records their IDs. Resume resolves the current child
-before another claim. No ready work with open items remaining means incomplete.
+Doctor Biz chose local trunk landing for whole-board runs. Each approved child
+fast-forwards trunk, so the next child starts from the landed commit; failed
+workers and unlanded task branches return to trunk and do not become a base. A
+close failure after the ref update leaves the approved commit on trunk. Tracker 0.73.1 native
+subgraphs share run identity/artifacts, so board.dip calls separate complete.dip
+CLI runs and records their IDs. Resume resolves the current child before another
+claim. No ready work with open items remaining means incomplete.
 
 Tracker 0.73.1 treats any TUI exit as a run cancel. Pressing `q` or Ctrl-C in
 the TUI cancels the pipeline context, SIGKILLs the running tool's process group
@@ -67,7 +69,7 @@ invoked by its physical path. Fixed with `pwd -P` on 2026-09-15.
 ## Boards fail forward into a morning review (decided 2026-09-16)
 
 Doctor Biz chose fail-forward boards with a morning review (2026-09-16): a failed
-child hands its kata off (label, comment, WIP commit, starting branch restored)
+child hands its kata off (label, comment, WIP commit, trunk restored)
 and the board claims the next one; three consecutive failures stop the sweep. A
 queue with only owned or blocked katas finishes the sweep. Since 2026-09-18
 every stop after the ledger exists (three failures, a child needing inspection,
@@ -120,15 +122,14 @@ Kata tool nodes run scripts by path; `kata/tests/tool-commands.sh` fails on
 any expansion tracker would blank. The kata tests execute scripts with `sh`
 directly, so they cannot see this class of bug on their own.
 
-## The kata binding must be on the GitHub base branch (verified 2026-09-17)
+## Run Kata from the local trunk that should receive the work (decided 2026-09-19)
 
-`kata init` binds a workspace with a committed `.kata.toml`. In pr mode
-`kata/scripts/claim-next.sh` cuts the task branch from origin's default branch,
-not local main. If the binding commit is only local, the checkout drops
-`.kata.toml`, every later `kata` call fails with "no project bound to this
-workspace", and `close-selected.sh` hands an approved commit off instead of
-publishing it, one stranded kata per run. claim-next now refuses such a base
-before claiming; push the binding commit first.
+`kata/scripts/claim-next.sh` records the checked-out branch as `trunk`, refuses
+detached HEAD and `kata/*`, and cuts the task branch from the local tip. Close
+accepts trunk movement only when the new tip is still an ancestor of the
+reviewed head; an already-landed retry is valid, while divergence needs a rebase
+and both reviews again. Legacy selected state without `trunk` stops for manual
+inspection. The pipeline never fetches or checks a remote base.
 
 Related: `kata assign <ref> none` creates an actor literally named `none`.
 `kata ready --unowned` then skips the kata and the board report reads
@@ -162,3 +163,7 @@ Kata fails, before the ledger stop helpers can save `stop_reason` and print
 `board-needs-human`. Route list failures through `stop_board` and child-specific
 show failures through `stop_for_inspection`; validating successful JSON does not
 cover a nonzero CLI exit.
+
+The close path has the same rule for Git reads: capture and check `git status`
+and `git worktree list` exit codes before interpreting their output. Empty output
+after a failed command does not prove a clean tree or an unused trunk.

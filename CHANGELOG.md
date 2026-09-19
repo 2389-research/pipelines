@@ -104,6 +104,11 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Changed
 
+- Kata now records the checked-out local branch as trunk and lands each
+  SHA-bound, two-model-approved task there during closure. The close step
+  fast-forwards trunk with a compare-and-swap, closes the kata, returns to
+  trunk, and deletes the task branch. Board runs carry each landed commit into
+  the next child and report completed commits from `board/state.json`.
 - Kata review models swapped: scope reviews now run on `glm-5.3` and the
   worker, repair, and correctness reviews on `deepseek-4.1-flash`.
 
@@ -250,6 +255,13 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   the restart budget, the stops and where their messages land, the review
   layout, `Report` node recovery with `tracker -r`, the trust level of
   run-directory records, and the `.kata.toml` base precondition.
+
+### Removed
+
+- Kata no longer fetches, pushes, discovers GitHub remotes, opens pull
+  requests, or stacks task branches. The operator chooses when to push the
+  locally landed trunk. Legacy run state without `trunk` is refused for manual
+  inspection instead of being translated to the new state shape.
 
 ### Fixed
 

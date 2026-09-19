@@ -26,7 +26,7 @@ You will need API keys for the LLM providers used in each pipeline (Anthropic, O
 | Pipeline | Description |
 |----------|-------------|
 | [`complete.dip`](kata/complete.dip) | Claims one ready, unowned kata item, plans only as needed, implements it, and requires two-model fresh-eyes review before evidence-backed closure. At most one repair pass. |
-| [`board.dip`](kata/board.dip) | Reuses the complete pipeline for the whole board with separate child runs and stacked task PRs. Stops on failure or remaining blocked work; leaves merging to the operator. |
+| [`board.dip`](kata/board.dip) | Reuses the complete pipeline for the whole board with separate child runs. Each approved child lands on the checked-out local trunk; failed work goes to the morning review. The pipeline never touches a remote. |
 
 ### [Build & Ship](build-and-ship/)
 
