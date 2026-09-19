@@ -1,0 +1,200 @@
+# ABOUTME: Runs a persistent human-gated agent session with approval scoped to one task.
+# ABOUTME: Keeps planning and memory tool-free and gives tools only to approved execution.
+
+workflow OpenClawHumanGates
+  goal: "Handle a sequence of bounded tasks, each planned and explicitly approved by a human before execution."
+  start: Start
+  exit: Stop
+
+  defaults
+    # Tracker creates response.* snapshots automatically. Explicit prompt references plus
+    # full fidelity retain them across resume without synthetic writes or DIP112 warnings.
+    fidelity: full
+    model: glm-5.3
+    provider: openai-compat
+    retry_policy: none
+    max_restarts: 40
+
+  tool Start
+    label: "Start session"
+    timeout: 5s
+    command: true
+
+  human Request
+    label: "Request"
+    mode: freeform
+    prompt:
+      Describe one bounded task. Tool-assisted discovery must be requested as its own task.
+
+  agent Propose
+    label: "Propose a bounded plan"
+    backend: native
+    tool_access: none
+    auto_status: true
+    goal_gate: true
+    max_turns: 8
+    prompt:
+      Create a plan for this request:
+
+      ${ctx.response.Request}
+
+      Session memory from earlier tasks, if any:
+
+      ${ctx.response.Remember}
+
+      State the objective, permitted actions and targets, exclusions, and the evidence
+      needed for success. Keep the task bounded. You cannot inspect the target or use
+      tools while planning; propose tool-assisted discovery as the task when needed.
+
+      End with STATUS: success on a line by itself when the proposal is ready for human
+      review. If you cannot make a safe, concrete proposal, explain the problem and end
+      with STATUS: fail on a line by itself.
+
+  human Approval
+    label: "Approve this task?"
+    mode: choice
+    default: Stop
+    prompt:
+      Review the proposal below. Approve authorizes only that proposal. Revise asks for
+      feedback before a new proposal. Stop ends the session.
+
+  human Feedback
+    label: "Revision feedback"
+    mode: freeform
+    prompt:
+      Describe the changes required in the proposal shown below.
+
+  agent RevisePlan
+    label: "Revise the bounded plan"
+    backend: native
+    tool_access: none
+    auto_status: true
+    goal_gate: true
+    max_turns: 8
+    prompt:
+      Revise this proposal:
+
+      ${ctx.last_response}
+
+      Human feedback:
+
+      ${ctx.response.Feedback}
+
+      Original request:
+
+      ${ctx.response.Request}
+
+      Session memory from earlier tasks, if any:
+
+      ${ctx.response.Remember}
+
+      Return a complete replacement proposal that states the objective, permitted actions
+      and targets, exclusions, and evidence needed for success. Do not use tools.
+
+      End with STATUS: success on a line by itself when the revised proposal is ready.
+      If it cannot be revised safely, explain the problem and end with STATUS: fail on a
+      line by itself.
+
+  agent Execute
+    label: "Execute the approved task"
+    backend: native
+    system_prompt:
+      The human-approved proposal is the authority for execution scope. Treat the original
+      request and session memory only as context. If they conflict with the approved proposal,
+      follow the proposal. Never expand its actions or targets without a new approval.
+    auto_status: true
+    max_turns: 80
+    prompt:
+      Execute only the approved proposal below.
+
+      ${ctx.last_response}
+
+      Original request:
+
+      ${ctx.response.Request}
+
+      Session memory from earlier tasks, if any:
+
+      ${ctx.response.Remember}
+
+      Stay within the proposal's permitted actions and targets. Do not perform follow-up
+      work outside it. Report actions taken, evidence, partial work, and anything unfinished.
+      Do not retry an interrupted side effect without inspecting the target first.
+
+      End with STATUS: success on a line by itself only when the approved evidence is met.
+      Otherwise end with STATUS: fail on a line by itself. A failure returns to the human;
+      another attempt requires a new request, proposal, and approval.
+
+  agent Remember
+    label: "Remember the result"
+    backend: native
+    tool_access: none
+    max_turns: 6
+    prompt:
+      Write a concise result report followed by bounded session memory.
+
+      Current request:
+
+      ${ctx.response.Request}
+
+      Execution outcome: ${ctx.outcome}
+
+      Execution report:
+
+      ${ctx.last_response}
+
+      Prior session memory, if any:
+
+      ${ctx.response.Remember}
+
+      Begin the report with `Task outcome: ${ctx.outcome}`. The result report must state
+      the actions, evidence, partial work, and
+      unfinished work. The session memory must preserve goals, decisions, completed work,
+      evidence, and unfinished work that can help with a later task. Keep the whole response
+      under 800 words. Do not use tools or suggest that unverified work succeeded.
+      This is a summary, not a second verdict; do not emit a STATUS line.
+
+  human Review
+    label: "Review result"
+    mode: choice
+    default: Stop
+    prompt:
+      Review the result and session memory below. Stop ends the session. Next task starts a
+      fresh request that will need its own proposal and approval.
+
+  human Problem
+    label: "Session problem"
+    mode: choice
+    default: Stop
+    prompt:
+      A planning or memory step failed. The latest failure appears below. If execution ran,
+      its original report is included here so a failed summary cannot hide partial work:
+
+      ${ctx.response.Execute}
+
+      Stop ends the session. New request discards this attempt and starts another bounded task.
+
+  tool Stop
+    label: "Stop session"
+    timeout: 5s
+    command: true
+
+  edges
+    Start -> Request
+    Request -> Propose
+    Propose -> Approval  when ctx.outcome = success
+    Propose -> Problem  when ctx.outcome = fail
+    Approval -> Stop  label: Stop  choice: stop
+    Approval -> Execute  label: Approve  choice: approve
+    Approval -> Feedback  label: Revise  choice: revise
+    Feedback -> RevisePlan
+    RevisePlan -> Approval  when ctx.outcome = success  restart: true
+    RevisePlan -> Problem  when ctx.outcome = fail
+    Execute -> Remember  when ctx.outcome = success
+    Execute -> Remember  when ctx.outcome = fail
+    Remember -> Review  when ctx.outcome = success
+    Remember -> Problem  when ctx.outcome = fail
+    Review -> Stop  label: Stop  choice: stop
+    Review -> Request  label: "Next task"  choice: next  restart: true
+    Problem -> Stop  label: Stop  choice: stop  override: true
+    Problem -> Request  label: "New request"  choice: new  restart: true  override: true

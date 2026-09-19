@@ -1,0 +1,21 @@
+#!/bin/sh
+# ABOUTME: Runs deterministic validation for the OpenClaw human-gated workflow.
+# ABOUTME: Keeps offline checks isolated from provider calls and target repositories.
+set -eu
+
+case ${1:-} in
+  -h|--help)
+    printf 'usage: %s\nRuns offline Dippin, Tracker gate, and shell checks for openclaw/agent.dip.\n' "$0"
+    exit 0
+    ;;
+esac
+
+openclaw_dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+command -v dippin >/dev/null
+command -v tracker >/dev/null
+command -v jq >/dev/null
+command -v shellcheck >/dev/null
+
+sh "$openclaw_dir/tests/graph.sh"
+sh "$openclaw_dir/tests/gates.sh"
+shellcheck "$openclaw_dir/check" "$openclaw_dir"/tests/*.sh
