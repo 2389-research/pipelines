@@ -7,7 +7,12 @@ pipeline_dir=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
 script="$pipeline_dir/scripts/continue-implement.sh"
 test_root=$(mktemp -d)
 test_root=$(cd "$test_root" && pwd -P)
-trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+trap 'rm -rf "$test_root"' EXIT
+trap 'exit 130' HUP INT TERM
+KATA_ISOLATE_ROOT="$test_root/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$pipeline_dir/tests/isolate.sh"
 command -v tracker >/dev/null
 command -v jq >/dev/null
 

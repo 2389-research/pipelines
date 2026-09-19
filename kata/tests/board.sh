@@ -10,12 +10,17 @@ for required in scripts/run-board.sh scripts/handoff-selected.sh board-report bo
     exit 1
   }
 done
-# Every kata script is executable; the controller demands -x on board-report and must meet its own rule.
+# scripts/run-board.sh is the controller; this checks only that its own executable bit is set, not every kata script.
 [ -x "$pipeline_dir/scripts/run-board.sh" ] || { printf 'FAIL: scripts/run-board.sh is not executable\n' >&2; exit 1; }
 
 test_root=$(mktemp -d)
 test_root=$(cd "$test_root" && pwd -P)
-trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+trap 'rm -rf "$test_root"' EXIT
+trap 'exit 130' HUP INT TERM
+KATA_ISOLATE_ROOT="$test_root/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$pipeline_dir/tests/isolate.sh"
 mkdir -p "$test_root/bin" "$test_root/workflow/scripts"
 
 cat >"$test_root/bin/kata" <<'SH'

@@ -2,9 +2,14 @@
 # ABOUTME: Checks that the text tracker expands for each kata DIP contains no expansion it would blank.
 # ABOUTME: Tracker inlines command_file and prompt_file text and turns any unknown ${a.b} into an empty string.
 set -eu
-pipeline_dir=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+pipeline_dir=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
 test_root=$(mktemp -d)
-trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+trap 'rm -rf "$test_root"' EXIT
+trap 'exit 130' HUP INT TERM
+KATA_ISOLATE_ROOT="$test_root/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$pipeline_dir/tests/isolate.sh"
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
@@ -22,7 +27,13 @@ for dip in "$pipeline_dir"/*.dip; do
     [ -f "$dip_dir/$file" ] || fail "$name names a missing file $file"
     cat "$dip_dir/$file" >>"$test_root/effective"
   done <"$test_root/inlined"
-  blanked=$(grep -noE '\$\{[^}]*\.[^}]*\}' "$test_root/effective" | grep -vE ':\$\{(ctx|params|graph|inputs)\.' || true)
+  # grep exits 1 when nothing matches and 2 on a bad pattern or an unreadable file; only the first is a clean scan.
+  status=0
+  grep -noE '\$\{[^}]*\.[^}]*\}' "$test_root/effective" >"$test_root/expansions" || status=$?
+  [ "$status" -le 1 ] || fail "scanning $name for expansions failed with status $status"
+  status=0
+  blanked=$(grep -vE ':\$\{(ctx|params|graph|inputs)\.' "$test_root/expansions") || status=$?
+  [ "$status" -le 1 ] || fail "filtering the expansions of $name failed with status $status"
   [ -z "$blanked" ] || fail "$name feeds tracker text it would blank (line:expansion):
 $blanked"
 done

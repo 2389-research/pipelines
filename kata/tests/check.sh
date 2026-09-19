@@ -5,7 +5,12 @@ set -eu
 
 KATA_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 TMP_ROOT=$(mktemp -d)
-trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
+trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'exit 130' HUP INT TERM
+KATA_ISOLATE_ROOT="$TMP_ROOT/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$KATA_DIR/tests/isolate.sh"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$*"; }

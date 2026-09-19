@@ -5,8 +5,13 @@ set -eu
 
 KATA_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 TMP_ROOT=$(mktemp -d)
-trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
-export GIT_CONFIG_GLOBAL="$TMP_ROOT/gitconfig" GIT_CONFIG_NOSYSTEM=1
+trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'exit 130' HUP INT TERM
+# The snippet points GIT_CONFIG_GLOBAL at a fixture file; every git config --global write below lands there.
+KATA_ISOLATE_ROOT="$TMP_ROOT/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$KATA_DIR/tests/isolate.sh"
 export GH_SETUP_LOG="$TMP_ROOT/gh.log"
 mkdir "$TMP_ROOT/bin"
 ln -s "$KATA_DIR/tests/fake-kata.sh" "$TMP_ROOT/bin/kata"

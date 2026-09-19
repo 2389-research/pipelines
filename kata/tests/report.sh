@@ -10,10 +10,11 @@ test_root=$(cd "$test_root" && pwd -P)
 trap 'rm -rf "$test_root"' EXIT
 trap 'exit 130' HUP INT TERM
 command -v jq >/dev/null
-# The report prints commands as ~/... under the operator's home; a fixture home keeps the expected text fixed.
-HOME="$test_root/home"
-mkdir -p "$HOME"
-export HOME
+# The report prints commands as ~/... under the operator's home; the snippet's fixture home keeps the expected text fixed.
+KATA_ISOLATE_ROOT="$test_root/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$pipeline_dir/tests/isolate.sh"
 
 mkdir -p "$test_root/bin"
 cat >"$test_root/bin/kata" <<'SH'
@@ -257,7 +258,7 @@ refuse() {
   (cd "$repo" && "$report" "$@") >"$test_root/output" 2>&1 || status=$?
   [ "$status" -eq 1 ] || fail "$*: exited $status, expected 1"
   grep -F 'unsafe' "$test_root/output" >/dev/null || fail "$*: the refusal message is missing"
-  if grep -F 'Completed (' "$test_root/output" >/dev/null; then fail "$*: a review was printed before the refusal"; fi
+  if grep -F 'demo#' "$test_root/output" >/dev/null; then fail "$*: a record was printed before the refusal"; fi
 }
 for poison in poison-branch poison-dots poison-pr poison-id poison-commit poison-ctrl; do
   refuse "$poison"
