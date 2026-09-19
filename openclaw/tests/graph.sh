@@ -6,7 +6,15 @@ set -eu
 pipeline_dir=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
 workflow="$pipeline_dir/agent.dip"
 test_root=$(mktemp -d)
-trap 'rm -rf "$test_root"' EXIT
+cleanup() {
+  cleanup_status=$1
+  if [ "$cleanup_status" -eq 0 ]; then
+    rm -rf "$test_root"
+  else
+    printf 'graph test logs retained at %s\n' "$test_root" >&2
+  fi
+}
+trap 'cleanup $?' EXIT
 trap 'exit 130' HUP INT TERM
 
 dippin validate "$workflow"
@@ -55,12 +63,17 @@ for gate in Approval Review Problem; do
   }
 done
 
-# Agent entries expose the effective parsed model/provider; all are explicit native sessions.
-jq -se '
+# Agent entries expose inherited planning identity and Execute's explicit worker override.
+if ! jq -se '
   [.[] | select(.event == "node_enter" and .kind == "agent")]
   | (map(.node) | unique | length) == 4
-  and all(.model == "glm-5.3" and .provider == "openai-compat")
-' "$test_root/events" >/dev/null
+  and all(.provider == "openai-compat")
+  and all(if .node == "Execute" then .model == "glm-5.3"
+          else .model == "deepseek-4.1-flash" end)
+' "$test_root/events" >/dev/null; then
+  printf 'parsed agents must use deepseek-4.1-flash except glm-5.3 Execute, all via openai-compat\n' >&2
+  exit 1
+fi
 
 # Dippin's event format does not expose these safety attrs, so check their authored declarations.
 agent_count=$(awk '$1 == "agent" { count++ } END { print count + 0 }' "$workflow")
@@ -85,6 +98,14 @@ if grep -Eq '^[[:space:]]*max_retries:' "$workflow"; then
   printf 'agent.dip must not override the no-retry policy with max_retries\n' >&2
   exit 1
 fi
+if grep -Eq '^[[:space:]]*fallback(_retry)?_target:' "$workflow"; then
+  printf 'agent.dip must not add an execution fallback or retry target\n' >&2
+  exit 1
+fi
+if grep -Eq '^[[:space:]]*Review ->.*override:[[:space:]]*true' "$workflow"; then
+  printf 'Review cannot override the multi-hop Execute goal gate\n' >&2
+  exit 1
+fi
 
 max_restarts=$(awk '$1 == "max_restarts:" && $2 ~ /^[1-9][0-9]*$/ { print $2 }' "$workflow")
 [ -n "$max_restarts" ]
@@ -93,8 +114,26 @@ grep -F "\${ctx.response.Remember}" "$workflow" >/dev/null
 grep -F "\${ctx.response.Feedback}" "$workflow" >/dev/null
 grep -F "\${ctx.response.Execute}" "$workflow" >/dev/null
 
-goal_gates=$(awk '$1 == "goal_gate:" && $2 == "true" { count++ } END { print count + 0 }' "$workflow")
-[ "$goal_gates" -eq 2 ]
+goal_gates=$(awk '
+  $1 == "agent" { agent = $2 }
+  $1 == "goal_gate:" && $2 == "true" { gated[agent] = 1 }
+  END {
+    print (gated["Propose"] + 0) ":" (gated["RevisePlan"] + 0) ":" \
+      (gated["Execute"] + 0) ":" (gated["Remember"] + 0)
+  }
+' "$workflow")
+[ "$goal_gates" = 1:1:1:0 ] || {
+  printf 'goal gates Propose:RevisePlan:Execute:Remember = %s, want 1:1:1:0\n' "$goal_gates" >&2
+  exit 1
+}
+
+[ "$(grep -Fc 'Keep the proposal under 200 words' "$workflow")" -eq 2 ]
+grep -F 'model: glm-5.3' "$workflow" >/dev/null
+grep -F 'approved objective, actions, and targets' "$workflow" >/dev/null
+grep -F 'Treat the original request as historical context' "$workflow" >/dev/null
+grep -F "execution report's approved scope is authoritative" "$workflow" >/dev/null
+grep -F 'revised away' "$workflow" >/dev/null
+grep -F 'under 500 words' "$workflow" >/dev/null
 
 for gate in Approval Review Problem; do
   awk -v gate="$gate" '

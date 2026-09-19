@@ -10,7 +10,7 @@ workflow OpenClawHumanGates
     # Tracker creates response.* snapshots automatically. Explicit prompt references plus
     # full fidelity retain them across resume without synthetic writes or DIP112 warnings.
     fidelity: full
-    model: glm-5.3
+    model: deepseek-4.1-flash
     provider: openai-compat
     retry_policy: none
     max_restarts: 40
@@ -45,6 +45,7 @@ workflow OpenClawHumanGates
       State the objective, permitted actions and targets, exclusions, and the evidence
       needed for success. Keep the task bounded. You cannot inspect the target or use
       tools while planning; propose tool-assisted discovery as the task when needed.
+      Keep the proposal under 200 words without omitting scope or evidence.
 
       End with STATUS: success on a line by itself when the proposal is ready for human
       review. If you cannot make a safe, concrete proposal, explain the problem and end
@@ -90,6 +91,7 @@ workflow OpenClawHumanGates
 
       Return a complete replacement proposal that states the objective, permitted actions
       and targets, exclusions, and evidence needed for success. Do not use tools.
+      Keep the proposal under 200 words without omitting scope or evidence.
 
       End with STATUS: success on a line by itself when the revised proposal is ready.
       If it cannot be revised safely, explain the problem and end with STATUS: fail on a
@@ -98,11 +100,13 @@ workflow OpenClawHumanGates
   agent Execute
     label: "Execute the approved task"
     backend: native
+    model: glm-5.3
     system_prompt:
       The human-approved proposal is the authority for execution scope. Treat the original
       request and session memory only as context. If they conflict with the approved proposal,
       follow the proposal. Never expand its actions or targets without a new approval.
     auto_status: true
+    goal_gate: true
     max_turns: 80
     prompt:
       Execute only the approved proposal below.
@@ -118,8 +122,9 @@ workflow OpenClawHumanGates
       ${ctx.response.Remember}
 
       Stay within the proposal's permitted actions and targets. Do not perform follow-up
-      work outside it. Report actions taken, evidence, partial work, and anything unfinished.
-      Do not retry an interrupted side effect without inspecting the target first.
+      work outside it. In the final report, restate the approved objective, actions, and targets,
+      then report actions taken, evidence, partial work, and anything unfinished within that
+      scope. Do not retry an interrupted side effect without inspecting the target first.
 
       End with STATUS: success on a line by itself only when the approved evidence is met.
       Otherwise end with STATUS: fail on a line by itself. A failure returns to the human;
@@ -133,7 +138,7 @@ workflow OpenClawHumanGates
     prompt:
       Write a concise result report followed by bounded session memory.
 
-      Current request:
+      Historical original request:
 
       ${ctx.response.Request}
 
@@ -147,11 +152,13 @@ workflow OpenClawHumanGates
 
       ${ctx.response.Remember}
 
-      Begin the report with `Task outcome: ${ctx.outcome}`. The result report must state
-      the actions, evidence, partial work, and
-      unfinished work. The session memory must preserve goals, decisions, completed work,
-      evidence, and unfinished work that can help with a later task. Keep the whole response
-      under 800 words. Do not use tools or suggest that unverified work succeeded.
+      Treat the original request as historical context. The execution report's approved scope is authoritative.
+      Begin the report with `Task outcome: ${ctx.outcome}`. State actions,
+      evidence, partial work, and unfinished work only within that approved scope. Preserve
+      goals, decisions, completed work, evidence, and unfinished work that can help with a
+      later task, but never retain an action that the approved proposal removed or revised away.
+      Keep the whole response under 500 words. Do not use tools or suggest that unverified work
+      succeeded.
       This is a summary, not a second verdict; do not emit a STATUS line.
 
   human Review

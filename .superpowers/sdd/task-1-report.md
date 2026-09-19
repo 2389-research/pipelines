@@ -18,17 +18,20 @@ the native tool catalog. Every task must enter `Execute` through the explicit
 - Offline check: `sh openclaw/check`
 - Check help: `sh openclaw/check --help`
 
-The shared agent defaults are `glm-5.3` through `openai-compat`. Every agent
-declares `backend: native`. `Propose` and `RevisePlan` have eight-turn limits,
-`Execute` has 80, and `Remember` has six. The graph allows 40 restarts and uses
-`retry_policy: none` without a `max_retries` override.
+The shared agent defaults are `deepseek-4.1-flash` through `openai-compat`, with
+`Execute` overriding the model to `glm-5.3`. Every agent declares the native
+backend. `Propose` and `RevisePlan` have eight-turn limits, `Execute` has 80,
+and `Remember` has six. The graph allows 40 restarts and uses the `none` retry
+policy without a `max_retries` override or fallback target.
 
-`Propose` and `RevisePlan` are goal gates so a missing or malformed `STATUS`
-verdict fails closed. Their failure path reaches `Problem`; its human choices
-explicitly resolve or discard the failed planning gate. `Execute` failures go
-through `Remember` and then `Review`, so another attempt needs a new request and
-approval. Hard provider or handler failures may stop directly, as Tracker does
-not convert every runtime error into an outcome edge.
+`Propose`, `RevisePlan`, and `Execute` are goal gates so a missing or malformed
+`STATUS` verdict fails closed. Planning failures reach `Problem`; its human
+choices explicitly resolve or discard the failed planning gate. `Execute`
+failures go through `Remember` and then `Review`. Stopping there leaves the run
+failed without retry; `Next task` restarts at `Request`, clears the failed
+execution gate, and requires a fresh proposal and approval. Hard provider or
+handler failures may stop directly, as Tracker does not convert every runtime
+error into an outcome edge.
 
 Tracker automatically stores human and agent responses under `response.<Node>`.
 The prompts use `response.Request`, `response.Feedback`, `response.Remember`,
@@ -95,9 +98,53 @@ Two issues were found and fixed:
 
 The failed Anthropic live attempt exposed invalid configured credentials before
 execution. A real native no-tool probe through the configured Lunaroute
-`openai-compat` provider succeeded, so the shared model/provider default changed
-to `glm-5.3` / `openai-compat`. The parent task owns the complete live workflow
-suite and its evidence.
+`openai-compat` provider succeeded, so the first working revision changed to
+`glm-5.3` / `openai-compat`; the later performance refinement is recorded below.
+The parent task owns the complete live workflow suite and its evidence.
+
+## Review fixes after `d44923c`
+
+The independent review found two P2 state errors. Tests changed first and the
+old workflow failed the new parsed identity/goal-gate contract:
+
+```text
+$ sh openclaw/tests/graph.sh
+validation passed
+exit 1
+```
+
+The fix makes `Execute` a goal gate with no fallback and keeps
+`retry_policy: none`. A missing or malformed execution verdict now follows the
+failed execution path and cannot be remembered as success. The parent verified
+from Tracker 0.73.1 behavior that Stop after failed execution exits nonzero
+without retry, while `Next task` clears the failed gate when it restarts
+`Request`.
+
+The execution prompt now requires its report to restate the approved objective,
+actions, and targets. `Remember` labels the original request as historical and
+treats that execution report's approved scope as authoritative; removed or
+revised-away actions cannot survive as current goals or unfinished work.
+
+A real configured-provider probe measured `deepseek-4.1-flash` at 2.3 seconds
+and 293 tokens for proposal work, versus 2 minutes 58 seconds and 1,172 tokens
+for `glm-5.3`. The shared planning/memory default is therefore
+`deepseek-4.1-flash`; only `Execute` overrides to `glm-5.3`. Proposal and revision
+responses are capped by prompt at roughly 200 words, and memory at 500 words.
+
+Green evidence after both fixes:
+
+```text
+$ sh openclaw/check
+validation passed
+ok - parsed routes, safe defaults, and agent bounds
+ok - real Tracker gates default to stop, reject bad input and EOF, and resume
+exit 0
+```
+
+Dippin all-path simulation enumerated 66 paths and resolved the effective agent
+identities as Deepseek for `Propose`, `RevisePlan`, and `Remember`, with GLM for
+`Execute`; all use `openai-compat`. Dippin check reported zero warnings and
+errors. Shellcheck and `git diff --check` passed.
 
 ## Known limits
 
