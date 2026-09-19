@@ -71,3 +71,30 @@ with only owned or blocked katas finishes the board. `kata/board-report`
 summarizes a board run and `kata/answer` comments a reply and releases the
 pipeline claim. Implement gets one automatic warm continue (450 turns) after a
 steady turn-limit breach; the second breach hands off.
+
+## Conversational task gates (decided 2026-09-19)
+
+Doctor Biz chose approval per bounded task for `tracker-claw/agent.dip`. Planning
+and memory have no tools; only an approved executor does. Scope inside that
+execution is prompt-enforced, not per-tool authorization. Tracker 0.73.1 drops
+`max_retries: 0` during DIP adaptation: use `retry_policy: none` to disable
+automatic task retries. Resume at a human gate preserves its proposal; resume
+at an interrupted executor can repeat partial effects, so inspect first.
+Use direct prompt references to built-in response keys with `fidelity: full`:
+Dippin 0.72.0 does not recognize their automatic writes in `reads:` declarations.
+The configured Anthropic endpoint rejected its key during live validation;
+the existing Lunaroute `openai-compat` configuration passed real probes.
+Planning/memory use `deepseek-4.1-flash` and execution uses `glm-5.3`.
+Execute must be a goal gate: Tracker otherwise treats a missing STATUS line
+as success. Stop after task failure returns nonzero; Next task clears that
+gate through the Request restart. Review overrides cannot cover Execute
+through Remember: Tracker's override matching does not follow multiple hops.
+Tracker 0.73.1 lacks a Deepseek Flash price entry; dollar caps omit that usage.
+The live smoke test uses token and wall-time limits instead.
+Tracker also constructs a native client for graphs containing no agents. Offline
+gate fixtures must isolate config and bootstrap an unused client; an empty
+config otherwise fails before reaching any gate. Assert the fixture has no
+agent nodes, and leave real-provider end-to-end checks separate.
+
+Doctor Biz named this agent `tracker-claw`; use that name in workflow paths,
+documentation, and new references. Historical test logs retain their original paths.

@@ -1,0 +1,34 @@
+# ABOUTME: Exercises Tracker's real console human gate without calling a model.
+# ABOUTME: Supplies only tool and human nodes, so it is not a fake agent end-to-end test.
+
+workflow TrackerClawGateProbe
+  goal: "Exercise console gate stop, failure, and resume behavior."
+  start: Request
+  exit: Exit
+
+  human Request
+    label: "Request probe"
+    mode: freeform
+    prompt: "Enter a request."
+
+  human Gate
+    label: "Gate probe"
+    mode: choice
+    default: Stop
+    prompt: "Choose Stop or Continue."
+
+  tool Continue
+    label: "Continue selected"
+    timeout: 5s
+    command: true
+
+  tool Exit
+    label: "Gate probe stopped"
+    timeout: 5s
+    command: true
+
+  edges
+    Request -> Gate
+    Gate -> Exit  label: Stop  choice: stop
+    Gate -> Continue  label: Continue  choice: continue
+    Continue -> Exit
