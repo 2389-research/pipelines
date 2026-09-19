@@ -83,7 +83,7 @@ test_claim_and_persist() {
   grep -Fx 'keep-me' "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)" >/dev/null || fail 'existing local exclude entry changed'
   jq -e --arg repo "$repo" '.issue_uid == "01ARZ3NDEKTSV4RRFFQ69G5FAV" and .short_id == "5fav" and .qualified_id == "demo#5fav" and .workspace == $repo' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'selected identity was not persisted'
   grep -F -- '--if-unowned 01ARZ3NDEKTSV4RRFFQ69G5FAV --json' "$repo/.fake-kata-log" >/dev/null || fail 'claim did not use full immutable identity'
-  jq -e '.start_branch == "main"' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'starting branch was not persisted'
+  jq -e '.trunk == "main"' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'trunk was not persisted'
   [ ! -e "$repo/.tracker/turn_overrides/Implement" ] || fail 'stale turn override survived the claim'
   [ "$(grep -c '^label rm ' "$repo/.fake-kata-log")" -eq 1 ] || fail 'claim did not remove exactly one stale label'
   grep -F -- '--as kata-pipeline-test 01ARZ3NDEKTSV4RRFFQ69G5FAV needs-review --agent' "$repo/.fake-kata-log" >/dev/null || fail 'stale needs-review label was not removed as the run actor'
@@ -164,7 +164,7 @@ test_dirty_work_and_existing_branch() {
   assert_contains "$output" 'claim-ok'
   [ "$(git -C "$repo" branch --show-current)" = 'kata/5fav-test' ] || fail 'existing feature branch reused for a fresh run'
   [ "$(git -C "$repo" rev-parse feat/already-here)" = "$old_head" ] || fail 'existing feature commit changed'
-  jq -e --arg base "$old_head" '.base_commit == $base and has("github") and .github == null' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'non-GitHub base and publication decision not saved'
+  jq -e --arg base "$old_head" '.base_commit == $base and .trunk == "feat/already-here" and (has("github") | not) and (has("start_branch") | not)' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'trunk and base were not saved'
   pass 'preflight reports dirty paths and creates a fresh branch while retaining existing work'
 }
 

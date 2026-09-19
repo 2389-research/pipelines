@@ -1,6 +1,6 @@
 #!/bin/sh
 # ABOUTME: Guards the target tree, claims one ready unowned kata, and binds its identity.
-# ABOUTME: Stops on claim races and writes run state only after a confirmed claim.
+# ABOUTME: Records the trunk to land on later and writes run state only after a confirmed claim.
 set -eu
 
 test -n "${TRACKER_RUN_DIR:-}" || { printf 'TRACKER_RUN_DIR is required\n' >&2; exit 1; }
@@ -27,7 +27,10 @@ if [ -n "$dirty" ]; then
   exit 1
 fi
 
-start_branch=$(git symbolic-ref --quiet --short HEAD) || { printf 'detached HEAD cannot be prepared automatically\n' >&2; exit 1; }
+trunk=$(git symbolic-ref --quiet --short HEAD) || { printf 'detached HEAD; check out the branch this work should land on\n' >&2; exit 1; }
+case "$trunk" in
+  kata/*) printf '%s is a task branch; check out the branch this work should land on\n' "$trunk" >&2; exit 1 ;;
+esac
 # A warm-continue override outlives its run; a stale one would inflate this run's worker budget.
 rm -f "$workspace/.tracker/turn_overrides/Implement"
 mkdir -p "$TRACKER_RUN_DIR"
@@ -79,110 +82,6 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
   exit 1
 fi
 base_commit=$(git rev-parse HEAD)
-github=null
-stack_branch=
-stack_commit=
-stack_github=null
-if [ -n "${KATA_STACK_BASE_FILE:-}" ]; then
-  [ -f "$KATA_STACK_BASE_FILE" ] || { printf 'stack base file is missing\n' >&2; exit 1; }
-  stack_json=$(jq -cse '
-    if length == 1 then .[0] else error("expected one stack base") end
-    | select(type == "object" and has("github")
-      and (.branch | type == "string" and length > 0)
-      and (.commit | type == "string" and test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
-      and (.github == null or (.github | type == "object"
-        and (.remote | type == "string" and length > 0)
-        and (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
-        and (.base_branch | type == "string" and length > 0))))
-  ' "$KATA_STACK_BASE_FILE") || { printf 'invalid stack base settings\n' >&2; exit 1; }
-  stack_branch=$(printf '%s' "$stack_json" | jq -r '.branch')
-  stack_commit=$(printf '%s' "$stack_json" | jq -r '.commit')
-  stack_github=$(printf '%s' "$stack_json" | jq -c '.github')
-  git check-ref-format --branch "$stack_branch" >/dev/null 2>&1 || { printf 'invalid stack base branch\n' >&2; exit 1; }
-  [ "$(git symbolic-ref --quiet --short HEAD)" = "$stack_branch" ] && [ "$base_commit" = "$stack_commit" ] || {
-    printf 'current branch and HEAD must match the frozen stack base\n' >&2; exit 1
-  }
-  if [ "$stack_github" != null ]; then
-    stack_remote=$(printf '%s' "$stack_github" | jq -r '.remote')
-    stack_repository=$(printf '%s' "$stack_github" | jq -r '.repository | ascii_downcase')
-    stack_previous_base=$(printf '%s' "$stack_github" | jq -r '.base_branch')
-    if ! git check-ref-format "refs/remotes/$stack_remote" >/dev/null 2>&1 ||
-      ! git check-ref-format "refs/heads/$stack_previous_base" >/dev/null 2>&1; then
-      printf 'invalid stack GitHub remote or base branch\n' >&2; exit 1
-    fi
-  fi
-fi
-
-# Read configured URLs so Git's transport rewrites do not change repository identity.
-github_repository() {
-  printf '%s' "$1" | jq -Rer '
-    sub("/$"; "") | sub("\\.git$"; "")
-    | capture("^(?:https://github\\.com/|git@github\\.com:|ssh://git@github\\.com(?::22)?/)(?<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$")
-    | .repository
-  ' 2>/dev/null
-}
-github_remote=
-repository=
-github_count=0
-for remote in $(git remote); do
-  fetch_urls=$(git config --get-all "remote.$remote.url" || true)
-  first_url=$(printf '%s\n' "$fetch_urls" | sed -n '1p')
-  if remote_repository=$(github_repository "$first_url"); then
-    github_count=$((github_count + 1))
-    if [ "$remote" = origin ] || [ -z "$github_remote" ]; then
-      github_remote=$remote
-      repository=$remote_repository
-    fi
-  fi
-done
-if [ "$github_count" -gt 1 ] && [ "$github_remote" != origin ]; then
-  printf 'multiple GitHub remotes without a GitHub origin; choose an origin before running\n' >&2
-  exit 1
-fi
-if [ -n "$stack_branch" ]; then
-  if [ "$stack_github" = null ]; then
-    [ -z "$github_remote" ] || { printf 'local stack base cannot switch to GitHub\n' >&2; exit 1; }
-  else
-    [ "$github_remote" = "$stack_remote" ] &&
-      [ "$(printf '%s' "$repository" | tr '[:upper:]' '[:lower:]')" = "$stack_repository" ] || {
-        printf 'GitHub remote and repository must match the stack base\n' >&2; exit 1
-      }
-  fi
-fi
-if [ -n "$github_remote" ]; then
-  fetch_urls=$(git config --get-all "remote.$github_remote.url")
-  [ "$(printf '%s\n' "$fetch_urls" | wc -l | tr -d ' ')" -eq 1 ] || { printf 'GitHub remote must have exactly one fetch URL\n' >&2; exit 1; }
-  push_urls=$(git config --get-all "remote.$github_remote.pushurl" || true)
-  if [ -n "$push_urls" ]; then
-    [ "$(printf '%s\n' "$push_urls" | wc -l | tr -d ' ')" -eq 1 ] || { printf 'GitHub remote must have at most one push URL\n' >&2; exit 1; }
-    push_repository=$(github_repository "$push_urls") || { printf 'GitHub push URL does not identify the fetch repository\n' >&2; exit 1; }
-    [ "$(printf '%s' "$push_repository" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$repository" | tr '[:upper:]' '[:lower:]')" ] || { printf 'GitHub push repository differs from fetch repository\n' >&2; exit 1; }
-  fi
-  command -v gh >/dev/null || { printf 'gh is required for GitHub repositories\n' >&2; exit 1; }
-  repo_json=$(gh repo view "github.com/$repository" --json nameWithOwner,defaultBranchRef) || { printf 'GitHub repository lookup failed before claim\n' >&2; exit 1; }
-  printf '%s' "$repo_json" | jq -e --arg repository "$repository" '
-    (.nameWithOwner | type == "string") and
-    ((.nameWithOwner | ascii_downcase) == ($repository | ascii_downcase)) and
-    (.defaultBranchRef.name | type == "string" and length > 0)
-  ' >/dev/null || { printf 'GitHub repository metadata is invalid\n' >&2; exit 1; }
-  repository=$(printf '%s' "$repo_json" | jq -r '.nameWithOwner')
-  base_branch=$(printf '%s' "$repo_json" | jq -r '.defaultBranchRef.name')
-  git check-ref-format "refs/heads/$base_branch" >/dev/null || { printf 'GitHub default branch is invalid\n' >&2; exit 1; }
-  if [ -n "$stack_branch" ]; then base_branch=$stack_branch; fi
-  git fetch --no-tags -- "$github_remote" "refs/heads/$base_branch" || { printf 'GitHub base branch fetch failed before claim (stack base: %s)\n' "${stack_branch:-none}" >&2; exit 1; }
-  base_commit=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
-  if [ -n "$stack_branch" ] && [ "$base_commit" != "$stack_commit" ]; then
-    printf 'fetched stack branch differs from the frozen commit\n' >&2; exit 1
-  fi
-  # kata binds a workspace through a committed .kata.toml (kata init). Cutting the task branch from
-  # a base without it removes the file at checkout, and no later kata call in this run can resolve
-  # the project, so the claim could never be closed or handed off from the task branch.
-  if git ls-files --error-unmatch -- .kata.toml >/dev/null 2>&1 && ! git cat-file -e "$base_commit:.kata.toml" 2>/dev/null; then
-    printf 'GitHub base %s (%s) has no .kata.toml; push the commit that binds this workspace to kata before claiming\n' "$base_branch" "$base_commit" >&2
-    exit 1
-  fi
-  github=$(jq -n --arg remote "$github_remote" --arg repository "$repository" --arg base "$base_branch" '{remote:$remote,repository:$repository,base_branch:$base}')
-fi
 actor="kata-pipeline-$TRACKER_RUN_ID"
 
 claim_json=$(kata claim --workspace "$workspace" --as "$actor" --if-unowned "$uid" --json) || {
@@ -205,10 +104,10 @@ for label in needs-review needs-decision; do
 done
 
 jq -n --arg uid "$uid" --arg short "$short_id" --arg qualified "$qualified_id" \
-  --arg workspace "$workspace" --arg branch "$branch" --arg base "$base_commit" --arg actor "$actor" --argjson github "$github" \
-  --arg start "$start_branch" \
+  --arg workspace "$workspace" --arg branch "$branch" --arg base "$base_commit" --arg actor "$actor" \
+  --arg trunk "$trunk" \
   --argjson issue "$(printf '%s' "$claim_json" | jq '.issue')" \
-  '{issue_uid:$uid,short_id:$short,qualified_id:$qualified,workspace:$workspace,branch:$branch,base_commit:$base,actor:$actor,start_branch:$start,github:$github,issue:$issue}' >"$state_tmp"
+  '{issue_uid:$uid,short_id:$short,qualified_id:$qualified,workspace:$workspace,branch:$branch,base_commit:$base,actor:$actor,trunk:$trunk,issue:$issue}' >"$state_tmp"
 mv "$state_tmp" "$TRACKER_RUN_DIR/selected.json"
 git switch -c "$branch" "$base_commit" >/dev/null
 printf 'claim-ok\nSTATE_PATH=%s\n' "$TRACKER_RUN_DIR/selected.json"
