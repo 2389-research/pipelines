@@ -127,26 +127,27 @@ controller rechecks the live board after each child, so newly added eligible
 work is included.
 
 Tracker discards the controller's output under `--no-tui`. The controller's
-last stdout line is a marker that routes the parent run. `board-clean` ends
-the run: the queue was empty, no kata's latest ledger entry is a handoff, no
+last stdout line is a marker that routes the parent run. `board-clean` ends the
+run: the queue was empty, no kata's latest ledger entry is a handoff, no
 untouched open kata remains, and the review printed. `board-needs-human` runs
 `board-report` and opens the `Morning review` gate with that review. Once the
-ledger exists, every stop ends the same way: three consecutive failed
-children, a child that needs inspection, a `git status` the controller could
-not run, an open-board listing it could not read, a child that closed a kata
-the ledger already lists as completed, and a `child.pid` whose process is
-still running or is not a PID. The controller records the stop in the
-ledger's `stop_reason`, prints the review, which repeats the reason under its
-header, and prints `board-needs-human`, so the gate opens for exactly the
-runs that need a person. Before the ledger exists (Tracker variables unset, a
-missing tool, a lock held by a live controller, a ledger the controller does
-not trust) the controller exits 1 with no marker: Tracker fails the run
-without a checkpoint, and the message is in
+ledger exists, every stop ends the same way: three consecutive failed children,
+a child that needs inspection, a `git status` the controller could not run, an
+open-board listing it could not read, a child that closed a kata the ledger
+already lists as completed, a child log that does not name exactly one run, a
+`child.pid` whose process is still running, and a `child.pid` that does not
+hold a PID (`invalid child PID; inspect <item>`). The controller records the
+stop in the ledger's `stop_reason`, prints the review, which repeats the reason
+under its header, and prints `board-needs-human`, so the gate opens for exactly
+the runs that need a person. Before the ledger exists (Tracker variables unset,
+a missing tool, a lock held by a live controller, a ledger the controller does
+not trust) the controller exits 1 with no marker: Tracker fails the run without
+a checkpoint, and the message is in
 `.tracker/runs/<board-run-id>/RunBoard/status.json` under
-`.context_updates.tool_stderr` (verified 2026-09-18). Fix the cause and start
-a new board run. The controller's whole output for the latest sweep, its
-summary line `Sweep finished: <n> katas completed and <m> left open for
-review so far in this board run` included, is in the same file under
+`.context_updates.tool_stderr` (verified 2026-09-18). Fix the cause and start a
+new board run. The controller's whole output for the latest sweep, its summary
+line `Sweep finished: <n> katas completed and <m> left open for review so far
+in this board run` included, is in the same file under
 `.context_updates.tool_stdout`.
 
 The parent run's `board/state.json` records every child: `completed` entries
@@ -279,10 +280,11 @@ gate clipped it, or after the run ended, from the target Git root:
 ```
 
 prints the newest board run. `board-report --json <board-run-id>` prints the
-same for one run as JSON; `board-report -h` prints the usage, and outside a Git
-repository both print `run this from inside the target Git repository`. The
-text review is laid out to survive Tracker's prompt reflow (76 columns,
-indentation dropped): short lines, and every command whole on one line.
+same for one run as JSON; `board-report -h` prints the usage. Outside a Git
+repository the text and JSON forms both print `run this from inside the target
+Git repository`. The text review is laid out to survive Tracker's prompt reflow
+(76 columns, indentation dropped): short lines, and every command whole on one
+line.
 
 ```
 Board <board-run-id> in <workspace>: stopped

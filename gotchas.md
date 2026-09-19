@@ -117,8 +117,8 @@ rendered as a fenced `## Tool Stdout` block, the choices numbered in edge order
 which reads the choice number or the choice text from stdin: `1`, `Done`, and
 `done` all pick Done, `2` and `Sweep again` pick the sweep, while `sweep` or a
 blank line fails the gate with `invalid choice`. Closed stdin fails it with `no
-input received` (`.error` holds that text on `gate_resolved`; `.gate_response` is
-null). Either failure saves a checkpoint, and `tracker -r` reopens the gate.
+input received` (`.error` contains that text on `gate_resolved`; `.gate_response`
+is null). Either failure saves a checkpoint, and `tracker -r` reopens the gate.
 `--auto-approve` picks the default, else the first choice; `kata/board.dip` sets
 no default, so its unattended answer is the first choice, `Done`, and Escape in
 the terminal modal picks the same. Under `--json --no-tui` the prompt still
