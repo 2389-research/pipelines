@@ -48,13 +48,17 @@ printf '%s %s\n' "$verb${action:+ $action}${actor:+ $actor}" "$*" >>"$fixture/ka
 case "$verb" in
   show)
     [ "$#" -eq 2 ] && [ "$2" = --json ] && [ -f "$fixture/$1.status" ] || exit 92
+    [ ! -f "$fixture/fail-show" ] || { printf 'fixture kata show failure\n' >&2; exit 73; }
     owner=$(cat "$fixture/$1.owner" 2>/dev/null || true)
     jq -n --arg uid "$1" --arg status "$(cat "$fixture/$1.status")" --arg owner "$owner" \
       '{issue:{uid:$uid,status:$status,owner:(if $owner == "" then null else $owner end)}}'
     ;;
   list)
     [ "$*" = '--status open --limit 0 --json' ] || exit 93
-    if [ -f "$fixture/broken-list" ]; then
+    if [ -f "$fixture/fail-list" ]; then
+      printf 'fixture kata list failure\n' >&2
+      exit 73
+    elif [ -f "$fixture/broken-list" ]; then
       printf '%s\n' '{"issues":"every open kata"}'
     elif [ -f "$fixture/blocked" ]; then
       printf '%s\n' '{"issues":[{"uid":"blocked-item","qualified_id":"blocked-item","status":"open","owner":"another-actor","labels":null}]}'
@@ -505,6 +509,13 @@ jq -e '.finished == true and [.runs[].kind] == ["empty","empty"]' "$ledger" >/de
 expect_marker board-clean 'a re-entry after the blocked katas closed'
 printf 'ok - a blocked queue finishes the board and lists the untouched katas until a later sweep finds none\n'
 
+new_case failed-closed-show 1
+: >"$fixture/fail-show"
+must_stop_for_inspection 'a closed kata the controller could not read'
+jq -e '.runs == []' "$ledger" >/dev/null || fail 'failed-closed-show: the unverified child was recorded'
+grep -F 'fixture kata show failure' "$test_root/errors" >/dev/null || fail 'failed-closed-show: the Kata error is missing'
+printf 'ok - a failed closed-kata lookup holds the board on its child for inspection\n'
+
 new_case recovery 1
 : >"$fixture/fail-close"
 must_stop_for_inspection 'failed child'
@@ -597,6 +608,14 @@ jq -e --arg child "$failed_child" '.finished == true and (has("stop_reason") | n
 [ "$(claim_count)" -eq 2 ] || fail "handoff-guards: claim count is $(claim_count), expected 2"
 printf 'ok - a failed child is recorded only when its handoff, checkout, tree, and kata all check out\n'
 
+new_case failed-handoff-show 1
+printf '1\n' >"$fixture/fail-implement"
+: >"$fixture/fail-show"
+must_stop_for_inspection 'a handed-off kata the controller could not read'
+jq -e '.runs == []' "$ledger" >/dev/null || fail 'failed-handoff-show: the unverified handoff was recorded'
+grep -F 'fixture kata show failure' "$test_root/errors" >/dev/null || fail 'failed-handoff-show: the Kata error is missing'
+printf 'ok - a failed handed-off-kata lookup holds the board on its child for inspection\n'
+
 new_case broken-list 0
 : >"$fixture/broken-list"
 run_board || fail "broken-list: the controller exited $? instead of holding the board for a person"
@@ -612,6 +631,18 @@ rm "$fixture/broken-list"
 grep -Fx "Board $TRACKER_RUN_ID in $repo: stopped" "$test_root/review" >/dev/null || fail 'broken-list: the review does not say the board stopped' "$test_root/review"
 grep -Fx 'Stop reason: invalid open-board response' "$test_root/review" >/dev/null || fail 'broken-list: the review lacks the stop reason' "$test_root/review"
 printf 'ok - a board that stops outside a child records why, keeps its marker when the review fails, and the review says it stopped\n'
+
+new_case failed-list 0
+: >"$fixture/fail-list"
+run_board || fail "failed-list: the controller exited $? instead of holding the board for a person"
+jq -e '.finished == false and .runs == [] and .stop_reason == "could not list open katas" and (has("stop_child") | not)' "$ledger" >/dev/null ||
+  fail 'failed-list: the ledger does not record the list failure without a child'
+grep -Fx 'could not list open katas' "$test_root/errors" >/dev/null || fail 'failed-list: the stop message is missing'
+grep -F 'fixture kata list failure' "$test_root/errors" >/dev/null || fail 'failed-list: the Kata error is missing'
+grep -Fx 'board report failed; run board-report board-parent from the target Git root' "$test_root/errors" >/dev/null ||
+  fail 'failed-list: the controller did not say the review failed'
+expect_marker board-needs-human 'an open-board command failure'
+printf 'ok - a failed open-board command records why and holds the board for a person\n'
 
 # Before a ledger exists nothing can hold the parent: an unset Tracker variable, a held lock, or a ledger the
 # controller does not trust ends with exit 1, a message, no review, and no marker.

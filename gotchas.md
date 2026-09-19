@@ -127,3 +127,11 @@ prints among the event lines, and `gate_resolved` shares the `Enter choice` line
 `max_restarts` is accepted only inside a `defaults` block; at workflow level
 dippin 0.72.0 and tracker 0.73.1 fail to parse ("unexpected top-level
 identifier").
+
+## Guard controller command substitutions under `set -e` (verified 2026-09-19)
+
+A bare `value=$(kata ...)` exits `kata/scripts/run-board.sh` immediately when
+Kata fails, before the ledger stop helpers can save `stop_reason` and print
+`board-needs-human`. Route list failures through `stop_board` and child-specific
+show failures through `stop_for_inspection`; validating successful JSON does not
+cover a nonzero CLI exit.

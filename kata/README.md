@@ -133,9 +133,11 @@ untouched open kata remains, and the review printed. `board-needs-human` runs
 `board-report` and opens the `Morning review` gate with that review. Once the
 ledger exists, every stop ends the same way: three consecutive failed children,
 a child that needs inspection, a `git status` the controller could not run, an
-open-board listing it could not read, a child that closed a kata the ledger
-already lists as completed, a child log that does not name exactly one hex run
-ID (`child identity is unknown; inspect <item>/child.log before retrying`) or
+open-board listing command it could not run (`could not list open katas`) or a
+listing response it could not read (`invalid open-board response`), a child that
+closed a kata the ledger already lists as completed, a child log that does not
+name exactly one hex run ID (`child identity is unknown; inspect
+<item>/child.log before retrying`) or
 names one of the wrong length (`invalid child run ID`), a `child.pid` whose
 process is still running, and a `child.pid` that does not hold a PID (`invalid
 child PID; inspect <item>`). The controller records the stop in the ledger's

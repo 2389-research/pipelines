@@ -111,7 +111,7 @@ record_failure() {
     [ "$(git rev-parse HEAD)" = "$(jq -r '.commit' "$KATA_STACK_BASE_FILE")" ] || stop_for_inspection
   fi
   uid=$(jq -r '.issue_uid' "$handoff")
-  issue=$(kata show --workspace "$workspace" "$uid" --json)
+  issue=$(kata show --workspace "$workspace" "$uid" --json) || stop_for_inspection
   printf '%s' "$issue" | jq -e --arg uid "$uid" --arg actor "kata-pipeline-$run_id" \
     '.issue.uid == $uid and .issue.status == "open" and .issue.owner == $actor' >/dev/null || stop_for_inspection
   result=$(jq --arg run "$run_id" '{run_id:$run,kind:"failed",issue_uid,branch,reason,label}' "$handoff")
@@ -194,7 +194,7 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     for approval in review-correctness.approved review-scope.approved; do
       [ "$(sed -n '1p' "$child/$approval" 2>/dev/null || true)" = "$head" ] || stop_for_inspection
     done
-    issue=$(kata show --workspace "$workspace" "$uid" --json)
+    issue=$(kata show --workspace "$workspace" "$uid" --json) || stop_for_inspection
     printf '%s' "$issue" | jq -e --arg uid "$uid" '.issue.uid == $uid and .issue.status == "closed"' >/dev/null || stop_for_inspection
     if jq -e --arg uid "$uid" 'any(.runs[]; .kind == "completed" and .issue_uid == $uid)' "$state" >/dev/null; then
       stop_board "child repeated an already completed kata: $uid"
@@ -211,7 +211,7 @@ while ! jq -e '.finished' "$state" >/dev/null; do
   else
     jq -e '.outcome == "success" and .context_updates.tool_marker == "queue-empty"' \
       "$child/ClaimNext/status.json" >/dev/null 2>&1 || stop_for_inspection
-    open=$(kata list --workspace "$workspace" --status open --limit 0 --json)
+    open=$(kata list --workspace "$workspace" --status open --limit 0 --json) || stop_board 'could not list open katas'
     printf '%s' "$open" | jq -e '.issues | type == "array"' >/dev/null || stop_board 'invalid open-board response'
     # Katas this board handed off stay open on purpose; only untouched ones count as remaining.
     remaining=$(printf '%s' "$open" | jq --slurpfile state "$state" \
