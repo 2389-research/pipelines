@@ -3,7 +3,7 @@
 # ABOUTME: Uses temporary repositories and never touches a configured target project.
 set -eu
 
-KATA_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
+KATA_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 command -v dippin >/dev/null
 command -v tracker >/dev/null
 dippin validate "$KATA_DIR/complete.dip"
@@ -12,22 +12,48 @@ printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
 dippin validate "$KATA_DIR/board.dip"
 check_json=$(dippin check --format json "$KATA_DIR/board.dip")
 printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
-tracker validate "$KATA_DIR/board.dip"
 simulation_log=$(mktemp)
-trap 'rm -f "$simulation_log"' EXIT HUP INT TERM
+trap 'rm -f "$simulation_log"' EXIT
+trap 'exit 130' HUP INT TERM
 dippin simulate "$KATA_DIR/complete.dip" --all-paths >"$simulation_log" 2>&1
 grep -F 'ClaimNext' "$simulation_log" >/dev/null
-grep -F 'queue-empty' "$simulation_log" >/dev/null
 grep -F 'Repair' "$simulation_log" >/dev/null
 grep -F 'ContinueImplement' "$simulation_log" >/dev/null
+dippin simulate "$KATA_DIR/board.dip" --all-paths >"$simulation_log" 2>&1
+# Every route the board relies on, as dippin prints it; a renamed label or a dropped restart fails here.
+for edge in \
+  '"from":"RunBoard","to":"Report","condition":"ctx.tool_marker = board-needs-human"' \
+  '"from":"RunBoard","to":"Exit","condition":"ctx.tool_marker = board-clean"' \
+  '"from":"Report","to":"MorningReview"' \
+  '"from":"MorningReview","to":"Exit","label":"Done"' \
+  '"from":"MorningReview","to":"RunBoard","label":"Sweep again","restart":true'; do
+  grep -F "$edge" "$simulation_log" >/dev/null || {
+    printf 'board.dip simulation lacks the edge %s\n' "$edge" >&2
+    exit 1
+  }
+done
+# A default choice would let a closed stdin or --auto-approve answer the morning review by itself.
+if grep -nE '^[[:space:]]*default:' "$KATA_DIR/board.dip"; then
+  printf 'board.dip gives the morning review a default choice\n' >&2
+  exit 1
+fi
+# With no default, --auto-approve and the TUI's Escape take the first choice, which must be Done.
+grep -E '^[[:space:]]*MorningReview ->' "$KATA_DIR/board.dip" | sed -n '1p' | grep -F 'choice: done' >/dev/null || {
+  printf 'board.dip must list Done as the first morning review choice\n' >&2
+  exit 1
+}
 tracker_log=$(mktemp)
-trap 'rm -f "$simulation_log" "$tracker_log"' EXIT HUP INT TERM
+trap 'rm -f "$simulation_log" "$tracker_log"' EXIT
 tracker validate "$KATA_DIR/complete.dip" >"$tracker_log" 2>&1
 grep -F 'complete.dip: valid (' "$tracker_log" >/dev/null
+tracker validate "$KATA_DIR/board.dip" >>"$tracker_log" 2>&1
+grep -F 'board.dip: valid (4 nodes, 5 edges)' "$tracker_log" >/dev/null
 if grep -F 'warning: unresolved condition variable' "$tracker_log" >/dev/null; then
   printf 'note - tracker static validation reports unset runtime context; real preflight checks run below\n'
 fi
+sh "$KATA_DIR/tests/isolation.sh"
 "$KATA_DIR/tests/routes.sh"
+sh "$KATA_DIR/tests/tool-commands.sh"
 sh "$KATA_DIR/tests/continue.sh"
 sh "$KATA_DIR/tests/handoff.sh"
 "$KATA_DIR/tests/check.sh"

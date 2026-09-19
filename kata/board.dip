@@ -1,20 +1,47 @@
 # ABOUTME: Completes the repository's kata board through isolated complete.dip runs.
-# ABOUTME: Stacks reviewed task branches and PRs and records failures for the morning review.
+# ABOUTME: Stacks reviewed task branches and PRs, then holds the morning review until the operator sweeps again or stops.
 workflow CompleteKataBoard
-  goal: "Complete all ready unowned katas sequentially with stacked PRs, leaving unfinished work open for the morning review."
+  goal: "Complete all ready unowned katas sequentially with stacked PRs, then hold the morning review until the operator sweeps again or stops."
   start: RunBoard
   exit: Exit
+
+  defaults
+    # Each "Sweep again" is one restart; Tracker's default of five would end a week-long board early.
+    # The 51st "Sweep again" ends the run with a restart-limit failure; start a new board run then.
+    max_restarts: 50
 
   tool RunBoard
     label: "Complete the board one reviewed kata at a time"
     timeout: 168h
-    command:
-      sh "${graph.workflow_dir}/scripts/run-board.sh" "${graph.workflow_dir}/complete.dip"
+    marker_grep: "^(board-clean|board-needs-human)$"
+    command: sh "${graph.workflow_dir}/scripts/run-board.sh" "${graph.workflow_dir}/complete.dip"
+
+  tool Report
+    label: "Print the morning review"
+    timeout: 10m
+    command: sh "${graph.workflow_dir}/board-report" "$TRACKER_RUN_ID"
+
+  human MorningReview
+    label: "Morning review"
+    mode: choice
+    prompt:
+      The board stopped with katas that need you; the review below lists each one.
+      In a terminal, pick with the arrow keys and Enter; Escape chooses Done.
+      With a numbered list, type the number or the choice text and press Enter.
+      Answer or finish katas from another shell in the target Git root with the
+      commands the review shows, then choose Sweep again to claim the katas you
+      released, or Done to end this run.
+      ${ctx.tool_stdout}
 
   tool Exit
-    label: "Kata board complete"
+    label: "Board finished"
     timeout: 5s
     command: true
 
   edges
-    RunBoard -> Exit
+    RunBoard -> Report  on board-needs-human
+    RunBoard -> Exit  on board-clean
+    Report -> MorningReview
+    # Done is first on purpose: with no default, Escape and --auto-approve take the first choice.
+    MorningReview -> Exit  label: "Done"  choice: done
+    MorningReview -> RunBoard  label: "Sweep again"  choice: sweep  restart: true

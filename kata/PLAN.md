@@ -12,8 +12,10 @@ and close with evidence only after approval. Failed work stays open with
 a needs-review handoff.
 An empty queue is a clean no-op; claim races stop without selecting again.
 Create a fresh task branch for each claimed item. For GitHub repositories,
-start from the fetched default branch and publish a PR after review, before
-closing the kata. For other repositories, start from current HEAD and finish
+start from the fetched default branch, which must carry the committed
+`.kata.toml` binding (`claim-next.sh` refuses a base without it: the checkout
+would drop the binding and strand the claim), and publish a PR after review,
+before closing the kata. For other repositories, start from current HEAD and finish
 locally. Preserve existing branches and never merge automatically. Locally
 exclude tracker artifacts. Keep runtime state under .tracker, bind the selected
 full issue identity and workspace,
@@ -119,7 +121,9 @@ with an expected-owner guard after verifying no source changes or commits;
 the checkout returned to main. No replacement issue was claimed in this check.
 
 Branch and PR update (2026-09-14): every confirmed claim creates a fresh kata
-branch. GitHub repositories start from their fetched default branch; other
+branch. GitHub repositories start from their fetched default branch, after a
+check that it carries `.kata.toml` (added 2026-09-17: a binding that exists
+only locally vanishes from the checkout and strands the claim); other
 repositories start from current HEAD. GitHub identity and base are saved before
 worker execution. After both reviews approve, closure pushes only that approved
 commit, creates or reuses an open PR, verifies its head and base, and records its

@@ -13,7 +13,8 @@ workflow CompleteOneKata
     label: "Guard workspace and claim one kata"
     marker_grep: "^(claim-ok|queue-empty)"
     timeout: 5m
-    command_file: scripts/claim-next.sh
+    command:
+      sh "${graph.workflow_dir}/scripts/claim-next.sh"
 
   agent Implement
     label: "Scope and implement the selected kata"
@@ -54,7 +55,8 @@ workflow CompleteOneKata
     label: "Require both SHA-bound review approvals"
     marker_grep: "^approvals-ok$"
     timeout: 30s
-    command_file: scripts/check-approvals.sh
+    command:
+      sh "${graph.workflow_dir}/scripts/check-approvals.sh"
 
   agent Repair
     label: "Apply the single allowed repair pass"
@@ -95,23 +97,27 @@ workflow CompleteOneKata
     label: "Require both SHA-bound re-review approvals"
     marker_grep: "^approvals-ok$"
     timeout: 30s
-    command_file: scripts/check-approvals.sh
+    command:
+      sh "${graph.workflow_dir}/scripts/check-approvals.sh"
 
   tool CloseSelected
     label: "Publish the approved task and close the kata"
     marker_grep: "^close-ok$"
     timeout: 5m
-    command_file: scripts/close-selected.sh
+    command:
+      sh "${graph.workflow_dir}/scripts/close-selected.sh"
 
   tool ContinueImplement
     label: "Grant one warm continue after a steady turn-limit breach"
     timeout: 10s
-    command_file: scripts/continue-implement.sh
+    command:
+      sh "${graph.workflow_dir}/scripts/continue-implement.sh"
 
   tool Handoff
     label: "Leave failed work open for review"
     timeout: 5m
-    command_file: scripts/handoff-selected.sh
+    command:
+      sh "${graph.workflow_dir}/scripts/handoff-selected.sh"
 
   tool Exit
     label: "One-item run complete"

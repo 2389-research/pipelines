@@ -204,6 +204,49 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   audits recognize these as reviewed exceptions rather than missed instances.
   No `.dip` behavior change (comment-only); the write-bounding prose stays as
   the only available guard until a scoped read-only primitive lands upstream.
+- `kata/board.dip`: the board no longer ends silently with katas left open. The
+  controller's last line routes the run: `board-clean` exits, and
+  `board-needs-human` prints the morning review and holds a `Morning review`
+  human gate whose choices are `Done` and `Sweep again` (run the controller
+  again in the same ledger, up to 50 times; the budget never resets). The gate
+  has no default: a closed stdin fails it with a checkpoint that `tracker -r`
+  reopens, and `--auto-approve` takes `Done`, the unattended answer. Tracker
+  never prints a tool node's output in `--no-tui`, so the gate is the board's
+  only console output; run it in a terminal that stays open. Once the ledger
+  exists, every controller stop (three consecutive failed children, a child
+  that needs inspection, a failed `git status`, an unreadable open-board
+  listing, a child that closed a kata the ledger already lists as completed, a
+  child log that does not name exactly one run, a `child.pid` whose process
+  still runs or that does not hold a PID) records `stop_reason` in the ledger
+  (and `stop_child` when a child needs inspection), prints the review, and ends
+  with `board-needs-human`, so the gate opens for exactly the runs that need a
+  person; only failures before the ledger exists exit 1 without a marker. The
+  controller's summary line is `Sweep finished: ...`, it validates `issue_uid`
+  on every non-empty ledger entry, and a HUP, INT, or TERM to it interrupts the
+  child Tracker, waits for the child's checkpoint, and removes the lock and
+  `child.pid` before exiting 130. `kata/scripts/run-board.sh` (now mode 755)
+  re-enters a finished ledger as a new sweep and drops `board/blocked.json`
+  once a sweep finds nothing blocked. `kata/board-report` describes each kata
+  by its latest ledger entry, prints the stop reason and the child's resume
+  command under its header, validates every id, branch, commit, and PR URL it
+  pastes into a command and refuses the review otherwise, flattens
+  agent-written text, lays the review out to survive Tracker's 76-column
+  reflow, accepts `-h`, and names a run outside a Git repository. `kata/answer`
+  prints `Released <kata>`, names an unknown reference, accepts `-h`, and says
+  "next board sweep". `kata/tests/isolate.sh` points every test's `HOME`, XDG
+  directories, Git configuration, and Tracker state at a fixture directory, and
+  every test exits 130 on a signal. `kata/tests/board.sh` covers the markers,
+  every stop, the second-sweep finish, blocked re-entry, an interrupt, and real
+  Tracker parents at the gate (`Sweep again` twice then `Done`, closed stdin,
+  `--auto-approve`, a three-failure stop, a child integrity stop);
+  `kata/tests/report.sh` covers the latest-entry view, the stop lines, and the
+  record validation; `kata/tests/isolation.sh` proves the isolation against a
+  planted hook; `kata/tests/answer.sh` covers the new messages.
+  `kata/README.md`, `gotchas.md`, `kata/BOARD-PLAN.md`, and `kata/PLAN.md`
+  describe the gate's two surfaces and accepted inputs, the unattended mode,
+  the restart budget, the stops and where their messages land, the review
+  layout, `Report` node recovery with `tracker -r`, the trust level of
+  run-directory records, and the `.kata.toml` base precondition.
 
 ### Fixed
 
@@ -220,6 +263,34 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   inlining under the tracker/dippin pin) and why the remaining order
   differences are waived as behavior contracts rather than reordered
   ([closes #108](https://github.com/2389-research/pipelines/issues/108)).
+
+- `kata/complete.dip`: the six tool nodes ran their scripts through
+  `command_file:`, which tracker (v0.73.1, verified 2026-09-17) inlines into
+  the tool command and passes through its `${a.b}` expander. Every dotted
+  expansion outside the `ctx`, `params`, `graph`, and `inputs` namespaces
+  became an empty string, so `close-selected.sh` lost its
+  `${1#https://github.com/}` family of remote URL parsers and every GitHub
+  publication failed with "GitHub remote must have one supported fetch URL and
+  one push URL", although the script passed its tests when run directly. The
+  nodes now run their scripts by path (`sh "${graph.workflow_dir}/scripts/…"`),
+  which tracker never expands. New `kata/tests/tool-commands.sh` fails when
+  any `command_file`/`prompt_file` text carries an expansion tracker would
+  blank and checks that every path a DIP runs exists. `kata/check` no longer
+  greps the simulation log for `queue-empty`: that line only ever matched the
+  inlined script text, and `kata/tests/routes.sh` already proves the
+  queue-empty route.
+- `kata/scripts/claim-next.sh`: a GitHub run cuts its task branch from the
+  fetched default branch. When the workspace's `.kata.toml` binding is
+  committed locally but not on that branch, the checkout removes the file and
+  every kata call after the claim fails with "no project bound to this
+  workspace": `close-selected.sh` cannot close the approved commit, so each run
+  hands its kata off instead of publishing it (typesafe-go, 2026-09-17: five
+  katas left claimed by finished runs). Claim setup now refuses a base commit
+  that lacks a `.kata.toml` the workspace tracks, before any claim, naming the
+  branch and commit and asking for the binding commit to be pushed first. An
+  ignored binding file survives the checkout and stays allowed.
+  `kata/tests/github-setup.sh` covers the refusal, a bound base, and an ignored
+  binding.
 
 ### Security
 

@@ -32,6 +32,7 @@ token summaries do not aggregate nested CLI runs. Never create practice issues.
 - [x] Test multiple items, stacked bases, empty/blocked queues, failure and resume.
 - [x] Exercise real Tracker orchestration without models using isolated tool workflows.
 - [x] Run kata/check, fresh-eyes review, document usage/limits, and commit.
+- [x] Hold a `Morning review` gate with no default after every sweep that leaves katas open or stops; validate the records the review pastes; isolate the tests from the operator's Git and Tracker configuration (2026-09-18).
 
 Validation (2026-09-14): tests first failed for the absent controller and for
 discarding previous task work. Real Tracker parent/child runs now verify distinct
@@ -49,3 +50,13 @@ requires manual reconciliation. Parent budgets do not aggregate child usage.
 Final verification: `./kata/check` passed after all edits, including zero-warning
 Dippin checks, Tracker validation, real parent/child runs, Git integration, and
 ShellCheck. `git diff --check` passed. No live kata-to-GitHub board run was made.
+
+Gate validation (2026-09-18): real Tracker parents answer the gate both ways
+(`Sweep again` twice, then `Done`), fail it on closed stdin with a checkpoint,
+end after one sweep under `--auto-approve`, and hold it after a three-failure
+stop and after a child integrity stop with the child's resume command in the
+prompt. Every stop after the ledger exists reaches the gate; the review refuses
+a child record with an unsafe id, branch, commit, or PR URL. An interrupt to the
+controller reaches the child Tracker and leaves no lock or `child.pid`. The test
+suite runs under a fixture `HOME`, Git configuration, and Tracker state.
+`./kata/check` passes on an exported tree. No live board run was made.

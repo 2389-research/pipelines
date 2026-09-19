@@ -5,8 +5,13 @@ set -eu
 
 KATA_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 TMP_ROOT=$(mktemp -d)
-trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
-export GIT_CONFIG_GLOBAL="$TMP_ROOT/gitconfig" GIT_CONFIG_NOSYSTEM=1
+trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'exit 130' HUP INT TERM
+# The snippet points GIT_CONFIG_GLOBAL at a fixture file; every git config --global write below lands there.
+KATA_ISOLATE_ROOT="$TMP_ROOT/isolate"
+export KATA_ISOLATE_ROOT
+# shellcheck source=/dev/null
+. "$KATA_DIR/tests/isolate.sh"
 export GH_SETUP_LOG="$TMP_ROOT/gh.log"
 mkdir "$TMP_ROOT/bin"
 ln -s "$KATA_DIR/tests/fake-kata.sh" "$TMP_ROOT/bin/kata"
@@ -191,3 +196,43 @@ for scenario in missing-file invalid-json multiple-json non-object missing-githu
   assert_unclaimed
 done
 printf 'ok - invalid, stale, missing, and changed stack bases stop before claim\n'
+
+# kata binds a workspace through a committed .kata.toml. Cutting the task branch from a GitHub
+# base that lacks the file drops the binding at checkout, and no later kata call in the run works.
+for scenario in unbound-base bound-base ignored-binding; do
+  new_repo "$scenario"
+  git -C "$repo" remote add origin https://github.com/acme/demo.git
+  printf 'project = "demo"\n' >"$repo/.kata.toml"
+  if [ "$scenario" = ignored-binding ]; then
+    # An ignored binding survives the checkout, so the base may lack the file.
+    printf '.kata.toml\n' >>"$repo/.gitignore"
+    git -C "$repo" add .gitignore
+    git -C "$repo" commit -qm 'ignore the kata binding'
+  else
+    git -C "$repo" add .kata.toml
+    git -C "$repo" commit -qm 'bind kata'
+  fi
+  previous=$(git -C "$repo" rev-parse HEAD)
+  expected_base=$base
+  if [ "$scenario" = bound-base ]; then
+    git -C "$repo" switch -qc bound "$base"
+    printf 'project = "demo"\n' >"$repo/.kata.toml"
+    git -C "$repo" add .kata.toml
+    git -C "$repo" commit -qm 'bind kata on the default branch'
+    expected_base=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" push -q origin bound:release
+    git -C "$repo" switch -q feat/previous
+  fi
+  if [ "$scenario" = unbound-base ]; then
+    if output=$(run_setup); then fail 'unbound base was claimed'; fi
+    contains "$output" '.kata.toml'
+    assert_unclaimed
+  else
+    output=$(run_setup) || fail "$output"
+    contains "$output" claim-ok
+    [ "$(git -C "$repo" rev-parse HEAD)" = "$expected_base" ] || fail "$scenario task branch base mismatch"
+    [ -f "$repo/.kata.toml" ] || fail "$scenario lost the kata binding on the task branch"
+  fi
+  git --git-dir="$TMP_ROOT/remote.git" update-ref refs/heads/release "$base"
+done
+printf 'ok - a GitHub base that would drop a committed kata binding stops before claim\n'
