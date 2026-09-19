@@ -15,6 +15,7 @@
 - 2026-09-19 execution: Doctor Biz authorized reviewing and merging the prerequisite branch locally, then executing this plan; no push. Doctor Biz approved grouping Tasks 4–6 into one integration commit so their shared state-format changes pass the full suite together, followed by the documentation work required by the binding spec (Task 7 below).
 - Prerequisite complete: `da6b07f` fixes failed Kata command routing with three regressions; fresh-eyes review and 77 canonical check cases passed. Main advanced concurrently with tracker-claw; local merge `d966275` preserves both projects and passes `./kata/check` and `sh tracker-claw/check`. Landing branch starts at `d966275`; no remote commands were run.
 - Task 1 complete: `e750610`, graph-contract red/green verified, ShellCheck and controller-captured `./kata/check` exit 0, independent spec/code review clean. Next: Task 2.
+- Tasks 2–3 complete: `bc76214` records trunk at claim; `6204f9c` lands at close and removes publication. Focused red/green, real Tracker preflight, full canonical checks, and ShellCheck pass; independent reviews are clean. Task 3 adds `kata/check-no-remotes` and its focused test to share one live-file scanner. Review found and fixed extensionless-helper and line-continuation gaps before commit. Next: grouped Tasks 4–6, then Task 7 documentation and final review. Compactions so far: 0.
 - Execution corrections: the binding spec governs code examples. Task 3 scans live runtime files (including untracked files), includes `git remote`, and refuses scan errors; it preserves existing close refusal coverage. Task 5 requires a non-null valid commit for completed items. Task 6 validates selected fields and keeps guarded Kata lookups so malformed state or failed commands reach inspection rather than escaping through `set -e`.
 - 2026-09-18: spec approved ("ok cool. let's go") and committed at `ab9cebb`. Doctor Biz chose "Land inside the close step", "let's skip remote git actions altogether", and "commit the swap first".
 - Branch: `feat/kata-land-on-close`, cut from `main` **after** `fix/kata-scripts-by-path` (the gate-review fixes) merges to `main` locally. Do not start this plan until that merge has landed; the anchors below assume the gate-review work is in `main`.
@@ -194,7 +195,7 @@ The claim step records the branch checked out at claim time as `trunk` in `selec
 - Produces: `selected.json` now carries `trunk` (a string, the branch checked out at claim), and no longer carries `github` or `start_branch`. Task 3 (`close-selected.sh`), Task 4 (`handoff-selected.sh`), and Task 6 (`run-board.sh`) read `.trunk` from it.
 - Note: `claim-next.sh` stops reading `KATA_STACK_BASE_FILE` here; Task 6 removes the code in `run-board.sh` that exports it. Between the two tasks the export is harmless dead weight.
 
-- [ ] **Step 1: Update the existing-branch assertion (red first)**
+- [x] **Step 1: Update the existing-branch assertion (red first)**
 
 In `kata/tests/check.sh`, the claim-and-persist case near l.86 asserts the persisted trunk. Change:
 
@@ -220,12 +221,12 @@ to:
   jq -e --arg base "$old_head" '.base_commit == $base and .trunk == "feat/already-here" and (has("github") | not) and (has("start_branch") | not)' "$repo/.tracker/runs/test/selected.json" >/dev/null || fail 'trunk and base were not saved'
 ```
 
-- [ ] **Step 2: Run check.sh and watch the claim cases fail**
+- [x] **Step 2: Run check.sh and watch the claim cases fail**
 
 Run: `sh kata/tests/check.sh`
 Expected: FAIL — `trunk was not persisted` (the real `claim-next.sh` still writes `start_branch`, not `trunk`).
 
-- [ ] **Step 3: Record the trunk and refuse task branches**
+- [x] **Step 3: Record the trunk and refuse task branches**
 
 In `kata/scripts/claim-next.sh`, replace the `start_branch` line (near l.30):
 
@@ -242,11 +243,11 @@ case "$trunk" in
 esac
 ```
 
-- [ ] **Step 4: Delete the GitHub and stack-base block**
+- [x] **Step 4: Delete the GitHub and stack-base block**
 
 Delete `kata/scripts/claim-next.sh` lines from `github=null` (near l.82) through the closing `fi` of the `if [ -n "$github_remote" ]; then` block that ends `github=$(jq -n ... )` (near l.185). That removes the stack-base validation, the `github_repository` helper, the remote scan, the `gh repo view` lookup, the `git fetch`, and the `.kata.toml` base check — every remote command in the claim step. The line `base_commit=$(git rev-parse HEAD)` (near l.81) stays; `actor="kata-pipeline-$TRACKER_RUN_ID"` (near l.186) now follows it directly.
 
-- [ ] **Step 5: Write `trunk` into the state file**
+- [x] **Step 5: Write `trunk` into the state file**
 
 In the state-writing `jq` near l.207-211, drop the GitHub and start-branch arguments and add `trunk`. Change:
 
@@ -268,7 +269,7 @@ jq -n --arg uid "$uid" --arg short "$short_id" --arg qualified "$qualified_id" \
   '{issue_uid:$uid,short_id:$short,qualified_id:$qualified,workspace:$workspace,branch:$branch,base_commit:$base,actor:$actor,trunk:$trunk,issue:$issue}' >"$state_tmp"
 ```
 
-- [ ] **Step 6: Reword the ABOUTME**
+- [x] **Step 6: Reword the ABOUTME**
 
 `kata/scripts/claim-next.sh` line 3 mentions publication or a starting branch. Set the two ABOUTME lines to describe the local-only trunk model, for example:
 
@@ -277,12 +278,12 @@ jq -n --arg uid "$uid" --arg short "$short_id" --arg qualified "$qualified_id" \
 # ABOUTME: Records the trunk to land on later and writes run state only after a confirmed claim.
 ```
 
-- [ ] **Step 7: Run check.sh and watch it pass**
+- [x] **Step 7: Run check.sh and watch it pass**
 
 Run: `sh kata/tests/check.sh`
 Expected: PASS.
 
-- [ ] **Step 8: Append the trunk-guard cases to preflight.sh**
+- [x] **Step 8: Append the trunk-guard cases to preflight.sh**
 
 `kata/tests/preflight.sh` ends after the dirty-tree case with its `ok -` line. The dirty guard runs before the trunk guard, so commit the formerly dirty files first, then exercise a detached HEAD and a task branch on a clean tree. Append after the existing `ok -` line:
 
@@ -340,7 +341,7 @@ done
 printf 'ok - real tracker refuses a kata task branch before selection\n'
 ```
 
-- [ ] **Step 9: Delete the GitHub-setup test and its check line**
+- [x] **Step 9: Delete the GitHub-setup test and its check line**
 
 ```sh
 git rm kata/tests/github-setup.sh
@@ -354,7 +355,7 @@ sh "$KATA_DIR/tests/github-setup.sh"
 
 Confirm nothing else references it: `git grep -n github-setup` prints nothing.
 
-- [ ] **Step 10: Verify and commit**
+- [x] **Step 10: Verify and commit**
 
 Run: `sh kata/tests/preflight.sh` (real Tracker, foreground, a couple of minutes), `sh kata/tests/check.sh`, `./kata/check`, and `shellcheck kata/check kata/board-report kata/answer kata/scripts/*.sh kata/tests/*.sh`. All clean.
 
@@ -385,7 +386,7 @@ git commit -m "feat(kata): record the trunk to land on and drop GitHub from the 
 - Produces: on success, `refs/heads/<trunk>` fast-forwarded to the approved commit, the kata closed, the task branch deleted, the checkout back on trunk; stdout carries `Landed <qualified id> on <trunk> at <head>` then the `close-ok` marker. Task 4 (handoff) relies on `CloseSelected/status.json` still recording `fail` on any refusal; Task 6 (board) relies on the completed child ending on trunk, clean, branch gone, kata closed, and on the `close-ok` marker.
 - Depends on Task 2 having already removed the `gh`/`git fetch` calls from `claim-next.sh`; the guard added here scans the whole runtime and would fail otherwise.
 
-- [ ] **Step 1: Rewrite close.sh for the landing behavior (red first)**
+- [x] **Step 1: Rewrite close.sh for the landing behavior (red first)**
 
 Replace `kata/tests/close.sh` entirely with:
 
@@ -589,12 +590,12 @@ reject 'predates landing on close'
 printf 'ok - a run claimed before landing on close is refused for inspection\n'
 ```
 
-- [ ] **Step 2: Run close.sh and watch the landing cases fail**
+- [x] **Step 2: Run close.sh and watch the landing cases fail**
 
 Run: `sh kata/tests/close.sh`
 Expected: FAIL — the `land` case fails first (the current `close-selected.sh` reaches the GitHub block, which finds no `github` key and refuses with "GitHub setup state is missing" rather than landing).
 
-- [ ] **Step 3: Reword the ABOUTME**
+- [x] **Step 3: Reword the ABOUTME**
 
 In `kata/scripts/close-selected.sh`, replace lines 2-3:
 
@@ -610,7 +611,7 @@ with:
 # ABOUTME: Fast-forwards trunk with a compare-and-swap and touches no remote.
 ```
 
-- [ ] **Step 4: Replace the GitHub block with the landing block**
+- [x] **Step 4: Replace the GitHub block with the landing block**
 
 Delete `kata/scripts/close-selected.sh` lines 39 to 113 (from `jq -e 'has("github")' "$state" >/dev/null || {` through the closing `fi` of the `if jq -e '.github != null' ...` block). In their place insert, keeping the same order as the spec:
 
@@ -635,7 +636,7 @@ git update-ref -m "kata: land $qualified_id" "refs/heads/$trunk" "$head" "$trunk
 
 The `jq -er '.trunk'` refuses a `null` or absent `trunk` (its non-zero exit drives the `|| { ... }`). `git update-ref <ref> <new> <old>` is a compare-and-swap: if trunk moved between the ancestor check and here, it fails and changes nothing. No checkout runs, so the tree stays on the task branch.
 
-- [ ] **Step 5: Reword the re-check and add the landing report**
+- [x] **Step 5: Reword the re-check and add the landing report**
 
 The re-check just before the close call (now near the end of the file, `printf 'task branch or working tree changed during publication\n'`) changes `during publication` to `during landing`:
 
@@ -658,12 +659,12 @@ printf 'close-ok\n'
 
 Trunk now equals head, so the switch changes no file and the safe `--delete` (the branch is merged into trunk) succeeds.
 
-- [ ] **Step 6: Run close.sh and watch it pass**
+- [x] **Step 6: Run close.sh and watch it pass**
 
 Run: `sh kata/tests/close.sh`
 Expected: PASS (every `ok -` line prints).
 
-- [ ] **Step 7: Update the node label, the prompt, and delete publish.sh**
+- [x] **Step 7: Update the node label, the prompt, and delete publish.sh**
 
 In `kata/complete.dip:104`:
 
@@ -699,7 +700,7 @@ Delete the publication test:
 git rm kata/tests/publish.sh
 ```
 
-- [ ] **Step 8: Drop the publish.sh line and add the remote-command guard to kata/check**
+- [x] **Step 8: Drop the publish.sh line and add the remote-command guard to kata/check**
 
 In `kata/check`, delete the line near l.64:
 
@@ -720,7 +721,7 @@ fi
 
 `git grep` exits 0 when it prints a match, so a hit fails the check and shows the offending lines. The guard scans the runtime scripts, the report and answer helpers, and the DIP files — not the tests, which may still name these commands in fixture prose. It relies on Task 2 having removed `claim-next.sh`'s `gh`/`git fetch`; if any runtime file (comments included) still contains the tokens `git push`, `git fetch`, `git ls-remote`, or a ` gh ` command, reword it.
 
-- [ ] **Step 9: Verify and commit**
+- [x] **Step 9: Verify and commit**
 
 Run: `sh kata/tests/close.sh`, `./kata/check`, and `shellcheck kata/check kata/board-report kata/answer kata/scripts/*.sh kata/tests/*.sh`. All clean.
 
