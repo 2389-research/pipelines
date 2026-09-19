@@ -1,7 +1,7 @@
 # ABOUTME: Completes the repository's kata board through isolated complete.dip runs.
-# ABOUTME: Stacks reviewed task branches and PRs, then holds the morning review until the operator sweeps again or stops.
+# ABOUTME: Lands each reviewed task on its trunk, then holds the morning review until the operator sweeps again or stops.
 workflow CompleteKataBoard
-  goal: "Complete all ready unowned katas sequentially with stacked PRs, then hold the morning review until the operator sweeps again or stops."
+  goal: "Complete all ready unowned katas sequentially, landing each on its trunk, then hold the morning review until the operator sweeps again or stops."
   start: RunBoard
   exit: Exit
 

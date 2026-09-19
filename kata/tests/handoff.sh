@@ -31,6 +31,12 @@ fixture="$2/.tracker/handoff-fixture"
 shift 2
 printf '%s %s\n' "$verb${action:+ $action}" "$*" >>"$fixture/kata.log"
 [ ! -e "$fixture/fail-$verb" ] || exit 95
+if [ "$verb" = show ]; then
+  status=open
+  [ ! -e "$fixture/closed" ] || status=closed
+  jq -n --arg uid "$1" --arg status "$status" '{issue:{uid:$uid,status:$status,owner:"kata-pipeline-test"}}'
+  exit 0
+fi
 [ "$1" = --as ] && [ "$2" = kata-pipeline-test ] || exit 92
 shift 2
 case "$verb:$action" in
@@ -72,7 +78,7 @@ new_repo() {
   printf '450\n' >"$repo/.tracker/turn_overrides/Implement"
   jq -n --arg workspace "$repo" --arg base "$base" '{workspace:$workspace,issue_uid:"01ARZ3NDEKTSV4RRFFQ69G5FAV",
     short_id:"5fav",qualified_id:"demo#5fav",branch:"kata/5fav-test",base_commit:$base,actor:"kata-pipeline-test",
-    start_branch:"main",github:null}' >"$run_dir/selected.json"
+    trunk:"main"}' >"$run_dir/selected.json"
 }
 
 handoff() {
@@ -95,7 +101,7 @@ new_repo implement
 printf 'half done\n' >"$repo/partial.txt"
 handoff implement
 expect_record implement needs-review
-[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'implement: starting branch was not restored'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'implement: trunk was not restored'
 [ -z "$(git -C "$repo" status --porcelain --untracked-files=normal)" ] || fail 'implement: working tree is dirty after the handoff'
 [ "$(git -C "$repo" rev-parse main)" = "$base" ] || fail 'implement: main moved'
 wip=$(git -C "$repo" rev-parse kata/5fav-test)
@@ -105,8 +111,8 @@ wip=$(git -C "$repo" rev-parse kata/5fav-test)
 git -C "$repo" show --stat --format= kata/5fav-test | grep -F 'partial.txt' >/dev/null || fail 'implement: WIP commit lacks the dirty file'
 jq -e --arg base "$base" --arg wip "$wip" '.run_id == "test" and .issue_uid == "01ARZ3NDEKTSV4RRFFQ69G5FAV" and
   .qualified_id == "demo#5fav" and .branch == "kata/5fav-test" and .base_commit == $base and .wip_commit == $wip and
-  .start_branch == "main" and .question == null and
-  keys == ["base_commit","branch","issue_uid","label","qualified_id","question","reason","run_id","start_branch","wip_commit"]' \
+  .trunk == "main" and .question == null and
+  keys == ["base_commit","branch","issue_uid","label","qualified_id","question","reason","run_id","trunk","wip_commit"]' \
   "$run_dir/handoff.json" >/dev/null || fail 'implement: handoff.json fields are wrong'
 grep -F 'Attempted the selected kata on branch kata/5fav-test.' "$fixture/comment.md" >/dev/null ||
   fail 'implement: default handoff text is missing from the comment'
@@ -114,7 +120,7 @@ grep -Fx "Branch: kata/5fav-test (base $base, wip $wip)" "$fixture/comment.md" >
   fail 'implement: branch line is missing from the comment'
 grep -Fx 'Run: test' "$fixture/comment.md" >/dev/null || fail 'implement: run line is missing from the comment'
 if grep -F 'Question:' "$fixture/comment.md" >/dev/null; then fail 'implement: comment has a question line'; fi
-printf 'ok - a worker failure commits WIP, restores the starting branch, labels needs-review, and records handoff.json\n'
+printf 'ok - a worker failure commits WIP, restores the trunk, labels needs-review, and records handoff.json\n'
 
 new_repo decision
 mkdir -p "$run_dir/Implement"
@@ -125,18 +131,34 @@ expect_record decision needs-decision
 jq -e '.question == "Should the CLI accept --format=json\nas well as --json?" and .wip_commit == null' "$run_dir/handoff.json" >/dev/null ||
   fail 'decision: question or wip_commit is wrong'
 grep -F 'Question: Should the CLI accept --format=json' "$fixture/comment.md" >/dev/null || fail 'decision: question is missing from the comment'
-[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'decision: starting branch was not restored'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'decision: trunk was not restored'
 printf 'ok - a written question outranks a turn limit and labels needs-decision\n'
 
-new_repo publish
+new_repo land
 mkdir -p "$run_dir/CloseSelected" "$run_dir/ReviewCorrectness"
 printf '{"outcome":"fail"}\n' >"$run_dir/CloseSelected/status.json"
 printf '{"outcome":"success"}\n' >"$run_dir/ReviewCorrectness/status.json"
-printf 'Push was rejected by the remote.\n' >"$run_dir/handoff.md"
-handoff publish
-expect_record publish needs-review
-[ "$(sed -n '1p' "$fixture/comment.md")" = 'Push was rejected by the remote.' ] || fail 'publish: custom handoff text does not lead the comment'
-printf 'ok - a publication failure outranks reviews and keeps the custom handoff text\n'
+printf 'Trunk moved after the claim; rebase and rerun the reviews.\n' >"$run_dir/handoff.md"
+handoff land
+expect_record land needs-review
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'land: trunk was not restored'
+[ "$(sed -n '1p' "$fixture/comment.md")" = 'Trunk moved after the claim; rebase and rerun the reviews.' ] ||
+  fail 'land: custom handoff text does not lead the comment'
+printf 'ok - a landing failure that left the kata open outranks reviews and keeps the custom handoff text\n'
+
+new_repo closed-after-land
+mkdir -p "$run_dir/CloseSelected"
+printf '{"outcome":"fail"}\n' >"$run_dir/CloseSelected/status.json"
+: >"$fixture/closed"
+handoff closed-after-land
+grep -F 'kata demo#5fav is closed; the close step landed it but did not finish' "$test_root/output" >/dev/null ||
+  fail 'closed-after-land: message is missing'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'closed-after-land: trunk was not restored'
+[ ! -e "$run_dir/handoff.json" ] || fail 'closed-after-land: handoff.json was written for a closed kata'
+[ ! -e "$fixture/labels" ] || fail 'closed-after-land: a label was added for a closed kata'
+[ ! -e "$fixture/comment.md" ] || fail 'closed-after-land: a comment was written for a closed kata'
+if grep -Fx 'handoff-ok' "$test_root/output" >/dev/null; then fail 'closed-after-land: handoff-ok was printed'; fi
+printf 'ok - a kata the close step already closed stops the handoff for inspection\n'
 
 new_repo review
 mkdir -p "$run_dir/ReReviewScope"
@@ -167,18 +189,18 @@ new_repo kata-failure
 handoff kata-failure
 [ ! -e "$run_dir/handoff.json" ] || fail 'kata-failure: handoff.json was written after a failed comment'
 [ -e "$repo/.tracker/turn_overrides/Implement" ] || fail 'kata-failure: turn override was removed after a failed comment'
-[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'kata-failure: starting branch was not restored before the comment'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'kata-failure: trunk was not restored before the comment'
 if grep -Fx 'handoff-ok' "$test_root/output" >/dev/null; then fail 'kata-failure: handoff-ok was printed despite the failed comment'; fi
 printf 'ok - a failed kata comment leaves no handoff record\n'
 
 new_repo legacy
-jq 'del(.start_branch)' "$run_dir/selected.json" >"$run_dir/selected.json.tmp"
+jq 'del(.trunk)' "$run_dir/selected.json" >"$run_dir/selected.json.tmp"
 mv "$run_dir/selected.json.tmp" "$run_dir/selected.json"
 handoff legacy
-grep -F 'selected.json has no start_branch' "$test_root/output" >/dev/null || fail 'legacy: message is missing'
+grep -F 'selected.json has no trunk' "$test_root/output" >/dev/null || fail 'legacy: message is missing'
 [ ! -e "$fixture/kata.log" ] || fail 'legacy: kata was called'
 [ "$(git -C "$repo" branch --show-current)" = kata/5fav-test ] || fail 'legacy: checkout changed'
-printf 'ok - a run claimed before the starting branch was recorded stops for inspection\n'
+printf 'ok - a run claimed before the trunk was recorded stops for inspection\n'
 
 new_repo no-claim
 rm "$run_dir/selected.json"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ABOUTME: Runs complete.dip once per kata with a durable ledger of isolated child runs.
-# ABOUTME: Carries verified stack bases forward, records clean failures for review, and stops on integrity problems.
+# ABOUTME: Verifies each landing on trunk, records clean failures for review, and stops on integrity problems.
 set -eu
 
 if [ "${1:-}" = --help ]; then
@@ -93,23 +93,20 @@ append_run() {
   write_state --argjson result "$result" '.runs += [$result]'
 }
 # A clean failure left the kata open, labeled, and commented, and put the checkout back on the
-# branch the child started from. Anything else is an integrity problem and stops the board.
+# trunk the child started from. Anything else is an integrity problem and stops the board.
 record_failure() {
   handoff="$child/handoff.json"
   jq -e --arg run "$run_id" '.run_id == $run and
-    all(.issue_uid, .reason, .label, .branch, .start_branch; type == "string" and length > 0)' \
+    all(.issue_uid, .reason, .label, .branch, .trunk; type == "string" and length > 0)' \
     "$handoff" >/dev/null 2>&1 || stop_for_inspection
   jq -e '.context_updates.tool_stdout | type == "string" and (split("\n") | any(. == "handoff-ok"))' \
     "$child/Handoff/status.json" >/dev/null 2>&1 || stop_for_inspection
   # The worker left the task branch, so the handoff preserved and restored nothing. A human looks first.
   reason=$(jq -r '.reason' "$handoff")
   [ "$reason" != unexpected_checkout ] || stop_for_inspection
-  [ "$(git symbolic-ref --quiet --short HEAD)" = "$(jq -r '.start_branch' "$handoff")" ] || stop_for_inspection
+  [ "$(git symbolic-ref --quiet --short HEAD)" = "$(jq -r '.trunk' "$handoff")" ] || stop_for_inspection
   dirty=$(git status --porcelain --untracked-files=normal) || stop_board 'git status failed; inspect the checkout'
   [ -z "$dirty" ] || stop_for_inspection
-  if [ -n "$KATA_STACK_BASE_FILE" ]; then
-    [ "$(git rev-parse HEAD)" = "$(jq -r '.commit' "$KATA_STACK_BASE_FILE")" ] || stop_for_inspection
-  fi
   uid=$(jq -r '.issue_uid' "$handoff")
   issue=$(kata show --workspace "$workspace" "$uid" --json) || stop_for_inspection
   printf '%s' "$issue" | jq -e --arg uid "$uid" --arg actor "kata-pipeline-$run_id" \
@@ -135,13 +132,6 @@ while ! jq -e '.finished' "$state" >/dev/null; do
   index=$(jq '.runs | length + 1' "$state")
   item="$board/items/$(printf '%06d' "$index")"
   mkdir -p "$item"
-  # Empty and failed attempts do not change the stack tip. Only verified child completions do.
-  jq '[.runs[] | select(.kind == "completed")] | last' "$state" >"$item/base.json"
-  KATA_STACK_BASE_FILE=
-  if jq -e '. != null' "$item/base.json" >/dev/null; then
-    KATA_STACK_BASE_FILE="$item/base.json"
-  fi
-  export KATA_STACK_BASE_FILE
   if [ ! -e "$item/child.log" ]; then
     printf 'Starting kata attempt %s; child output: %s\n' "$index" "$item/child.log"
     # Create the log before launch. An interrupted launch must never silently claim twice.
@@ -182,13 +172,17 @@ while ! jq -e '.finished' "$state" >/dev/null; do
   if [ -f "$child/selected.json" ]; then
     selected="$child/selected.json"
     jq -e --arg workspace "$workspace" '.workspace == $workspace and
-      (.issue_uid | type == "string" and length > 0) and has("github")' "$selected" >/dev/null || stop_for_inspection
+      all(.issue_uid, .qualified_id, .branch, .trunk; type == "string" and length > 0)' "$selected" >/dev/null 2>&1 || stop_for_inspection
     jq -e '.outcome == "success" and .context_updates.tool_marker == "close-ok"' \
       "$child/CloseSelected/status.json" >/dev/null 2>&1 || stop_for_inspection
     uid=$(jq -r '.issue_uid' "$selected")
+    qualified=$(jq -er '.qualified_id' "$selected")
     branch=$(jq -er '.branch' "$selected")
+    trunk=$(jq -er '.trunk' "$selected")
     head=$(git rev-parse HEAD)
-    [ "$(git symbolic-ref --quiet --short HEAD)" = "$branch" ] || stop_for_inspection
+    [ "$(git symbolic-ref --quiet --short HEAD)" = "$trunk" ] || stop_for_inspection
+    # The close step landed the work and deleted the task branch; a surviving branch means it did not finish.
+    if git rev-parse --quiet --verify "refs/heads/$branch" >/dev/null 2>&1; then stop_for_inspection; fi
     dirty=$(git status --porcelain --untracked-files=normal) || stop_board 'git status failed; inspect the checkout'
     [ -z "$dirty" ] || stop_for_inspection
     for approval in review-correctness.approved review-scope.approved; do
@@ -199,15 +193,10 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     if jq -e --arg uid "$uid" 'any(.runs[]; .kind == "completed" and .issue_uid == $uid)' "$state" >/dev/null; then
       stop_board "child repeated an already completed kata: $uid"
     fi
-    pr_url=
-    if jq -e '.github != null' "$selected" >/dev/null; then
-      [ -s "$child/pr-url.txt" ] || stop_for_inspection
-      pr_url=$(cat "$child/pr-url.txt")
-    fi
-    result=$(jq --arg run "$run_id" --arg head "$head" --arg url "$pr_url" \
-      '{run_id:$run,kind:"completed",issue_uid,branch,commit:$head,github,pr_url:$url}' "$selected")
+    result=$(jq --arg run "$run_id" --arg head "$head" \
+      '{run_id:$run,kind:"completed",issue_uid,branch,commit:$head}' "$selected")
     append_run
-    printf 'Completed %s on %s%s\n' "$uid" "$branch" "${pr_url:+; $pr_url}"
+    printf 'Landed %s on %s at %s\n' "$qualified" "$trunk" "$head"
   else
     jq -e '.outcome == "success" and .context_updates.tool_marker == "queue-empty"' \
       "$child/ClaimNext/status.json" >/dev/null 2>&1 || stop_for_inspection

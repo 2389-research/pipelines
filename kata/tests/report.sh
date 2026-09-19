@@ -81,22 +81,21 @@ ledger older '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":f
   {"run_id":"b1b1b1b1b1b1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-b1b1b1b1b1b1","reason":"turn_limit","label":"needs-review"}]}'
 touch -t 202001010000 "$runs/older/board/state.json"
 ledger newer '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
-  {"run_id":"c1c1c1c1c1c1","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-c1c1c1c1c1c1","commit":"'"$head"'","github":{"remote":"origin","repository":"o/r","base_branch":"main"},"pr_url":"https://github.com/o/r/pull/12"},
+  {"run_id":"c1c1c1c1c1c1","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-c1c1c1c1c1c1","commit":"'"$head"'"},
   {"run_id":"d1d1d1d1d1d1","kind":"failed","issue_uid":"01DECISION0000000000000000","branch":"kata/n4vr-d1d1d1d1d1d1","reason":"decision","label":"needs-decision"},
   {"run_id":"f1f1f1f1f1f1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-f1f1f1f1f1f1","reason":"review","label":"needs-review"},
   {"run_id":"e1e1e1e1e1e1","kind":"empty"}]}'
 selected c1c1c1c1c1c1 '{"issue_uid":"01COMPLETED000000000000000","qualified_id":"demo#5fav"}'
-handoff d1d1d1d1d1d1 '{"run_id":"d1d1d1d1d1d1","issue_uid":"01DECISION0000000000000000","qualified_id":"demo#n4vr","reason":"decision","label":"needs-decision","branch":"kata/n4vr-d1d1d1d1d1d1","base_commit":"'"$base"'","wip_commit":null,"start_branch":"main","question":"Should the CLI accept --format=json\nas well as --json?"}'
-handoff f1f1f1f1f1f1 '{"run_id":"f1f1f1f1f1f1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/bq4e-f1f1f1f1f1f1","base_commit":"'"$base"'","wip_commit":"'"$wip"'","start_branch":"main","question":null}'
-handoff b1b1b1b1b1b1 '{"run_id":"b1b1b1b1b1b1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"turn_limit","label":"needs-review","branch":"kata/bq4e-b1b1b1b1b1b1","base_commit":"'"$base"'","wip_commit":null,"start_branch":"main","question":null}'
+handoff d1d1d1d1d1d1 '{"run_id":"d1d1d1d1d1d1","issue_uid":"01DECISION0000000000000000","qualified_id":"demo#n4vr","reason":"decision","label":"needs-decision","branch":"kata/n4vr-d1d1d1d1d1d1","base_commit":"'"$base"'","wip_commit":null,"trunk":"main","question":"Should the CLI accept --format=json\nas well as --json?"}'
+handoff f1f1f1f1f1f1 '{"run_id":"f1f1f1f1f1f1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/bq4e-f1f1f1f1f1f1","base_commit":"'"$base"'","wip_commit":"'"$wip"'","trunk":"main","question":null}'
+handoff b1b1b1b1b1b1 '{"run_id":"b1b1b1b1b1b1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"turn_limit","label":"needs-review","branch":"kata/bq4e-b1b1b1b1b1b1","base_commit":"'"$base"'","wip_commit":null,"trunk":"main","question":null}'
 
 # Tracker reflows the review at 76 columns: every line is short, no line depends on its indent,
 # and every command is whole on one line with its path quoted.
 cat >"$test_root/expected" <<EXPECTED
 Board newer in $repo: finished
 Completed (1)
-- demo#5fav on kata/5fav-c1c1c1c1c1c1
-  https://github.com/o/r/pull/12
+- demo#5fav: landed 9abcdef09abc (run c1c1c1c1c1c1)
 Needs decision (1)
 - demo#n4vr: needs a decision (run d1d1d1d1d1d1)
   branch kata/n4vr-d1d1d1d1d1d1, base $short_base, wip none
@@ -116,11 +115,11 @@ diff -u "$test_root/expected" "$test_root/output" || fail 'text report differs f
 printf 'ok - the text report picks the newest board run and groups its katas\n'
 
 (cd "$repo" && "$report" --json newer) >"$test_root/report.json" 2>"$test_root/output" || fail 'json report failed'
-jq -e --arg repo "$repo" --arg answer "$pipeline_dir/answer" --arg base "$base" --arg wip "$wip" --arg short "$short_base" '
+jq -e --arg repo "$repo" --arg answer "$pipeline_dir/answer" --arg base "$base" --arg wip "$wip" --arg head "$head" --arg short "$short_base" '
   .board_run_id == "newer" and .workspace == $repo and .pipeline == "/p/complete.dip" and .finished == true and
   .stop_reason == null and .stop_child == null and
   [.completed[].qualified_id] == ["demo#5fav"] and .completed[0].run_id == "c1c1c1c1c1c1" and
-  .completed[0].pr_url == "https://github.com/o/r/pull/12" and .completed[0].next == [] and
+  .completed[0].commit == $head and .completed[0].next == [] and
   [.needs_decision[].qualified_id] == ["demo#n4vr"] and
   .needs_decision[0].question == "Should the CLI accept --format=json\nas well as --json?" and
   .needs_decision[0].owner == "kata-pipeline-d1d1d1d1d1d1" and .needs_decision[0].labels == ["needs-decision"] and
@@ -131,7 +130,7 @@ jq -e --arg repo "$repo" --arg answer "$pipeline_dir/answer" --arg base "$base" 
   [.remaining[].qualified_id] == ["demo#a2j0","demo#zz11"] and [.remaining[].labels] == [[],["task"]] and
   [.remaining[].owner] == ["kata-pipeline-b20d9e898b16",null] and
   ([.completed[], .needs_decision[], .needs_review[], .remaining[]] |
-    all(keys == ["base_commit","branch","issue_uid","labels","next","owner","pr_url","qualified_id","question","reason","run_id","wip_commit"]))
+    all(keys == ["base_commit","branch","commit","issue_uid","labels","next","owner","qualified_id","question","reason","run_id","wip_commit"]))
 ' "$test_root/report.json" >/dev/null || { cat "$test_root/report.json" >&2; fail 'json report has the wrong shape'; }
 printf 'ok - the JSON report carries every field for agents\n'
 
@@ -145,7 +144,7 @@ printf 'ok - a named stopped run reports its stop reason under the header\n'
 
 ledger nullreason '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":false,"runs":[
   {"run_id":"a1a1a1a1a1a1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a1a1a1a1a1a1","reason":null,"label":"needs-review"}]}'
-handoff a1a1a1a1a1a1 '{"run_id":"a1a1a1a1a1a1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":null,"label":"needs-review","branch":"kata/bq4e-a1a1a1a1a1a1","base_commit":"'"$base"'","wip_commit":null,"start_branch":"main","question":null}'
+handoff a1a1a1a1a1a1 '{"run_id":"a1a1a1a1a1a1","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":null,"label":"needs-review","branch":"kata/bq4e-a1a1a1a1a1a1","base_commit":"'"$base"'","wip_commit":null,"trunk":"main","question":null}'
 (cd "$repo" && "$report" nullreason) >"$test_root/output" 2>&1 || fail 'report failed for a handoff without a reason'
 grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null || fail 'null reason: the review group is missing'
 grep -Fx -e '- demo#bq4e: handed off (run a1a1a1a1a1a1)' "$test_root/output" >/dev/null || fail 'null reason: the kata row is wrong'
@@ -156,18 +155,16 @@ ledger resweep '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished"
   {"run_id":"b1b1b1b1b1b1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-b1b1b1b1b1b1","reason":"turn_limit","label":"needs-review"},
   {"run_id":"e1e1e1e1e1e1","kind":"empty"},
   {"run_id":"f1f1f1f1f1f1","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-f1f1f1f1f1f1","reason":"review","label":"needs-review"},
-  {"run_id":"c1c1c1c1c1c1","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-c1c1c1c1c1c1","commit":"'"$head"'","github":{"remote":"origin","repository":"o/r","base_branch":"main"},"pr_url":"https://github.com/o/r/pull/12"},
+  {"run_id":"c1c1c1c1c1c1","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-c1c1c1c1c1c1","commit":"'"$head"'"},
   {"run_id":"e2e2e2e2e2e2","kind":"empty"},
-  {"run_id":"a2a2a2a2a2a2","kind":"completed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a2a2a2a2a2a2","commit":"'"$wip"'","github":null,"pr_url":""},
+  {"run_id":"a2a2a2a2a2a2","kind":"completed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a2a2a2a2a2a2","commit":"'"$wip"'"},
   {"run_id":"e3e3e3e3e3e3","kind":"empty"}]}'
 selected a2a2a2a2a2a2 '{"issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e"}'
 cat >"$test_root/expected" <<EXPECTED
 Board resweep in $repo: finished
 Completed (2)
-- demo#5fav on kata/5fav-c1c1c1c1c1c1
-  https://github.com/o/r/pull/12
-- demo#bq4e on kata/bq4e-a2a2a2a2a2a2
-  no pull request
+- demo#5fav: landed 9abcdef09abc (run c1c1c1c1c1c1)
+- demo#bq4e: landed 5678ef015678 (run a2a2a2a2a2a2)
 Needs decision (0)
 Needs review (0)
 Remaining open (3)
@@ -214,7 +211,7 @@ ledger poison-run '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finish
 # shellcheck disable=SC2016
 handoff_jq a3a3a3a3a3a3 --arg base "$base" '{run_id:("x; rm -rf ~ " + ([27] | implode) + "[2J"),
   issue_uid:"01REVIEW000000000000000000",qualified_id:"demo#bq4e",reason:"review",label:"needs-review",
-  branch:"kata/bq4e-a3a3a3a3a3a3",base_commit:$base,wip_commit:null,start_branch:"main",question:null}'
+  branch:"kata/bq4e-a3a3a3a3a3a3",base_commit:$base,wip_commit:null,trunk:"main",question:null}'
 (cd "$repo" && "$report" poison-run) >"$test_root/output" 2>&1 || fail 'poison-run: report exited nonzero'
 grep -Fx -- '- demo#bq4e: review rejected (run a3a3a3a3a3a3)' "$test_root/output" >/dev/null ||
   fail 'poison-run: the review did not print the ledgers run id'
@@ -234,25 +231,25 @@ ledger poison-branch '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","fin
   {"run_id":"b2b2b2b2b2b2","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/x","reason":"review","label":"needs-review"}]}'
 # The $(id) below is the payload under test, not an expansion.
 # shellcheck disable=SC2016
-handoff b2b2b2b2b2b2 '{"run_id":"b2b2b2b2b2b2","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/x$(id)","base_commit":"'"$base"'","wip_commit":null,"start_branch":"main","question":null}'
+handoff b2b2b2b2b2b2 '{"run_id":"b2b2b2b2b2b2","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/x$(id)","base_commit":"'"$base"'","wip_commit":null,"trunk":"main","question":null}'
 ledger poison-dots '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
   {"run_id":"c2c2c2c2c2c2","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/x","reason":"review","label":"needs-review"}]}'
-handoff c2c2c2c2c2c2 '{"run_id":"c2c2c2c2c2c2","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/x..main","base_commit":"'"$base"'","wip_commit":null,"start_branch":"main","question":null}'
-ledger poison-pr '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
-  {"run_id":"d2d2d2d2d2d2","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-d2d2d2d2d2d2","commit":"'"$head"'","github":{"remote":"origin","repository":"o/r","base_branch":"main"},"pr_url":"https://evil.example/o/r/pull/12"}]}'
+handoff c2c2c2c2c2c2 '{"run_id":"c2c2c2c2c2c2","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/x..main","base_commit":"'"$base"'","wip_commit":null,"trunk":"main","question":null}'
+ledger poison-landed '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
+  {"run_id":"d2d2d2d2d2d2","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-d2d2d2d2d2d2","commit":"deadbeef; rm -rf /"}]}'
 selected d2d2d2d2d2d2 '{"issue_uid":"01COMPLETED000000000000000","qualified_id":"demo#5fav"}'
 ledger poison-id '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
-  {"run_id":"f2f2f2f2f2f2","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-f2f2f2f2f2f2","commit":"'"$head"'","github":null,"pr_url":""}]}'
+  {"run_id":"f2f2f2f2f2f2","kind":"completed","issue_uid":"01COMPLETED000000000000000","branch":"kata/5fav-f2f2f2f2f2f2","commit":"'"$head"'"}]}'
 selected f2f2f2f2f2f2 '{"issue_uid":"01COMPLETED000000000000000","qualified_id":"demo#5fav; id"}'
 ledger poison-commit '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
   {"run_id":"a4a4a4a4a4a4","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a4a4a4a4a4a4","reason":"review","label":"needs-review"}]}'
-handoff a4a4a4a4a4a4 '{"run_id":"a4a4a4a4a4a4","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/bq4e-a4a4a4a4a4a4","base_commit":"deadbeef; rm -rf /","wip_commit":null,"start_branch":"main","question":null}'
+handoff a4a4a4a4a4a4 '{"run_id":"a4a4a4a4a4a4","issue_uid":"01REVIEW000000000000000000","qualified_id":"demo#bq4e","reason":"review","label":"needs-review","branch":"kata/bq4e-a4a4a4a4a4a4","base_commit":"deadbeef; rm -rf /","wip_commit":null,"trunk":"main","question":null}'
 ledger poison-ctrl '{"workspace":"'"$repo"'","pipeline":"/p/complete.dip","finished":true,"runs":[
   {"run_id":"a5a5a5a5a5a5","kind":"failed","issue_uid":"01REVIEW000000000000000000","branch":"kata/bq4e-a5a5a5a5a5a5","reason":"review","label":"needs-review"}]}'
 # shellcheck disable=SC2016 # $base is a jq variable from --arg, see above.
 handoff_jq a5a5a5a5a5a5 --arg base "$base" '{run_id:"a5a5a5a5a5a5",issue_uid:"01REVIEW000000000000000000",
   qualified_id:"demo#bq4e",reason:"review",label:"needs-review",branch:("kata/x" + ([27] | implode) + "y"),
-  base_commit:$base,wip_commit:null,start_branch:"main",question:null}'
+  base_commit:$base,wip_commit:null,trunk:"main",question:null}'
 refuse() {
   status=0
   (cd "$repo" && "$report" "$@") >"$test_root/output" 2>&1 || status=$?
@@ -260,11 +257,20 @@ refuse() {
   grep -F 'unsafe' "$test_root/output" >/dev/null || fail "$*: the refusal message is missing"
   if grep -F 'demo#' "$test_root/output" >/dev/null; then fail "$*: a record was printed before the refusal"; fi
 }
-for poison in poison-branch poison-dots poison-pr poison-id poison-commit poison-ctrl; do
+for invalid in missing null; do
+  mkdir -p "$runs/commit-$invalid/board"
+  jq --arg invalid "$invalid" '.runs = [.runs[0]] | if $invalid == "missing" then del(.runs[0].commit) else .runs[0].commit = null end' \
+    "$runs/newer/board/state.json" >"$runs/commit-$invalid/board/state.json"
+  refuse "commit-$invalid"
+  refuse --json "commit-$invalid"
+done
+printf 'ok - completed items without a non-null landed commit are refused\n'
+
+for poison in poison-branch poison-dots poison-landed poison-id poison-commit poison-ctrl; do
   refuse "$poison"
   refuse --json "$poison"
 done
-printf 'ok - a record with an unsafe branch, commit, id, or pull request URL is refused whole\n'
+printf 'ok - a record with an unsafe branch, commit, or id is refused whole\n'
 
 (cd "$repo" && "$report" -h) >"$test_root/output" 2>&1 || fail '-h failed'
 grep -F 'Usage: board-report' "$test_root/output" >/dev/null || fail '-h lacks usage'

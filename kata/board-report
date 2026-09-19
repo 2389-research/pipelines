@@ -69,7 +69,7 @@ while IFS= read -r entry; do
       qualified=$(jq -er '.qualified_id' "$child/selected.json" 2>/dev/null) ||
         { printf 'completed child %s has no selection record: %s\n' "$run_id" "$child/selected.json" >&2; exit 1; }
       printf '%s' "$entry" | jq -c --arg qualified "$qualified" '{group:"completed",qualified_id:$qualified,issue_uid,run_id,branch,
-        base_commit:null,wip_commit:null,pr_url:(if .pr_url == "" then null else .pr_url end),reason:null,question:null}' \
+        base_commit:null,wip_commit:null,commit:.commit,reason:null,question:null}' \
         >>"$tmp/items.jsonl"
       ;;
     failed)
@@ -77,7 +77,7 @@ while IFS= read -r entry; do
         { printf 'failed child %s has no handoff record: %s\n' "$run_id" "$child/handoff.json" >&2; exit 1; }
       # run_id always comes from the ledger-validated $run_id, never the worker-written handoff copy.
       jq -c --arg run "$run_id" '{group:(if .reason == "decision" then "needs_decision" else "needs_review" end),
-        qualified_id,issue_uid,run_id:$run,branch,base_commit,wip_commit,pr_url:null,reason,question}' \
+        qualified_id,issue_uid,run_id:$run,branch,base_commit,wip_commit,commit:null,reason,question}' \
         "$child/handoff.json" >>"$tmp/items.jsonl"
       ;;
   esac
@@ -86,15 +86,15 @@ done <"$tmp/runs.jsonl"
 # Child records are written by the worker's run. Every field that reaches a pasteable command
 # must look like what it claims to be, or the whole review is refused.
 jq -se --arg qid '^[A-Za-z0-9._-]+(#[A-Za-z0-9._-]+)?$' --arg branch '^[A-Za-z0-9][A-Za-z0-9._/-]*$' \
-  --arg commit '^([0-9a-f]{40}|[0-9a-f]{64})$' --arg pr '^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+$' '
+  --arg commit '^([0-9a-f]{40}|[0-9a-f]{64})$' '
   def clean: type == "string" and (test("[[:cntrl:]]") | not);
   def commit_or_null: . == null or (clean and test($commit));
   all(.[]; (.qualified_id | clean and test($qid)) and
     (.branch | clean and test($branch) and (contains("..") | not)) and
     (.base_commit | commit_or_null) and (.wip_commit | commit_or_null) and
-    (.pr_url == null or (.pr_url | clean and test($pr))))
+    (if .group == "completed" then (.commit | clean and test($commit)) else (.commit | commit_or_null) end))
 ' "$tmp/items.jsonl" >/dev/null ||
-  { printf 'refusing to print the review: a child record under %s has a missing or unsafe id, branch, commit, or pull request URL\n' "$runs" >&2; exit 1; }
+  { printf 'refusing to print the review: a child record under %s has a missing or unsafe id, branch, or commit\n' "$runs" >&2; exit 1; }
 
 jq -n --arg board "$board_id" --arg workspace "$workspace" --arg answer "$kata_dir/answer" \
   --slurpfile state "$ledger" --slurpfile listing "$tmp/open.json" --slurpfile entries "$tmp/items.jsonl" '
@@ -116,7 +116,7 @@ jq -n --arg board "$board_id" --arg workspace "$workspace" --arg answer "$kata_d
    needs_decision:[$items[] | select(.group == "needs_decision")],
    needs_review:[$items[] | select(.group == "needs_review")],
    remaining:[$issues[] | select(.uid as $uid | any($touched[]; . == $uid) | not) |
-     {qualified_id, issue_uid:.uid, run_id:null, branch:null, base_commit:null, wip_commit:null, pr_url:null,
+     {qualified_id, issue_uid:.uid, run_id:null, branch:null, base_commit:null, wip_commit:null, commit:null,
       reason:null, question:null, owner:(.owner // null), labels:(.labels // []), next:[]}]}
   | (.completed, .needs_decision, .needs_review) |= map(del(.group))
 ' >"$tmp/report.json"
@@ -134,7 +134,7 @@ jq -r --arg kata "$kata_dir" --arg home "$home" --arg q "'" '
   def path_arg: if $home != "" and startswith($home + "/") and test("^[A-Za-z0-9._/-]+$")
     then "~" + .[($home | length):] else sq end;
   def reason_text: . as $reason |
-    ({decision:"needs a decision", publish:"publication failed", review:"review rejected",
+    ({decision:"needs a decision", land:"landing failed", review:"review rejected",
       turn_limit:"turn limit reached twice", implement:"worker stopped",
       unexpected_checkout:"handoff found the wrong branch"} | .[$reason]?) //
     (if $reason == null or $reason == "" then "handed off" else ($reason | flat) end);
@@ -145,7 +145,7 @@ jq -r --arg kata "$kata_dir" --arg home "$home" --arg q "'" '
   (if .stop_reason != null then "Stop reason: \(.stop_reason | flat)" else empty end),
   (if .stop_child != null then "  tracker -r \(.stop_child) \(.pipeline | path_arg)" else empty end),
   "Completed (\(.completed | length))",
-  (.completed[] | "- \(.qualified_id) on \(.branch)", "  \(.pr_url // "no pull request")"),
+  (.completed[] | "- \(.qualified_id): landed \(.commit | short) (run \(.run_id))"),
   "Needs decision (\(.needs_decision | length))",
   (.needs_decision[] | kata_lines, "  Q: \(.question | flat)", next_lines),
   "Needs review (\(.needs_review | length))",

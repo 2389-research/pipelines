@@ -48,7 +48,7 @@ printf '%s %s\n' "$verb${action:+ $action}${actor:+ $actor}" "$*" >>"$fixture/ka
 case "$verb" in
   show)
     [ "$#" -eq 2 ] && [ "$2" = --json ] && [ -f "$fixture/$1.status" ] || exit 92
-    [ ! -f "$fixture/fail-show" ] || { printf 'fixture kata show failure\n' >&2; exit 73; }
+    [ ! -f "$fixture/fail-show" ] && { [ ! -f "$fixture/fail-handoff-show" ] || [ ! -f "$fixture/$1.comment" ]; } || { printf 'fixture kata show failure\n' >&2; exit 73; }
     owner=$(cat "$fixture/$1.owner" 2>/dev/null || true)
     jq -n --arg uid "$1" --arg status "$(cat "$fixture/$1.status")" --arg owner "$owner" \
       '{issue:{uid:$uid,status:$status,owner:(if $owner == "" then null else $owner end)}}'
@@ -118,7 +118,7 @@ DIP
 cat >"$test_root/workflow/claim.sh" <<'SH'
 #!/bin/sh
 # ABOUTME: Creates the next local fixture task and records its actual child identity.
-# ABOUTME: Checks the board's stack-base input against the checked-out Git history.
+# ABOUTME: Cuts the task branch from the trunk tip so the close step can land it back.
 set -eu
 cd "$TRACKER_WORKDIR"
 mkdir -p "$TRACKER_RUN_DIR"
@@ -139,23 +139,7 @@ else
 fi
 actor="kata-pipeline-$TRACKER_RUN_ID"
 base=$(git rev-parse HEAD)
-start_branch=$(git branch --show-current)
-base_branch=main
-# Only verified completions move the stack tip, so a stack base appears after the first closure.
-if [ ! -s "$fixture/completed" ]; then
-  [ -z "${KATA_STACK_BASE_FILE:-}" ] || {
-    printf 'child before any completion unexpectedly received a stack base\n' >&2; exit 31;
-  }
-else
-  [ -n "${KATA_STACK_BASE_FILE:-}" ] || {
-    printf 'child after a completion did not receive a stack base\n' >&2; exit 32;
-  }
-  jq -e --arg base "$base" --arg branch "$start_branch" \
-    '.commit == $base and .branch == $branch and .github.repository == "fixture/board"' \
-    "$KATA_STACK_BASE_FILE" >/dev/null
-  cp "$KATA_STACK_BASE_FILE" "$fixture/stack-$number.json"
-  base_branch=$(jq -r '.branch' "$KATA_STACK_BASE_FILE")
-fi
+trunk=$(git branch --show-current)
 branch="kata/item-$number"
 git switch -qc "$branch"
 printf 'task %s\n' "$number" >"task-$number.txt"
@@ -163,14 +147,12 @@ git add "task-$number.txt"
 git commit -qm "test: complete fixture task $number"
 head=$(git rev-parse HEAD)
 jq -n --arg workspace "$TRACKER_WORKDIR" --arg uid "$uid" --arg actor "$actor" --arg branch "$branch" \
-  --arg base "$base" --arg start "$start_branch" --arg base_branch "$base_branch" \
+  --arg base "$base" --arg trunk "$trunk" \
   '{workspace:$workspace,issue_uid:$uid,short_id:$uid,qualified_id:("fixture#" + $uid),actor:$actor,
-    branch:$branch,base_commit:$base,start_branch:$start,
-    github:{remote:"origin",repository:"fixture/board",base_branch:$base_branch}}' \
+    branch:$branch,base_commit:$base,trunk:$trunk}' \
   >"$TRACKER_RUN_DIR/selected.json"
 printf '%s\n' "$head" >"$TRACKER_RUN_DIR/review-correctness.approved"
 printf '%s\n' "$head" >"$TRACKER_RUN_DIR/review-scope.approved"
-printf 'https://github.com/fixture/board/pull/%s\n' "$number" >"$TRACKER_RUN_DIR/pr-url.txt"
 printf 'open\n' >"$fixture/$uid.status"
 printf '%s\n' "$actor" >"$fixture/$uid.owner"
 printf 'claim-ok\n'
@@ -191,8 +173,8 @@ if [ -f "$fixture/slow" ]; then
 fi
 if [ -f "$fixture/leave-branch" ] && grep -qx "$number" "$fixture/leave-branch"; then
   # The worker wandered back to the branch it started on, so the handoff touches no Git state.
-  start_branch=$(jq -r '.start_branch' "$TRACKER_RUN_DIR/selected.json")
-  git switch -q "$start_branch"
+  trunk=$(jq -r '.trunk' "$TRACKER_RUN_DIR/selected.json")
+  git switch -q "$trunk"
   remaining=$(cat "$fixture/remaining")
   printf '%s\n' "$((remaining - 1))" >"$fixture/remaining"
   printf 'deliberate fixture worker failure off the task branch\n' >&2
@@ -210,15 +192,22 @@ fi
 SH
 cat >"$test_root/workflow/close.sh" <<'SH'
 #!/bin/sh
-# ABOUTME: Records a fixture closure after optional deliberate failure.
-# ABOUTME: Leaves selected state intact so a real Tracker resume can complete it.
+# ABOUTME: Records a fixture closure after landing the task branch on its trunk.
+# ABOUTME: Mirrors the real close step's local land so the controller sees a real post-land tree.
 set -eu
 fixture="$TRACKER_WORKDIR/.tracker/board-fixture"
 if [ -f "$fixture/fail-close" ]; then
   printf 'deliberate fixture close failure\n' >&2
   exit 33
 fi
+cd "$TRACKER_WORKDIR"
+trunk=$(jq -r '.trunk' "$TRACKER_RUN_DIR/selected.json")
+branch=$(jq -r '.branch' "$TRACKER_RUN_DIR/selected.json")
 uid=$(jq -r '.issue_uid' "$TRACKER_RUN_DIR/selected.json")
+head=$(git rev-parse HEAD)
+git update-ref "refs/heads/$trunk" "$head"
+git switch -q "$trunk"
+git branch -d "$branch"
 printf 'closed\n' >"$fixture/$uid.status"
 printf '%s\n' "$uid" >>"$fixture/completed"
 remaining=$(cat "$fixture/remaining")
@@ -352,8 +341,8 @@ expect_marker() {
 }
 
 # Integration coverage: Tracker and Git are real; the Kata boundary is a fixture.
-new_case stacked 2
-must_succeed 'two stacked tasks'
+new_case lands-on-trunk 2
+must_succeed 'two tasks landing on trunk'
 jq -e --arg workspace "$repo" --arg pipeline "$test_root/workflow/complete.dip" \
   '.workspace == $workspace and .pipeline == $pipeline and .finished == true and
     (has("stop_reason") | not) and
@@ -361,34 +350,63 @@ jq -e --arg workspace "$repo" --arg pipeline "$test_root/workflow/complete.dip" 
     ([.runs[].run_id] | unique | length) == 3 and
     all(.runs[]; .run_id != "board-parent") and
     .runs[0].branch == "kata/item-1" and .runs[1].branch == "kata/item-2" and
-    .runs[1].github.base_branch == .runs[0].branch' "$ledger" >/dev/null ||
-  fail 'stacked: the ledger does not show two completed katas stacked under distinct child ids'
-[ "$(claim_count)" -eq 3 ] || fail "stacked: claim count is $(claim_count), expected 3"
-[ "$(git -C "$repo" rev-list --count HEAD)" -eq 3 ] || fail 'stacked: the commit count is not 3'
+    (.runs[0].commit | test("^[0-9a-f]{40}$")) and (.runs[1].commit | test("^[0-9a-f]{40}$")) and
+    .runs[0].commit != .runs[1].commit and (.runs[0] | has("github") | not) and (.runs[0] | has("pr_url") | not)' "$ledger" >/dev/null ||
+  fail 'lands-on-trunk: the ledger does not show two completed katas landed under distinct child ids'
+[ "$(claim_count)" -eq 3 ] || fail "lands-on-trunk: claim count is $(claim_count), expected 3"
+[ "$(git -C "$repo" rev-list --count HEAD)" -eq 3 ] || fail 'lands-on-trunk: the commit count is not 3'
 first_commit=$(jq -r '.runs[0].commit' "$ledger")
-[ "$(git -C "$repo" rev-parse HEAD^)" = "$first_commit" ] || fail 'stacked: the second kata is not stacked on the first commit'
-jq -e --arg commit "$first_commit" '.branch == "kata/item-1" and .commit == $commit' \
-  "$fixture/stack-2.json" >/dev/null || fail 'stacked: the second child did not receive the first branch as its stack base'
+[ "$(git -C "$repo" rev-parse HEAD^)" = "$first_commit" ] || fail 'lands-on-trunk: the second kata does not sit on the first commit'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'lands-on-trunk: checkout is not main'
+for branch in kata/item-1 kata/item-2; do
+  ! git -C "$repo" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 || fail 'lands-on-trunk: task branch survived'
+done
 for slot in 000001 000002 000003; do
-  [ -s "$TRACKER_RUN_DIR/board/items/$slot/child.log" ] || fail "stacked: item $slot has no child log"
+  [ -s "$TRACKER_RUN_DIR/board/items/$slot/child.log" ] || fail "lands-on-trunk: item $slot has no child log"
 done
 for child in $(jq -r '.runs[].run_id' "$ledger"); do
-  [ -f "$repo/.tracker/runs/$child/activity.jsonl" ] || fail "stacked: child $child has no activity log"
-  jq -e '.outcome == "success"' "$repo/.tracker/runs/$child/Exit/status.json" >/dev/null || fail "stacked: child $child did not reach Exit"
+  [ -f "$repo/.tracker/runs/$child/activity.jsonl" ] || fail "lands-on-trunk: child $child has no activity log"
+  jq -e '.outcome == "success"' "$repo/.tracker/runs/$child/Exit/status.json" >/dev/null || fail "lands-on-trunk: child $child did not reach Exit"
 done
-grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'stacked: the sweep summary is missing'
-grep -Fx 'Completed (2)' "$test_root/output" >/dev/null || fail 'stacked: the review does not list two completed katas'
-grep -Fx -e '- fixture#fixture-item-2 on kata/item-2' "$test_root/output" >/dev/null || fail 'stacked: the review does not name the second kata'
-grep -Fx '  https://github.com/fixture/board/pull/2' "$test_root/output" >/dev/null || fail 'stacked: the review lacks the second pull request'
-expect_marker board-clean 'two stacked tasks'
+grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'lands-on-trunk: the sweep summary is missing'
+grep -Fx 'Completed (2)' "$test_root/output" >/dev/null || fail 'lands-on-trunk: the review does not list two completed katas'
+commit2=$(jq -r '.runs[1].commit' "$ledger")
+short2=$(printf '%s' "$commit2" | cut -c1-12)
+child2=$(jq -r '.runs[1].run_id' "$ledger")
+grep -Fx "Landed fixture#fixture-item-2 on main at $commit2" "$test_root/output" >/dev/null || fail 'lands-on-trunk: the controller did not log the second land'
+grep -Fx -e "- fixture#fixture-item-2: landed $short2 (run $child2)" "$test_root/output" >/dev/null || fail 'lands-on-trunk: the review does not name the second landed kata'
+expect_marker board-clean 'two tasks landing on trunk'
 # Re-entering a finished ledger (the morning review's "Sweep again") claims again in the same ledger.
 must_succeed 'a finished ledger on re-entry'
 jq -e '.finished == true and (has("stop_reason") | not) and
-  [.runs[].kind] == ["completed","completed","empty","empty"]' "$ledger" >/dev/null || fail 'stacked: the re-entry did not add one empty sweep'
-[ "$(claim_count)" -eq 4 ] || fail "stacked: claim count is $(claim_count), expected 4"
-grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'stacked: the re-entry summary is missing'
+  [.runs[].kind] == ["completed","completed","empty","empty"]' "$ledger" >/dev/null || fail 'lands-on-trunk: the re-entry did not add one empty sweep'
+[ "$(claim_count)" -eq 4 ] || fail "lands-on-trunk: claim count is $(claim_count), expected 4"
+grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'lands-on-trunk: the re-entry summary is missing'
 expect_marker board-clean 'a finished ledger on re-entry'
-printf 'ok - real Tracker children use distinct IDs and stack commits, and a finished ledger sweeps again on re-entry\n'
+printf 'ok - real Tracker children use distinct IDs and land on trunk, and a finished ledger sweeps again on re-entry\n'
+
+# A brand-new board run in the same workspace claims from the trunk a previous run advanced.
+new_case fresh-board 1
+must_succeed 'a first board landing one kata'
+first_landed=$(git -C "$repo" rev-parse main)
+[ "$(jq -r '.runs[0].commit' "$ledger")" = "$first_landed" ] || fail 'fresh-board: main is not at the first landed commit'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'fresh-board: the first board did not end on the trunk'
+# A fresh board run: a new parent id and ledger, the same repository and its advanced trunk.
+export TRACKER_RUN_ID=board-parent-again
+export TRACKER_RUN_DIR="$repo/.tracker/runs/$TRACKER_RUN_ID"
+mkdir -p "$TRACKER_RUN_DIR"
+ledger="$TRACKER_RUN_DIR/board/state.json"
+: >"$fixture/completed"
+printf '1\n' >"$fixture/remaining"
+must_succeed 'a fresh board run from the advanced trunk'
+jq -e '.finished == true and (has("stop_reason") | not) and [.runs[].kind] == ["completed","empty"]' "$ledger" >/dev/null ||
+  fail 'fresh-board: the second board did not land one kata'
+second_landed=$(git -C "$repo" rev-parse main)
+[ "$(git -C "$repo" rev-parse main^)" = "$first_landed" ] || fail 'fresh-board: the second kata did not land on the first board commit'
+[ "$(jq -r '.runs[0].commit' "$ledger")" = "$second_landed" ] || fail 'fresh-board: the ledger commit is not the new trunk tip'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'fresh-board: the second board did not end on the trunk'
+expect_marker board-clean 'a fresh board run from the advanced trunk'
+printf 'ok - a fresh board run claims from the trunk tip a previous run advanced\n'
 
 new_case empty 0
 must_succeed 'initially empty board'
@@ -406,28 +424,28 @@ jq -e '.finished == true and (has("stop_reason") | not) and
   [.runs[].kind] == ["failed","completed","empty"] and
   .runs[0].issue_uid == "fixture-item-1" and .runs[0].branch == "kata/item-1" and
   .runs[0].reason == "implement" and .runs[0].label == "needs-review" and
-  .runs[1].branch == "kata/item-2" and .runs[1].github.base_branch == "main"' "$ledger" >/dev/null ||
+  .runs[1].branch == "kata/item-2" and (.runs[1].commit | test("^[0-9a-f]{40}$"))' "$ledger" >/dev/null ||
   fail 'failing: the ledger does not show a handoff, a completion from main, and an empty sweep'
 [ "$(claim_count)" -eq 3 ] || fail "failing: claim count is $(claim_count), expected 3"
 failed_child=$(head -n 1 "$fixture/claims")
-main_commit=$(git -C "$repo" rev-parse main)
+main_commit=$(jq -r '.base_commit' "$repo/.tracker/runs/$failed_child/selected.json")
 wip_commit=$(git -C "$repo" rev-parse kata/item-1)
 jq -e --arg child "$failed_child" --arg wip "$wip_commit" \
-  '.run_id == $child and .start_branch == "main" and .wip_commit == $wip and
+  '.run_id == $child and .trunk == "main" and .wip_commit == $wip and
     .reason == "implement" and .question == null' "$repo/.tracker/runs/$failed_child/handoff.json" >/dev/null ||
   fail 'failing: the handoff record does not describe the wip commit on kata/item-1'
 [ "$(git -C "$repo" log -1 --format=%s kata/item-1)" = "wip(kata): fixture#fixture-item-1 handoff from run $failed_child" ] ||
   fail 'failing: the wip commit subject is wrong'
 git -C "$repo" show --stat --format= kata/item-1 | grep -F 'wip-1.txt' >/dev/null || fail 'failing: the wip commit does not carry wip-1.txt'
-[ "$(git -C "$repo" branch --show-current)" = kata/item-2 ] || fail 'failing: the checkout is not on kata/item-2'
-[ "$(git -C "$repo" rev-parse kata/item-2^)" = "$main_commit" ] || fail 'failing: kata/item-2 does not start from main'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'failing: the checkout is not back on main'
+! git -C "$repo" rev-parse --verify --quiet kata/item-2 >/dev/null 2>&1 || fail 'failing: the landed task branch was not deleted'
+[ "$(git -C "$repo" rev-parse HEAD)" = "$(jq -r '.runs[1].commit' "$ledger")" ] || fail 'failing: main is not at the landed commit'
 [ "$(cat "$fixture/fixture-item-1.status")" = open ] || fail 'failing: the handed-off kata is not open'
 [ "$(cat "$fixture/fixture-item-1.labels")" = needs-review ] || fail 'failing: the handed-off kata is not labeled needs-review'
 grep -Fx "label add kata-pipeline-$failed_child fixture-item-1 needs-review --agent" "$fixture/kata.log" >/dev/null ||
   fail 'failing: the label was not added as the child actor' "$fixture/kata.log"
 grep -F "Branch: kata/item-1 (base $main_commit, wip $wip_commit)" "$fixture/fixture-item-1.comment" >/dev/null ||
   fail 'failing: the handoff comment does not name the branch and commits' "$fixture/fixture-item-1.comment"
-[ ! -e "$fixture/stack-2.json" ] || fail 'failing: the second child received a stack base after a handoff'
 grep -Fx 'Failed fixture-item-1 (implement); left open with needs-review on kata/item-1' "$test_root/output" >/dev/null ||
   fail 'failing: the handoff line is missing'
 grep -F 'Sweep finished: 1 katas completed and 1 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'failing: the sweep summary is missing'
@@ -435,7 +453,7 @@ grep -Fx 'Completed (1)' "$test_root/output" >/dev/null || fail 'failing: the re
 grep -Fx 'Needs review (1)' "$test_root/output" >/dev/null || fail 'failing: the review does not list one kata for review'
 grep -F -e '- fixture#fixture-item-1: worker stopped (run ' "$test_root/output" >/dev/null || fail 'failing: the review does not describe the handoff'
 expect_marker board-needs-human 'a handed-off kata'
-# The morning review answered the kata; the next sweep reclaims it and finishes it from the stack tip.
+# The morning review answered the kata; the next sweep reclaims it and finishes it from the trunk tip.
 printf 'fixture-item-1\n' >"$fixture/reclaim"
 printf '1\n' >"$fixture/remaining"
 rm "$fixture/fail-implement"
@@ -443,36 +461,34 @@ must_succeed 'a second sweep that finishes the handed-off kata'
 jq -e '.finished == true and (has("stop_reason") | not) and
   [.runs[].kind] == ["failed","completed","empty","completed","empty"] and
   .runs[3].issue_uid == "fixture-item-1" and .runs[3].branch == "kata/item-4" and
-  .runs[3].github.base_branch == "kata/item-2"' "$ledger" >/dev/null ||
-  fail 'failing: the second sweep did not finish the handed-off kata from the stack tip'
+  (.runs[3].commit | test("^[0-9a-f]{40}$"))' "$ledger" >/dev/null ||
+  fail 'failing: the second sweep did not finish the handed-off kata from the trunk tip'
 [ "$(claim_count)" -eq 5 ] || fail "failing: claim count is $(claim_count), expected 5"
 [ ! -s "$fixture/reclaim" ] || fail 'failing: the reclaim list was not consumed'
 grep -F 'Sweep finished: 2 katas completed and 0 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'failing: the second sweep summary is missing'
 grep -Fx 'Completed (2)' "$test_root/output" >/dev/null || fail 'failing: the review does not list two completed katas'
 grep -Fx 'Needs review (0)' "$test_root/output" >/dev/null || fail 'failing: the finished kata still shows under Needs review'
-[ "$(grep -c 'fixture#fixture-item-1' "$test_root/output")" -eq 1 ] || fail 'failing: the finished kata is not listed exactly once'
+[ "$(grep -c '^- fixture#fixture-item-1:' "$test_root/output")" -eq 1 ] || fail 'failing: the finished kata is not listed exactly once'
 expect_marker board-clean 'a second sweep that finishes the handed-off kata'
 printf 'ok - a clean worker failure is handed off, and the next sweep finishes the answered kata once\n'
 
-new_case stacked-failure 2
+new_case landed-then-failure 2
 printf '2\n' >"$fixture/fail-implement"
 must_succeed 'a completed kata followed by a failed one'
 jq -e '.finished == true and (has("stop_reason") | not) and
   [.runs[].kind] == ["completed","failed","empty"] and .runs[1].branch == "kata/item-2"' "$ledger" >/dev/null ||
-  fail 'stacked-failure: the ledger does not show a completion, a handoff, and an empty sweep'
-[ "$(claim_count)" -eq 3 ] || fail "stacked-failure: claim count is $(claim_count), expected 3"
+  fail 'landed-then-failure: the ledger does not show a completion, a handoff, and an empty sweep'
+[ "$(claim_count)" -eq 3 ] || fail "landed-then-failure: claim count is $(claim_count), expected 3"
 failed_child=$(sed -n '2p' "$fixture/claims")
-jq -e '.start_branch == "kata/item-1"' "$repo/.tracker/runs/$failed_child/handoff.json" >/dev/null ||
-  fail 'stacked-failure: the handoff did not start from the completed branch'
+jq -e '.trunk == "main"' "$repo/.tracker/runs/$failed_child/handoff.json" >/dev/null ||
+  fail 'landed-then-failure: the handoff did not start from the trunk'
 first_commit=$(jq -r '.runs[0].commit' "$ledger")
-[ "$(git -C "$repo" branch --show-current)" = kata/item-1 ] || fail 'stacked-failure: the checkout is not back on the stack tip'
-[ "$(git -C "$repo" rev-parse HEAD)" = "$first_commit" ] || fail 'stacked-failure: HEAD is not the completed commit'
-[ "$(git -C "$repo" rev-parse kata/item-2~2)" = "$first_commit" ] || fail 'stacked-failure: kata/item-2 is not stacked on the completed commit'
-jq -e --arg commit "$first_commit" '.branch == "kata/item-1" and .commit == $commit' \
-  "$fixture/stack-2.json" >/dev/null || fail 'stacked-failure: the failed child did not receive the completed branch as its base'
-grep -F 'Sweep finished: 1 katas completed and 1 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'stacked-failure: the sweep summary is missing'
+[ "$(git -C "$repo" branch --show-current)" = main ] || fail 'landed-then-failure: the checkout is not back on the trunk tip'
+[ "$(git -C "$repo" rev-parse HEAD)" = "$first_commit" ] || fail 'landed-then-failure: HEAD is not the completed commit'
+[ "$(git -C "$repo" rev-parse kata/item-2~2)" = "$first_commit" ] || fail 'landed-then-failure: kata/item-2 does not sit on the completed commit'
+grep -F 'Sweep finished: 1 katas completed and 1 left open for review so far in this board run.' "$test_root/output" >/dev/null || fail 'landed-then-failure: the sweep summary is missing'
 expect_marker board-needs-human 'a failure after a completion'
-printf 'ok - a failure after a completion restores the stack tip and keeps the completed base\n'
+printf 'ok - a failure after a completion restores the trunk and keeps the landed commit\n'
 
 new_case three-failures 4
 printf '1\n2\n3\n' >"$fixture/fail-implement"
@@ -540,9 +556,27 @@ printf 'unfinished work\n' >"$repo/uncommitted.txt"
 must_stop_for_inspection 'dirty tree after child recovery'
 rm "$repo/uncommitted.txt"
 must_stop_without_git_status 'a tree it could not read after child recovery'
+git -C "$repo" switch -qc off-trunk
+must_stop_for_inspection 'a checkout that is not the trunk after child recovery'
 git -C "$repo" switch -q main
-must_stop_for_inspection 'changed branch after child recovery'
-git -C "$repo" switch -q kata/item-1
+git -C "$repo" branch -Dq off-trunk
+git -C "$repo" branch kata/item-1 HEAD
+must_stop_for_inspection 'a resurrected task branch after child recovery'
+git -C "$repo" branch -Dq kata/item-1
+cp "$child_dir/selected.json" "$test_root/selected.json"
+for field in issue_uid qualified_id branch trunk; do
+  for invalid in missing null empty number; do
+    jq --arg field "$field" --arg invalid "$invalid" '
+      if $invalid == "missing" then del(.[$field])
+      elif $invalid == "null" then .[$field] = null
+      elif $invalid == "empty" then .[$field] = ""
+      else .[$field] = 123 end' "$test_root/selected.json" >"$child_dir/selected.json"
+    must_stop_for_inspection "a $invalid selected $field after child recovery"
+    jq -e '.runs == []' "$ledger" >/dev/null || fail 'recovery: malformed selection was recorded'
+    [ "$(claim_count)" -eq 1 ] || fail 'recovery: malformed selection started another child'
+  done
+done
+cp "$test_root/selected.json" "$child_dir/selected.json"
 printf 'open\n' >"$fixture/fixture-item-1.status"
 must_stop_for_inspection 'unclosed issue after child recovery'
 printf 'closed\n' >"$fixture/fixture-item-1.status"
@@ -570,7 +604,7 @@ must_stop_for_inspection 'a handoff from a worker that left the task branch'
 [ "$(claim_count)" -eq 1 ] || fail "unexpected-checkout: claim count is $(claim_count), expected 1"
 failed_child=$(head -n 1 "$fixture/claims")
 jq -e '.runs == []' "$ledger" >/dev/null || fail 'unexpected-checkout: the handoff was recorded despite the wrong branch'
-jq -e '.reason == "unexpected_checkout" and .start_branch == "main" and .wip_commit == null' \
+jq -e '.reason == "unexpected_checkout" and .trunk == "main" and .wip_commit == null' \
   "$repo/.tracker/runs/$failed_child/handoff.json" >/dev/null || fail 'unexpected-checkout: the handoff record is not an unexpected_checkout'
 [ "$(git -C "$repo" branch --show-current)" = main ] || fail 'unexpected-checkout: the checkout is not on main'
 printf 'ok - a handoff from the wrong branch holds the board for inspection\n'
@@ -610,8 +644,10 @@ printf 'ok - a failed child is recorded only when its handoff, checkout, tree, a
 
 new_case failed-handoff-show 1
 printf '1\n' >"$fixture/fail-implement"
-: >"$fixture/fail-show"
+: >"$fixture/fail-handoff-show"
 must_stop_for_inspection 'a handed-off kata the controller could not read'
+failed_child=$(head -n 1 "$fixture/claims")
+[ -f "$repo/.tracker/runs/$failed_child/handoff.json" ] || fail 'failed-handoff-show: handoff did not finish before the failed lookup'
 jq -e '.runs == []' "$ledger" >/dev/null || fail 'failed-handoff-show: the unverified handoff was recorded'
 grep -F 'fixture kata show failure' "$test_root/errors" >/dev/null || fail 'failed-handoff-show: the Kata error is missing'
 printf 'ok - a failed handed-off-kata lookup holds the board on its child for inspection\n'
@@ -683,8 +719,8 @@ printf 'ok - a failure before a trusted ledger exists exits 1 with a message and
 # A record the review refuses must not hide the marker: the run holds at the gate, whose Report node then fails in the open.
 new_case refused-record 1
 must_succeed 'one completed kata'
-jq '.runs[0].pr_url = "https://evil.example/fixture/board/pull/1"' "$ledger" >"$ledger.tmp" && mv "$ledger.tmp" "$ledger"
-must_succeed 'a re-entry with a pull request URL the review refuses'
+jq '.runs[0].commit = "deadbeef; rm -rf /"' "$ledger" >"$ledger.tmp" && mv "$ledger.tmp" "$ledger"
+must_succeed 'a re-entry with a landed commit the review refuses'
 grep -F 'refusing to print the review' "$test_root/errors" >/dev/null || fail 'refused-record: the review did not refuse the record'
 grep -Fx 'board report failed; run board-report board-parent from the target Git root' "$test_root/errors" >/dev/null ||
   fail 'refused-record: the controller did not say the review failed'
