@@ -16,8 +16,25 @@ cleanup() {
 }
 trap 'cleanup $?' EXIT
 trap 'exit 130' HUP INT TERM
+XDG_CONFIG_HOME="$test_root/config"
 XDG_STATE_HOME="$test_root/state"
-export XDG_STATE_HOME
+export XDG_CONFIG_HOME XDG_STATE_HOME
+
+# Tracker constructs a native LLM client before running even a zero-agent graph.
+# Give that unused client an unreachable endpoint without loading configured credentials.
+unset ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY OPENAI_COMPAT_API_KEY
+unset ANTHROPIC_BASE_URL OPENAI_BASE_URL GEMINI_BASE_URL OPENAI_COMPAT_BASE_URL
+OPENAI_API_KEY=unused-offline-gate-fixture
+OPENAI_BASE_URL=http://127.0.0.1:1
+export OPENAI_API_KEY OPENAI_BASE_URL
+
+dippin simulate "$fixture" --all-paths >"$test_root/events" 2>"$test_root/paths"
+if ! jq -se '
+  [.[] | select(.event == "node_enter" and .kind == "agent")] | length == 0
+' "$test_root/events" >/dev/null; then
+  printf 'provider-free gate fixture unexpectedly contains an agent node\n' >&2
+  exit 1
+fi
 
 run_tracker() {
   workdir=$1

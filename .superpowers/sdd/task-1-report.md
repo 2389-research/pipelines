@@ -154,3 +154,48 @@ errors. Shellcheck and `git diff --check` passed.
   must be inspected before an execution-node resume; the prompt states this.
 - A hard provider/configuration failure can terminate without reaching a human
   gate. Normal planning and execution outcomes have explicit human paths.
+
+## Offline gate bootstrap fix after `6649255`
+
+An empty Tracker configuration exposed that Tracker 0.73.1 constructs a native
+LLM client before it runs a graph, even when the graph has no agent nodes. The
+pre-fix check failed before its first human gate:
+
+```text
+$ isolated_config=$(mktemp -d); XDG_CONFIG_HOME="$isolated_config" sh openclaw/check
+validation passed
+ok - parsed routes, safe defaults, and agent bounds
+gate test logs retained at /var/folders/.../tmp.U5aFFExTaK
+exit 1
+
+$ cat /var/folders/.../tmp.U5aFFExTaK/stop.log
+error: create LLM client: no providers configured
+```
+
+`tests/gates.sh` now uses isolated XDG config and state directories, removes all
+provider API keys supported by Tracker, and supplies a literal nonsecret OpenAI
+placeholder key with `http://127.0.0.1:1` as its base URL. This client exists
+only to satisfy Tracker startup. Before Tracker runs, the test simulates the
+fixture with Dippin and fails unless the parsed event stream contains zero agent
+nodes. That ordering guarantees the test cannot make a provider request; adding
+an agent makes the test stop before client use. The script never reads a stored
+credential.
+
+Both ambient and caller-isolated runs passed, as did ShellCheck:
+
+```text
+$ sh openclaw/check
+validation passed
+ok - parsed routes, safe defaults, and agent bounds
+ok - real Tracker gates default to stop, reject bad input and EOF, and resume
+exit 0
+
+$ isolated_config=$(mktemp -d); XDG_CONFIG_HOME="$isolated_config" sh openclaw/check
+validation passed
+ok - parsed routes, safe defaults, and agent bounds
+ok - real Tracker gates default to stop, reject bad input and EOF, and resume
+exit 0
+
+$ shellcheck openclaw/tests/gates.sh
+exit 0
+```
