@@ -15,7 +15,11 @@ actor=$(jq -er '.actor' "$state")
 cd "$workspace"
 [ "$(pwd -P)" = "$(cd "$TRACKER_WORKDIR" && pwd -P)" ] || { printf 'tracker workspace changed\n' >&2; exit 1; }
 [ "$(git symbolic-ref --quiet --short HEAD)" = "$branch" ] || { printf 'task branch changed\n' >&2; exit 1; }
-[ -z "$(git status --porcelain --untracked-files=normal)" ] || { printf 'working tree is not clean\n' >&2; exit 1; }
+tree_status=$(git status --porcelain --untracked-files=normal) || {
+  printf 'could not inspect working tree\n' >&2
+  exit 1
+}
+[ -z "$tree_status" ] || { printf 'working tree is not clean\n' >&2; exit 1; }
 head=$(git rev-parse HEAD)
 [ "$head" != "$base" ] || { printf 'no task commit was created\n' >&2; exit 1; }
 git merge-base --is-ancestor "$base" "$head" || { printf 'task history no longer descends from the claimed base\n' >&2; exit 1; }
@@ -45,7 +49,11 @@ trunk_commit=$(git rev-parse --quiet --verify "refs/heads/$trunk") || {
   printf 'trunk %s is missing\n' "$trunk" >&2
   exit 1
 }
-if git worktree list --porcelain | grep -qxF "branch refs/heads/$trunk"; then
+worktrees=$(git worktree list --porcelain) || {
+  printf 'could not list worktrees\n' >&2
+  exit 1
+}
+if printf '%s\n' "$worktrees" | grep -qxF "branch refs/heads/$trunk"; then
   printf 'trunk %s is checked out in another worktree\n' "$trunk" >&2
   exit 1
 fi
@@ -56,9 +64,13 @@ git merge-base --is-ancestor "$trunk_commit" "$head" || {
 }
 completion=$(printf '%s\n\nLanded on %s' "$completion" "$trunk")
 git update-ref -m "kata: land $qualified_id" "refs/heads/$trunk" "$head" "$trunk_commit"
+tree_status=$(git status --porcelain --untracked-files=normal) || {
+  printf 'could not inspect working tree during landing\n' >&2
+  exit 1
+}
 [ "$(git rev-parse HEAD)" = "$head" ] &&
   [ "$(git symbolic-ref --quiet --short HEAD)" = "$branch" ] &&
-  [ -z "$(git status --porcelain --untracked-files=normal)" ] || {
+  [ -z "$tree_status" ] || {
   printf 'task branch or working tree changed during landing\n' >&2
   exit 1
 }

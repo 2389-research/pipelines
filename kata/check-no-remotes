@@ -27,7 +27,7 @@ find "$kata_dir" -maxdepth 1 \( -type f -o -type l \) -name '*.dip' -print >>"$f
 
 git_verbs='remote|fetch|push|pull|clone|ls-remote'
 git_options='([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)'
-pattern="(^|[^[:alnum:]_.-])git${git_options}*[[:space:]]+(${git_verbs})([[:space:]]|$)|(^|[^[:alnum:]_.-])gh[[:space:]]"
+pattern="(^|[^[:alnum:]_.-])git${git_options}*[[:space:]]+(${git_verbs})([[:space:];|&<>)\"']|$)|(^|[^[:alnum:]_.-])gh[[:space:]]"
 found=0
 while IFS= read -r runtime_file; do
   if ! awk '

@@ -61,6 +61,13 @@ printf 'gh pr create\n' >>"$runtime/kata/scripts/local.sh"
 reject 'gh command'
 printf 'ok - direct remote Git and gh commands are rejected\n'
 
+for suffix in '; echo complete' '| cat' '&& echo complete' '>output' '<input' ')' '"' "'"; do
+  new_runtime delimiter
+  printf 'git fetch%s\n' "$suffix" >"$runtime/kata/scripts/local.sh"
+  reject "remote Git before shell delimiter $suffix"
+done
+printf 'ok - shell delimiters after remote Git verbs are rejected\n'
+
 new_runtime global-option
 printf 'git -c push.followTags=false push origin HEAD\n' >>"$runtime/kata/scripts/local.sh"
 reject 'Git command after a global option'

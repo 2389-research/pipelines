@@ -48,6 +48,33 @@ esac
 SH
 chmod +x "$test_root/bin/kata"
 export PATH="$test_root/bin:$PATH"
+real_git=$(command -v git)
+export real_git
+mkdir -p "$test_root/git-bin"
+cat >"$test_root/git-bin/git" <<'SH'
+#!/bin/sh
+# ABOUTME: Injects read failures while all other operations use the real isolated Git repository.
+# ABOUTME: Selects failures from fixture files without contacting a daemon or remote.
+set -eu
+fixture=.tracker/close-fixture
+if [ "$*" = 'worktree list --porcelain' ] && [ -e "$fixture/fail-worktrees" ]; then
+  printf 'fixture git: worktree listing failed\n' >&2
+  exit 7
+fi
+if [ "$1" = status ] && [ -e "$fixture/fail-status" ]; then
+  count=0
+  [ ! -e "$fixture/status-count" ] || count=$(cat "$fixture/status-count")
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$fixture/status-count"
+  if [ "$count" = "$(cat "$fixture/fail-status")" ]; then
+    printf 'dirty\n' >>file
+    printf 'fixture git: status failed\n' >&2
+    exit 7
+  fi
+fi
+exec "$real_git" "$@"
+SH
+chmod +x "$test_root/git-bin/git"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -56,7 +83,7 @@ fail() {
 }
 
 run_close() {
-  (cd "$repo" && TRACKER_RUN_DIR="$run_dir" TRACKER_WORKDIR="$repo" sh "$script") \
+  (cd "$repo" && PATH="$test_root/git-bin:$PATH" TRACKER_RUN_DIR="$run_dir" TRACKER_WORKDIR="$repo" sh "$script") \
     >"$test_root/output" 2>&1
 }
 
@@ -219,3 +246,35 @@ mv "$run_dir/state.tmp" "$run_dir/selected.json"
 reject 'predates landing on close'
 assert_untouched predates
 printf 'ok - a run without recorded trunk is refused for inspection\n'
+
+new_repo worktreefailure
+add_evidence
+git -C "$repo" worktree add "$test_root/wt-failure" main >/dev/null 2>&1
+: >"$fixture/fail-worktrees"
+reject 'could not list worktrees'
+assert_untouched worktreefailure
+if grep -Fx 'close-ok' "$test_root/output"; then fail 'worktreefailure: success marker emitted'; fi
+printf 'ok - a failed worktree listing refuses landing before any change\n'
+
+new_repo firststatusfailure
+add_evidence
+printf '1\n' >"$fixture/fail-status"
+reject 'could not inspect working tree'
+assert_untouched firststatusfailure
+git -C "$repo" diff --quiet && fail 'firststatusfailure: dirty fixture missing'
+[ -e "$repo/.tracker/turn_overrides/Implement" ] || fail 'firststatusfailure: override removed'
+if grep -Fx 'close-ok' "$test_root/output"; then fail 'firststatusfailure: success marker emitted'; fi
+printf 'ok - an initial status failure refuses landing and closing\n'
+
+new_repo secondstatusfailure
+add_evidence
+printf '2\n' >"$fixture/fail-status"
+reject 'could not inspect working tree during landing'
+[ "$(git -C "$repo" rev-parse main)" = "$head" ] || fail 'secondstatusfailure: approved landing lost'
+[ "$(git -C "$repo" symbolic-ref --quiet --short HEAD)" = kata/5fav-test ] || fail 'secondstatusfailure: checkout changed'
+git -C "$repo" show-ref --quiet --verify refs/heads/kata/5fav-test || fail 'secondstatusfailure: branch deleted'
+[ ! -e "$fixture/close.args" ] || fail 'secondstatusfailure: kata close ran'
+git -C "$repo" diff --quiet && fail 'secondstatusfailure: dirty fixture missing'
+[ -e "$repo/.tracker/turn_overrides/Implement" ] || fail 'secondstatusfailure: override removed'
+if grep -Fx 'close-ok' "$test_root/output"; then fail 'secondstatusfailure: success marker emitted'; fi
+printf 'ok - a pre-close status failure keeps the landing but refuses close and cleanup\n'
