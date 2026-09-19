@@ -202,17 +202,45 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 - `kata/board.dip`: the board no longer ends silently with katas left open. The
   controller's last line routes the run: `board-clean` exits, and
   `board-needs-human` prints the morning review and holds a `Morning review`
-  human gate whose choices are `Sweep again` (run the controller again in the
-  same ledger, up to 50 times) and `Done`. Tracker never prints a tool node's
-  output in `--no-tui`, so the gate is the board's only console output; run it
-  in a terminal that stays open, and expect a run without stdin to fail at the
-  gate. `kata/scripts/run-board.sh` re-enters a finished ledger as a new sweep
-  and drops `board/blocked.json` once a sweep finds nothing blocked;
-  `kata/board-report` describes each kata by its latest ledger entry, so a
-  handoff a later sweep finished no longer shows under `Needs review`.
-  `kata/tests/board.sh` covers the markers, the second-sweep finish, blocked
-  re-entry, and a real Tracker parent answering the gate (`Sweep again`, then
-  `Done`); `kata/tests/report.sh` covers the latest-entry view.
+  human gate whose choices are `Done` and `Sweep again` (run the controller
+  again in the same ledger, up to 50 times; the budget never resets). The gate
+  has no default: a closed stdin fails it with a checkpoint that `tracker -r`
+  reopens, and `--auto-approve` takes `Done`, the unattended answer. Tracker
+  never prints a tool node's output in `--no-tui`, so the gate is the board's
+  only console output; run it in a terminal that stays open. Once the ledger
+  exists, every controller stop (three consecutive failed children, a child
+  that needs inspection, a failed `git status`, an unreadable open-board
+  listing, a `child.pid` whose process still runs) records `stop_reason` and
+  `stop_child` in the ledger, prints the review, and ends with
+  `board-needs-human`, so the gate opens for exactly the runs that need a
+  person; only failures before the ledger exists exit 1 without a marker. The
+  controller's summary line is `Sweep finished: ...`, it validates `issue_uid`
+  on every non-empty ledger entry, and a HUP, INT, or TERM to it interrupts
+  the child Tracker, waits for the child's checkpoint, and removes the lock
+  and `child.pid` before exiting 130. `kata/scripts/run-board.sh` (now mode
+  755) re-enters a finished ledger as a new sweep and drops
+  `board/blocked.json` once a sweep finds nothing blocked. `kata/board-report`
+  describes each kata by its latest ledger entry, prints the stop reason and
+  the child's resume command under its header, validates every id, branch,
+  commit, and PR URL it pastes into a command and refuses the review
+  otherwise, flattens agent-written text, lays the review out to survive
+  Tracker's 76-column reflow, accepts `-h`, and names a run outside a Git
+  repository. `kata/answer` prints `Released <kata>`, names an unknown
+  reference, accepts `-h`, and says "next board sweep". `kata/tests/isolate.sh`
+  points every test's `HOME`, XDG directories, Git configuration, and Tracker
+  state at a fixture directory, and every test exits 130 on a signal.
+  `kata/tests/board.sh` covers the markers, every stop, the second-sweep
+  finish, blocked re-entry, an interrupt, and real Tracker parents at the gate
+  (`Sweep again` twice then `Done`, closed stdin, `--auto-approve`, a
+  three-failure stop, a child integrity stop); `kata/tests/report.sh` covers
+  the latest-entry view, the stop lines, and the record validation;
+  `kata/tests/isolation.sh` proves the isolation against a planted hook;
+  `kata/tests/answer.sh` covers the new messages. `kata/README.md`,
+  `gotchas.md`, `kata/BOARD-PLAN.md`, and `kata/PLAN.md` describe the gate's
+  two surfaces and accepted inputs, the unattended mode, the restart budget,
+  the stops and where their messages land, the review layout, `Report` node
+  recovery with `tracker -r`, the trust level of run-directory records, and
+  the `.kata.toml` base precondition.
 
 ### Fixed
 
