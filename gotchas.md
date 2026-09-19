@@ -122,6 +122,19 @@ Kata tool nodes run scripts by path; `kata/tests/tool-commands.sh` fails on
 any expansion tracker would blank. The kata tests execute scripts with `sh`
 directly, so they cannot see this class of bug on their own.
 
+The trigger is a literal `.` anywhere inside the braces, and shell parameter
+defaults are not exempt (measured through real tracker 2026-09-19). `${VAR:-a.b}`,
+`${VAR:-$w/.tracker/x}`, and `${VAR:-$(cat "$w/.tracker/f" 2>/dev/null || echo unk)}`
+all blank to empty — and blank **even when VAR is set**, because the expander
+rewrites the text before `/bin/sh` applies the `:-`. Command substitution,
+redirects, and `||` are innocent: `${VAR:-$(cd "$w" && pwd -P)}` survives because
+its default holds no dot. `claim-next.sh` and `handoff-selected.sh` hit this
+reading `.tracker/kata-board-run-id` for a run-id fallback, so a claimed kata's
+run id came out empty under the board.sh fixture (which inlines the handoff
+script via `command_file`). Fix: read the dotted value into a plain variable
+first — `x=$(cat "$w/.tracker/f" ...)` — then fall back with `${VAR:-$x}`, whose
+default is dot-free.
+
 ## Run Kata from the local trunk that should receive the work (decided 2026-09-19)
 
 `kata/scripts/claim-next.sh` records the checked-out branch as `trunk`, refuses

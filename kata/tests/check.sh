@@ -117,7 +117,7 @@ test_unsafe_run_id_stops_before_branch_or_claim() {
   repo=$TMP_ROOT/unsafe-run-id
   new_repo "$repo"
   if output=$(TEST_RUN_ID='../unsafe' FAKE_KATA_MODE=ready run_preflight "$repo"); then fail 'unsafe run ID succeeded'; fi
-  assert_contains "$output" 'TRACKER_RUN_ID is unsafe'
+  assert_contains "$output" 'run identity is unsafe for a Git branch'
   [ "$(git -C "$repo" branch --show-current)" = 'main' ] || fail 'unsafe run ID changed branch'
   [ "$(wc -l <"$repo/.fake-kata-log" | tr -d ' ')" -eq 1 ] || fail 'unsafe run ID reached claim'
   pass 'unsafe branch identifiers stop before branch creation or claim'

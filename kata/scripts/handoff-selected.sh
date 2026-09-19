@@ -3,10 +3,16 @@
 # ABOUTME: Classifies the failure from run artifacts and records it in handoff.json for the board.
 set -eu
 
-test -n "${TRACKER_RUN_DIR:-}" || { printf 'TRACKER_RUN_DIR is required\n' >&2; exit 1; }
 test -n "${TRACKER_WORKDIR:-}" || { printf 'TRACKER_WORKDIR is required\n' >&2; exit 1; }
-run_id=${TRACKER_RUN_ID:-unknown}
-state="$TRACKER_RUN_DIR/selected.json"
+# Standalone complete.dip supplies TRACKER_RUN_DIR and TRACKER_RUN_ID. As a board subgraph body only
+# TRACKER_WORKDIR is set, so run state lives in the workspace and identity comes from the board's run-id file.
+workspace_dir=$(cd "$TRACKER_WORKDIR" && pwd -P)
+base="${TRACKER_RUN_DIR:-$workspace_dir}"
+# Tracker blanks a ${VAR:-DEFAULT} in command_file text when DEFAULT holds a command substitution that
+# redirects, so read the board's run-id file into a plain variable and fall back to that instead.
+board_run_id=$(cat "$workspace_dir/.tracker/kata-board-run-id" 2>/dev/null || echo unknown)
+run_id="${TRACKER_RUN_ID:-$board_run_id}"
+state="$base/selected.json"
 [ -f "$state" ] || { printf 'no claimed kata exists to hand off\n' >&2; exit 1; }
 workspace=$(jq -er '.workspace' "$state")
 uid=$(jq -er '.issue_uid' "$state")
@@ -28,18 +34,18 @@ wip_commit=
 current_branch=$(git symbolic-ref --quiet --short HEAD || true)
 if [ "$current_branch" = "$branch" ]; then
   # Later evidence outranks earlier: a question, then a landing failure, then any review, then a turn limit.
-  if [ -s "$TRACKER_RUN_DIR/question.md" ]; then
+  if [ -s "$base/question.md" ]; then
     reason=decision
-    question=$(cat "$TRACKER_RUN_DIR/question.md")
-  elif jq -e '.outcome == "fail"' "$TRACKER_RUN_DIR/CloseSelected/status.json" >/dev/null 2>&1; then
+    question=$(cat "$base/question.md")
+  elif jq -e '.outcome == "fail"' "$base/CloseSelected/status.json" >/dev/null 2>&1; then
     reason=land
   else
     for review in ReviewCorrectness ReviewScope ReReviewCorrectness ReReviewScope; do
-      [ ! -f "$TRACKER_RUN_DIR/$review/status.json" ] || reason=review
+      [ ! -f "$base/$review/status.json" ] || reason=review
     done
     if [ "$reason" = implement ] &&
       jq -e '.outcome == "fail" and .context_updates.turn_breach_class == "operator_decision"' \
-        "$TRACKER_RUN_DIR/Implement/status.json" >/dev/null 2>&1; then
+        "$base/Implement/status.json" >/dev/null 2>&1; then
       reason=turn_limit
     fi
   fi
@@ -56,12 +62,12 @@ fi
 
 label=needs-review
 [ "$reason" != decision ] || label=needs-decision
-if [ ! -s "$TRACKER_RUN_DIR/handoff.md" ]; then
-  printf 'Attempted the selected kata on branch %s. The bounded run did not earn both SHA-bound approvals. Inspect tracker run %s and the branch diff; unresolved review or test findings remain.\n' "$branch" "$run_id" >"$TRACKER_RUN_DIR/handoff.md"
+if [ ! -s "$base/handoff.md" ]; then
+  printf 'Attempted the selected kata on branch %s. The bounded run did not earn both SHA-bound approvals. Inspect tracker run %s and the branch diff; unresolved review or test findings remain.\n' "$branch" "$run_id" >"$base/handoff.md"
 fi
-comment="$TRACKER_RUN_DIR/handoff-comment.md"
+comment="$base/handoff-comment.md"
 {
-  cat "$TRACKER_RUN_DIR/handoff.md"
+  cat "$base/handoff.md"
   printf '\nBranch: %s (base %s, wip %s)\nRun: %s\n' "$branch" "$base_commit" "${wip_commit:-none}" "$run_id"
   [ -z "$question" ] || printf 'Question: %s\n' "$question"
 } >"$comment"
@@ -76,8 +82,8 @@ jq -n --arg run "$run_id" --arg uid "$uid" --arg qualified "$qualified_id" --arg
   --arg branch "$branch" --arg base "$base_commit" --arg wip "$wip_commit" --arg trunk "$trunk" --arg question "$question" \
   '{run_id:$run,issue_uid:$uid,qualified_id:$qualified,reason:$reason,label:$label,branch:$branch,base_commit:$base,
     wip_commit:(if $wip == "" then null else $wip end),trunk:$trunk,
-    question:(if $question == "" then null else $question end)}' >"$TRACKER_RUN_DIR/handoff.json.tmp"
-mv "$TRACKER_RUN_DIR/handoff.json.tmp" "$TRACKER_RUN_DIR/handoff.json"
+    question:(if $question == "" then null else $question end)}' >"$base/handoff.json.tmp"
+mv "$base/handoff.json.tmp" "$base/handoff.json"
 # The warm-continue override belongs to this run's worker; the next run starts from the base budget.
 rm -f "$workspace/.tracker/turn_overrides/Implement"
 printf 'handoff-ok\n'

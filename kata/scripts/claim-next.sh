@@ -3,16 +3,22 @@
 # ABOUTME: Records the trunk to land on later and writes run state only after a confirmed claim.
 set -eu
 
-test -n "${TRACKER_RUN_DIR:-}" || { printf 'TRACKER_RUN_DIR is required\n' >&2; exit 1; }
-test -n "${TRACKER_RUN_ID:-}" || { printf 'TRACKER_RUN_ID is required\n' >&2; exit 1; }
 test -n "${TRACKER_WORKDIR:-}" || { printf 'TRACKER_WORKDIR is required\n' >&2; exit 1; }
 command -v git >/dev/null
 command -v jq >/dev/null
 command -v kata >/dev/null
 
 workspace=$(cd "$TRACKER_WORKDIR" && pwd -P)
+# Standalone complete.dip supplies TRACKER_RUN_DIR and TRACKER_RUN_ID. As a board subgraph body only
+# TRACKER_WORKDIR is set, so run state lives in the workspace and identity comes from the board's run-id file.
+base="${TRACKER_RUN_DIR:-$workspace}"
+# Tracker blanks a ${VAR:-DEFAULT} in command_file text when DEFAULT holds a command substitution that
+# redirects, so read the board's run-id file into a plain variable and fall back to that instead.
+board_run_id=$(cat "$workspace/.tracker/kata-board-run-id" 2>/dev/null || true)
+run_id="${TRACKER_RUN_ID:-$board_run_id}"
+[ -n "$run_id" ] || { printf 'no run identity: set TRACKER_RUN_ID or write .tracker/kata-board-run-id\n' >&2; exit 1; }
 [ "$(git rev-parse --show-toplevel)" = "$workspace" ] || { printf 'target is not the Git root\n' >&2; exit 1; }
-[ ! -e "$TRACKER_RUN_DIR/selected.json" ] || { printf 'selection already exists for this run\n' >&2; exit 1; }
+[ ! -e "$base/selected.json" ] || { printf 'selection already exists for this run\n' >&2; exit 1; }
 
 exclude=$(git rev-parse --git-path info/exclude)
 case "$exclude" in /*) ;; *) exclude="$workspace/$exclude" ;; esac
@@ -33,8 +39,8 @@ case "$trunk" in
 esac
 # A warm-continue override outlives its run; a stale one would inflate this run's worker budget.
 rm -f "$workspace/.tracker/turn_overrides/Implement"
-mkdir -p "$TRACKER_RUN_DIR"
-state_tmp="$TRACKER_RUN_DIR/selected.json.tmp"
+mkdir -p "$base"
+state_tmp="$base/selected.json.tmp"
 printf '' >"$state_tmp"
 trap 'rm -f "$state_tmp"' EXIT HUP INT TERM
 
@@ -73,16 +79,16 @@ case "$uid" in
 esac
 [ "${#uid}" -eq 26 ] || { printf 'kata ready returned an invalid issue UID\n' >&2; exit 1; }
 case "$short_id" in *[!abcdefghijklmnopqrstuvwxyz0123456789]*|'') printf 'kata ready returned an invalid short ID\n' >&2; exit 1 ;; esac
-case "$TRACKER_RUN_ID" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*|'') printf 'TRACKER_RUN_ID is unsafe for a Git branch\n' >&2; exit 1 ;; esac
+case "$run_id" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*|'') printf 'run identity is unsafe for a Git branch\n' >&2; exit 1 ;; esac
 
-branch="kata/$short_id-$TRACKER_RUN_ID"
+branch="kata/$short_id-$run_id"
 git check-ref-format --branch "$branch" >/dev/null 2>&1 || { printf 'generated task branch is invalid\n' >&2; exit 1; }
 if git show-ref --verify --quiet "refs/heads/$branch"; then
   printf 'task branch already exists: %s\n' "$branch" >&2
   exit 1
 fi
 base_commit=$(git rev-parse HEAD)
-actor="kata-pipeline-$TRACKER_RUN_ID"
+actor="kata-pipeline-$run_id"
 
 claim_json=$(kata claim --workspace "$workspace" --as "$actor" --if-unowned "$uid" --json) || {
   printf 'claim failed for %s; stopping without reselection\n' "$qualified_id" >&2
@@ -108,6 +114,6 @@ jq -n --arg uid "$uid" --arg short "$short_id" --arg qualified "$qualified_id" \
   --arg trunk "$trunk" \
   --argjson issue "$(printf '%s' "$claim_json" | jq '.issue')" \
   '{issue_uid:$uid,short_id:$short,qualified_id:$qualified,workspace:$workspace,branch:$branch,base_commit:$base,actor:$actor,trunk:$trunk,issue:$issue}' >"$state_tmp"
-mv "$state_tmp" "$TRACKER_RUN_DIR/selected.json"
+mv "$state_tmp" "$base/selected.json"
 git switch -c "$branch" "$base_commit" >/dev/null
-printf 'claim-ok\nSTATE_PATH=%s\n' "$TRACKER_RUN_DIR/selected.json"
+printf 'claim-ok\nSTATE_PATH=%s\n' "$base/selected.json"

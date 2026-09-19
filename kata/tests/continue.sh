@@ -37,8 +37,17 @@ if TRACKER_RUN_DIR="$run_dir" TRACKER_WORKDIR="$workdir" TRACKER_RUN_ID=test sh 
 fi
 grep -Fx 'continue-exhausted' "$test_root/output" >/dev/null || fail 'second continue call did not print continue-exhausted'
 [ "$(cat "$workdir/.tracker/turn_overrides/Implement")" = 450 ] || fail 'second call changed the override'
-if (unset TRACKER_RUN_DIR; TRACKER_WORKDIR="$workdir" sh "$script") >"$test_root/output" 2>&1; then
-  fail 'missing TRACKER_RUN_DIR was accepted'
+# Board subgraph body: with only TRACKER_WORKDIR set, run state falls back to the workspace root.
+workdir2="$test_root/workdir-only"
+mkdir -p "$workdir2"
+(unset TRACKER_RUN_DIR TRACKER_RUN_ID; TRACKER_WORKDIR="$workdir2" sh "$script") >"$test_root/output" 2>&1 ||
+  fail 'workdir-only continue call failed'
+grep -Fx 'continue-ok' "$test_root/output" >/dev/null || fail 'workdir-only call did not print continue-ok'
+[ "$(cat "$workdir2/.tracker/turn_overrides/Implement")" = 450 ] || fail 'workdir-only override does not hold 450'
+jq -e '.attempt == 1 and .max_turns == 450' "$workdir2/continue-implement.json" >/dev/null ||
+  fail 'workdir-only marker has the wrong shape'
+if (unset TRACKER_RUN_DIR TRACKER_WORKDIR TRACKER_RUN_ID; sh "$script") >"$test_root/output" 2>&1; then
+  fail 'missing TRACKER_WORKDIR was accepted'
 fi
 printf 'ok - continue grants one override of 450 turns and then reports exhaustion\n'
 

@@ -3,14 +3,15 @@
 # ABOUTME: Writes the tracker turn override once per run and reports exhaustion on the second call.
 set -eu
 
-: "${TRACKER_RUN_DIR:?TRACKER_RUN_DIR is required}"
 : "${TRACKER_WORKDIR:?TRACKER_WORKDIR is required}"
 command -v jq >/dev/null
+# Standalone complete.dip supplies TRACKER_RUN_DIR; as a board subgraph body only TRACKER_WORKDIR is set.
+base="${TRACKER_RUN_DIR:-$(cd "$TRACKER_WORKDIR" && pwd -P)}"
 # Both values are turn counts. The base must match Implement's max_turns in complete.dip;
 # tracker honors an override only when it exceeds that base and stays at or under 1000.
 implement_max_turns=300
 continue_turns=150
-marker="$TRACKER_RUN_DIR/continue-implement.json"
+marker="$base/continue-implement.json"
 if [ -e "$marker" ]; then
   printf 'continue-exhausted\n'
   exit 1
