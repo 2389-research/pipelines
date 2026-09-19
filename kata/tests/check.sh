@@ -30,7 +30,7 @@ test_graph_contract() {
     END {
       for (name in agents) {
         count++
-        expected = name ~ /Scope$/ ? "deepseek-4.1-flash" : "glm-5.3"
+        expected = name ~ /Scope$/ ? "glm-5.3" : "deepseek-4.1-flash"
         if (providers[name] != "openai-compat" || models[name] != expected) exit 1
         expected_limit = name == "Implement" ? 300 : (name == "Repair" ? 150 : 100)
         if (limits[name] != expected_limit) {

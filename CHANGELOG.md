@@ -104,6 +104,9 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Changed
 
+- Kata review models swapped: scope reviews now run on `glm-5.3` and the
+  worker, repair, and correctness reviews on `deepseek-4.1-flash`.
+
 - Toolchain pin advanced to the current latest lockstep pair: tracker `v0.63.5`
   → `v0.73.1`, dippin `v0.64.0` → `v0.72.0` in both `dev_loop_smoke.yml` and
   `dip_check.yml`, and the README "currently pinned" pair updated to match.

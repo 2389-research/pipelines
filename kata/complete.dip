@@ -18,7 +18,7 @@ workflow CompleteOneKata
 
   agent Implement
     label: "Scope and implement the selected kata"
-    model: glm-5.3
+    model: deepseek-4.1-flash
     provider: openai-compat
     goal_gate: true
     auto_status: true
@@ -31,7 +31,7 @@ workflow CompleteOneKata
 
   agent ReviewCorrectness
     label: "Fresh-eyes correctness review"
-    model: glm-5.3
+    model: deepseek-4.1-flash
     provider: openai-compat
     max_turns: 100
     max_retries: 1
@@ -40,7 +40,7 @@ workflow CompleteOneKata
 
   agent ReviewScope
     label: "Fresh-eyes scope review"
-    model: deepseek-4.1-flash
+    model: glm-5.3
     provider: openai-compat
     max_turns: 100
     max_retries: 1
@@ -60,7 +60,7 @@ workflow CompleteOneKata
 
   agent Repair
     label: "Apply the single allowed repair pass"
-    model: glm-5.3
+    model: deepseek-4.1-flash
     provider: openai-compat
     goal_gate: true
     auto_status: true
@@ -73,7 +73,7 @@ workflow CompleteOneKata
 
   agent ReReviewCorrectness
     label: "Fresh-eyes correctness re-review"
-    model: glm-5.3
+    model: deepseek-4.1-flash
     provider: openai-compat
     max_turns: 100
     max_retries: 1
@@ -82,7 +82,7 @@ workflow CompleteOneKata
 
   agent ReReviewScope
     label: "Fresh-eyes scope re-review"
-    model: deepseek-4.1-flash
+    model: glm-5.3
     provider: openai-compat
     max_turns: 100
     max_retries: 1

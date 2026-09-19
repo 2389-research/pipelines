@@ -13,10 +13,10 @@ whose children are all closed remain eligible.
 The worker uses TDD and the repository's own checks. Two models then review
 in parallel, emulating the fresh-eyes skill:
 
-- **Correctness (`glm-5.3`):** acceptance criteria, regressions, error paths, and tests.
-- **Scope (`deepseek-4.1-flash`):** unnecessary changes, maintainability, and relevant security risks.
+- **Correctness (`deepseek-4.1-flash`):** acceptance criteria, regressions, error paths, and tests.
+- **Scope (`glm-5.3`):** unnecessary changes, maintainability, and relevant security risks.
 
-The worker and repair agent also use `glm-5.3`. All six agent nodes use
+The worker and repair agent also use `deepseek-4.1-flash`. All six agent nodes use
 tracker's `openai-compat` provider through Lunaroute. The adapter does not
 forward `reasoning_effort`; reasoning behavior follows the gateway defaults.
 

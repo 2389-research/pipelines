@@ -44,8 +44,8 @@ fresh-eyes review approved after fixes. Initial validation did not make live
 model calls.
 
 Provider update (2026-09-13): Doctor Biz chose the configured Lunaroute gateway
-through `openai-compat`. Worker, repair, and correctness reviews use `glm-5.3`;
-scope reviews use `deepseek-4.1-flash`. The graph contract requires all six
+through `openai-compat`. Worker, repair, and correctness reviews use `deepseek-4.1-flash`;
+scope reviews use `glm-5.3`. The graph contract requires all six
 agents to use the compatible provider and two distinct models. The adapter
 does not forward `reasoning_effort`, so those attributes were removed.
 The updated graph contract failed on the old provider configuration, then
