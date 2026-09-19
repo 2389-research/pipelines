@@ -60,8 +60,9 @@ sh "$KATA_DIR/tests/handoff.sh"
 "$KATA_DIR/tests/approvals.sh"
 "$KATA_DIR/tests/preflight.sh"
 "$KATA_DIR/tests/close.sh"
-sh "$KATA_DIR/tests/publish.sh"
 sh "$KATA_DIR/tests/board.sh"
 sh "$KATA_DIR/tests/answer.sh"
 sh "$KATA_DIR/tests/report.sh"
-shellcheck "$KATA_DIR/check" "$KATA_DIR/board-report" "$KATA_DIR/answer" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh
+sh "$KATA_DIR/tests/no-remote-commands.sh"
+sh "$KATA_DIR/check-no-remotes" "$KATA_DIR/.."
+shellcheck "$KATA_DIR/check" "$KATA_DIR/check-no-remotes" "$KATA_DIR/board-report" "$KATA_DIR/answer" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh

@@ -14,8 +14,8 @@ handoff and return `STATUS: fail`; do not expand the task to those other items.
 
 Confirm the current branch matches the saved `branch`; stop with a handoff if it does not.
 Keep this branch even when issue text or a shared plan suggests creating another branch.
-After both reviews approve, the pipeline pushes this branch and opens a PR when GitHub
-is configured, then closes the issue. Merging remains the operator's job. Extract this
+After both reviews approve, the pipeline lands this branch on the trunk it was claimed
+from and closes the issue. Nothing is pushed; the operator pushes when ready. Extract this
 item's requirements from those documents without executing their claim, close,
 branch-switch, push, or merge steps yourself.
 

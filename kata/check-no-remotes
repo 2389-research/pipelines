@@ -1,0 +1,64 @@
+#!/bin/sh
+# ABOUTME: Rejects remote Git and GitHub CLI commands from live kata runtime files.
+# ABOUTME: Scans tracked and untracked files and fails closed when a file cannot be read.
+set -eu
+
+root=${1:-}
+[ -n "$root" ] || { printf 'usage: %s REPOSITORY_ROOT\n' "$0" >&2; exit 2; }
+root=$(CDPATH='' cd -- "$root" && pwd -P)
+kata_dir="$root/kata"
+file_list=$(mktemp)
+matches=$(mktemp)
+normalized=$(mktemp)
+trap 'rm -f "$file_list" "$matches" "$normalized"' EXIT
+trap 'exit 130' HUP INT TERM
+
+find "$kata_dir/scripts" \( -type f -o -type l \) -print >"$file_list" || {
+  printf 'kata/check: could not list runtime scripts\n' >&2
+  exit 1
+}
+for runtime_file in "$kata_dir/board-report" "$kata_dir/answer"; do
+  [ ! -e "$runtime_file" ] || printf '%s\n' "$runtime_file" >>"$file_list"
+done
+find "$kata_dir" -maxdepth 1 \( -type f -o -type l \) -name '*.dip' -print >>"$file_list" || {
+  printf 'kata/check: could not list workflow files\n' >&2
+  exit 1
+}
+
+git_verbs='remote|fetch|push|pull|clone|ls-remote'
+git_options='([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)'
+pattern="(^|[^[:alnum:]_.-])git${git_options}*[[:space:]]+(${git_verbs})([[:space:]]|$)|(^|[^[:alnum:]_.-])gh[[:space:]]"
+found=0
+while IFS= read -r runtime_file; do
+  if ! awk '
+    {
+      while ($0 ~ /\\$/) {
+        sub(/\\$/, "")
+        read_status = getline continuation
+        if (read_status < 0) exit 2
+        if (read_status == 0) break
+        $0 = $0 continuation
+      }
+      print
+    }
+  ' "$runtime_file" >"$normalized"; then
+    printf 'kata/check: could not scan %s\n' "$runtime_file" >&2
+    exit 1
+  fi
+  if grep -nE "$pattern" "$normalized" >"$matches"; then
+    printf '%s:\n' "$runtime_file"
+    cat "$matches"
+    found=1
+  else
+    status=$?
+    if [ "$status" -gt 1 ]; then
+      printf 'kata/check: could not scan %s\n' "$runtime_file" >&2
+      exit 1
+    fi
+  fi
+done <"$file_list"
+
+[ "$found" -eq 0 ] || {
+  printf 'kata/check: a remote Git or gh command is present in the pipeline runtime\n' >&2
+  exit 1
+}

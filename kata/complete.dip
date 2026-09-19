@@ -101,7 +101,7 @@ workflow CompleteOneKata
       sh "${graph.workflow_dir}/scripts/check-approvals.sh"
 
   tool CloseSelected
-    label: "Publish the approved task and close the kata"
+    label: "Land the approved task and close the kata"
     marker_grep: "^close-ok$"
     timeout: 5m
     command:
