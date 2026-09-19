@@ -10,6 +10,8 @@ for required in scripts/run-board.sh scripts/handoff-selected.sh board-report bo
     exit 1
   }
 done
+# Every kata script is executable; the controller demands -x on board-report and must meet its own rule.
+[ -x "$pipeline_dir/scripts/run-board.sh" ] || { printf 'FAIL: scripts/run-board.sh is not executable\n' >&2; exit 1; }
 
 test_root=$(mktemp -d)
 test_root=$(cd "$test_root" && pwd -P)
@@ -172,6 +174,12 @@ set -eu
 cd "$TRACKER_WORKDIR"
 fixture="$TRACKER_WORKDIR/.tracker/board-fixture"
 number=$(wc -l <"$fixture/claims" | tr -d ' ')
+if [ -f "$fixture/slow" ]; then
+  # A worker that runs until it is interrupted; its PID lets the test prove the cancel reached it.
+  sleep 300 &
+  printf '%s\n' "$!" >"$fixture/slow.pid"
+  wait "$!"
+fi
 if [ -f "$fixture/leave-branch" ] && grep -qx "$number" "$fixture/leave-branch"; then
   # The worker wandered back to the branch it started on, so the handoff touches no Git state.
   start_branch=$(jq -r '.start_branch' "$TRACKER_RUN_DIR/selected.json")
@@ -647,6 +655,57 @@ grep -Fx 'board report failed; run board-report board-parent from the target Git
 expect_marker board-needs-human 'a refused review'
 printf 'ok - a review the report refuses still ends the sweep with the board-needs-human marker\n'
 
+# A controller signalled by hand cancels its child with SIGINT, so the child writes a checkpoint and its
+# resume hint; then it clears its pid file and lock. The next sweep stops for inspection and names the child;
+# a real child resume finishes the kata, and the sweep after that records it once.
+new_case interrupt 1
+: >"$fixture/slow"
+(cd "$repo" && exec sh "$pipeline_dir/scripts/run-board.sh" "$test_root/workflow/complete.dip") \
+  >"$test_root/output" 2>"$test_root/errors" </dev/null &
+controller_pid=$!
+waited=0
+until [ -s "$fixture/slow.pid" ]; do
+  kill -0 "$controller_pid" 2>/dev/null || fail 'interrupt: the controller ended before the worker started'
+  [ "$waited" -lt 60 ] || fail 'interrupt: the worker did not start within 60 seconds'
+  sleep 1
+  waited=$((waited + 1))
+done
+worker_pid=$(cat "$fixture/slow.pid")
+child=$(head -n 1 "$fixture/claims")
+item_dir="$TRACKER_RUN_DIR/board/items/000001"
+[ -f "$item_dir/child.pid" ] || fail 'interrupt: the controller did not record the child pid'
+kill -TERM "$controller_pid"
+status=0
+wait "$controller_pid" || status=$?
+[ "$status" -eq 130 ] || fail "interrupt: the controller exited $status, expected 130"
+[ ! -e "$TRACKER_RUN_DIR/board/lock" ] || fail 'interrupt: the lock survived the interrupt'
+[ ! -e "$item_dir/child.pid" ] || fail 'interrupt: child.pid survived the interrupt'
+waited=0
+while kill -0 "$worker_pid" 2>/dev/null; do
+  [ "$waited" -lt 10 ] || fail "interrupt: the worker $worker_pid outlived the cancelled child"
+  sleep 1
+  waited=$((waited + 1))
+done
+[ -f "$repo/.tracker/runs/$child/checkpoint.json" ] || fail 'interrupt: the cancelled child wrote no checkpoint'
+grep -F "tracker -r $child" "$item_dir/child.log" >/dev/null || fail 'interrupt: the child log lacks the resume hint' "$item_dir/child.log"
+if grep -Fx 'board-needs-human' "$test_root/output" >/dev/null; then fail 'interrupt: an interrupted controller printed the marker'; fi
+rm "$fixture/slow"
+# A controller that Tracker cancelled never ran its traps, so its pid file names a process that is gone.
+printf '%s\n' "$worker_pid" >"$item_dir/child.pid"
+must_stop_for_inspection 'a resume after the interrupted child'
+[ ! -e "$item_dir/child.pid" ] || fail 'interrupt: a stale child.pid was kept'
+[ "$(claim_count)" -eq 1 ] || fail "interrupt: a resume claimed again; claim count is $(claim_count)"
+tracker --git off --workdir "$repo" --json --no-tui --resume "$child" "$test_root/workflow/complete.dip" \
+  >"$test_root/interrupt-resume.log" 2>&1 || fail 'interrupt: the real Tracker child resume failed' "$test_root/interrupt-resume.log"
+[ "$(claim_count)" -eq 1 ] || fail "interrupt: the child resume claimed again; claim count is $(claim_count)"
+must_succeed 'the board after the interrupted child was resumed'
+jq -e --arg child "$child" '.finished == true and (has("stop_reason") | not) and (has("stop_child") | not) and
+  [.runs[].kind] == ["completed","empty"] and .runs[0].run_id == $child' "$ledger" >/dev/null ||
+  fail 'interrupt: the resumed child was not recorded as completed once'
+[ "$(claim_count)" -eq 2 ] || fail "interrupt: claim count is $(claim_count), expected 2"
+expect_marker board-clean 'the board after the interrupted child was resumed'
+printf 'ok - an interrupt reaches the child Tracker, clears the lock and pid file, and the child resumes into a clean board\n'
+
 # Invoke the actual parent workflow so nested tool environments and routing are real. A clean board must end
 # without a gate, and stdin is closed so a gate that did open could not be answered by accident.
 new_case nested 1
@@ -728,8 +787,8 @@ parent_id=$(jq -Rnr '[inputs | sub("^[^{]*"; "") | fromjson? | select(.source ==
 case "$parent_id" in ''|null) fail 'nested-gate: the parent log has no pipeline_started event' "$test_root/parent-gate.log" ;; esac
 jq -e '.finished == true and (has("stop_reason") | not) and [.runs[].kind] == ["failed","empty","empty","empty"]' \
   "$repo/.tracker/runs/$parent_id/board/state.json" >/dev/null ||
-  fail 'nested-gate: the ledger does not show one handoff and three empty sweeps'
-[ "$(claim_count)" -eq 4 ] || fail "nested-gate: claim count is $(claim_count), expected 4"
+  fail 'nested-gate: the ledger does not show one handoff and three empty sweeps' "$test_root/parent-gate.log"
+[ "$(claim_count)" -eq 4 ] || fail "nested-gate: claim count is $(claim_count), expected 4" "$test_root/parent-gate.log"
 jq -Rne '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_opened")] | length == 3' \
   <"$test_root/parent-gate.log" >/dev/null || fail 'nested-gate: the gate did not open three times' "$test_root/parent-gate.log"
 # The gate prints its "Enter choice" prompt without a newline, so the resolution event shares that line.
@@ -755,7 +814,7 @@ jq -Rne '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolve
   select(.gate_response == "done" or .gate_response == "sweep")] | length == 0' \
   <"$test_root/parent-gate-eof.log" >/dev/null || fail 'nested-gate-eof: the gate resolved without a person' "$test_root/parent-gate-eof.log"
 jq -Rne '[inputs | sub("^[^{]*"; "") | fromjson? | select(.type == "gate_resolved") |
-  select(.error | contains("no input received"))] | length == 1' \
+  select((.error // "") | contains("no input received"))] | length == 1' \
   <"$test_root/parent-gate-eof.log" >/dev/null || fail 'nested-gate-eof: the gate_resolved event does not record the missing input' "$test_root/parent-gate-eof.log"
 [ "$(claim_count)" -eq 2 ] || fail "nested-gate-eof: claim count is $(claim_count), expected 2" "$test_root/parent-gate-eof.log"
 printf 'ok - a real Tracker parent fails at the morning review when nobody can answer it\n'

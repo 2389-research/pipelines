@@ -37,8 +37,11 @@ if ! mkdir "$lock" 2>/dev/null; then
 fi
 printf '%s\n' "$$" >"$lock/pid"
 child_pid=
-trap 'rm -f "$lock/pid"; rmdir "$lock"' EXIT
-trap 'if [ -n "$child_pid" ]; then kill "$child_pid" 2>/dev/null || true; wait "$child_pid" 2>/dev/null || true; fi; exit 130' HUP INT TERM
+# rm -rf keeps the exit status: rmdir would fail on a lock that still holds pid and replace the status with its own.
+trap 'rm -rf "$lock"' EXIT
+# The child Tracker handles SIGINT only. On SIGINT it cancels its running node, kills that node's process group,
+# writes a checkpoint, and prints its resume hint; the wait lets it finish that before the pid file goes.
+trap 'if [ -n "$child_pid" ]; then kill -INT "$child_pid" 2>/dev/null || true; wait "$child_pid" 2>/dev/null || true; rm -f "$item/child.pid"; fi; exit 130' HUP INT TERM
 state="$board/state.json"
 if [ ! -e "$state" ]; then
   jq -n --arg workspace "$workspace" --arg pipeline "$pipeline" \
@@ -155,6 +158,9 @@ while ! jq -e '.finished' "$state" >/dev/null; do
     if kill -0 "$pending_pid" 2>/dev/null; then
       stop_board "child process $pending_pid is still running; wait before resuming the board"
     fi
+    # A controller that Tracker cancelled never ran its traps, and its child died with it. The pid file is
+    # stale; keeping it would let a reused PID pass for a running child on a later sweep.
+    rm "$item/child.pid"
   fi
   run_id=$(jq -Rnr '[inputs | fromjson? | select(.source == "pipeline" and .type == "pipeline_started") | .run_id] | unique | if length == 1 then .[0] else empty end' <"$item/child.log")
   case "$run_id" in ''|*[!a-f0-9]*) stop_board "child identity is unknown; inspect $item/child.log before retrying" ;; esac
