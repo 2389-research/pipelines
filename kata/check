@@ -12,6 +12,9 @@ printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
 dippin validate "$KATA_DIR/board.dip"
 check_json=$(dippin check --format json "$KATA_DIR/board.dip")
 printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
+dippin validate "$KATA_DIR/board-item.dip"
+check_json=$(dippin check --format json "$KATA_DIR/board-item.dip")
+printf '%s' "$check_json" | jq -e '.valid == true and .warnings == 0' >/dev/null
 simulation_log=$(mktemp)
 trap 'rm -f "$simulation_log"' EXIT
 trap 'exit 130' HUP INT TERM
@@ -19,14 +22,35 @@ dippin simulate "$KATA_DIR/complete.dip" --all-paths >"$simulation_log" 2>&1
 grep -F 'ClaimNext' "$simulation_log" >/dev/null
 grep -F 'Repair' "$simulation_log" >/dev/null
 grep -F 'ContinueImplement' "$simulation_log" >/dev/null
+# The board body is complete.dip's graph plus two fail edges, so its nodes stream to the board console by
+# the same names; a failed claim or handoff must still reach Exit so RecordOutcome reads the sweep instead
+# of the parent run crashing mid-body. A failed node never takes an unconditional edge, and the simulator
+# does not walk these fail edges, so check the source for both directly.
+dippin simulate "$KATA_DIR/board-item.dip" --all-paths >"$simulation_log" 2>&1
+grep -F 'ClaimNext' "$simulation_log" >/dev/null
+grep -F 'Repair' "$simulation_log" >/dev/null
+grep -F 'ContinueImplement' "$simulation_log" >/dev/null
+grep -Eq '^[[:space:]]*ClaimNext -> Exit[[:space:]]+when ctx\.outcome = fail' "$KATA_DIR/board-item.dip" || {
+  printf 'board-item.dip must end a failed claim at Exit so the board can record it\n' >&2
+  exit 1
+}
+grep -Eq '^[[:space:]]*Handoff -> Exit[[:space:]]+when ctx\.outcome = fail' "$KATA_DIR/board-item.dip" || {
+  printf 'board-item.dip must route a failed handoff to Exit so the body never crashes the board\n' >&2
+  exit 1
+}
 dippin simulate "$KATA_DIR/board.dip" --all-paths >"$simulation_log" 2>&1
 # Every route the board relies on, as dippin prints it; a renamed label or a dropped restart fails here.
+# The bare RunKata edge (matched by the trailing timestamp) is the catch-all that records any body outcome.
 for edge in \
-  '"from":"RunBoard","to":"Report","condition":"ctx.tool_marker = board-needs-human"' \
-  '"from":"RunBoard","to":"Exit","condition":"ctx.tool_marker = board-clean"' \
+  '"from":"Preflight","to":"RunKata","condition":"ctx.tool_marker = preflight-ok"' \
+  '"from":"RunKata","to":"RecordOutcome","condition":"ctx.outcome = success"' \
+  '"from":"RunKata","to":"RecordOutcome","timestamp"' \
+  '"from":"RecordOutcome","to":"Preflight","condition":"ctx.tool_marker = sweep-again","restart":true' \
+  '"from":"RecordOutcome","to":"Exit","condition":"ctx.tool_marker = board-clean"' \
+  '"from":"RecordOutcome","to":"Report","condition":"ctx.tool_marker = board-needs-human"' \
   '"from":"Report","to":"MorningReview"' \
   '"from":"MorningReview","to":"Exit","label":"Done"' \
-  '"from":"MorningReview","to":"RunBoard","label":"Sweep again","restart":true'; do
+  '"from":"MorningReview","to":"Preflight","label":"Sweep again","restart":true'; do
   grep -F "$edge" "$simulation_log" >/dev/null || {
     printf 'board.dip simulation lacks the edge %s\n' "$edge" >&2
     exit 1
@@ -47,7 +71,9 @@ trap 'rm -f "$simulation_log" "$tracker_log"' EXIT
 tracker validate "$KATA_DIR/complete.dip" >"$tracker_log" 2>&1
 grep -F 'complete.dip: valid (' "$tracker_log" >/dev/null
 tracker validate "$KATA_DIR/board.dip" >>"$tracker_log" 2>&1
-grep -F 'board.dip: valid (4 nodes, 5 edges)' "$tracker_log" >/dev/null
+grep -F 'board.dip: valid (6 nodes, 9 edges)' "$tracker_log" >/dev/null
+tracker validate "$KATA_DIR/board-item.dip" >>"$tracker_log" 2>&1
+grep -F 'board-item.dip: valid (17 nodes, 32 edges)' "$tracker_log" >/dev/null
 if grep -F 'warning: unresolved condition variable' "$tracker_log" >/dev/null; then
   printf 'note - tracker static validation reports unset runtime context; real preflight checks run below\n'
 fi
@@ -60,9 +86,12 @@ sh "$KATA_DIR/tests/handoff.sh"
 "$KATA_DIR/tests/approvals.sh"
 "$KATA_DIR/tests/preflight.sh"
 "$KATA_DIR/tests/close.sh"
+sh "$KATA_DIR/tests/board-preflight.sh"
+sh "$KATA_DIR/tests/board-record.sh"
 sh "$KATA_DIR/tests/board.sh"
+sh "$KATA_DIR/tests/board-artifacts.sh"
 sh "$KATA_DIR/tests/answer.sh"
 sh "$KATA_DIR/tests/report.sh"
 sh "$KATA_DIR/tests/no-remote-commands.sh"
 sh "$KATA_DIR/check-no-remotes" "$KATA_DIR/.."
-shellcheck "$KATA_DIR/check" "$KATA_DIR/check-no-remotes" "$KATA_DIR/board-report" "$KATA_DIR/answer" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh
+shellcheck -x --source-path="$KATA_DIR" "$KATA_DIR/check" "$KATA_DIR/check-no-remotes" "$KATA_DIR/board-report" "$KATA_DIR/answer" "$KATA_DIR"/scripts/*.sh "$KATA_DIR"/tests/*.sh

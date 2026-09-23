@@ -1,20 +1,34 @@
-# ABOUTME: Completes the repository's kata board through isolated complete.dip runs.
-# ABOUTME: Lands each reviewed task on its trunk, then holds the morning review until the operator sweeps again or stops.
+# ABOUTME: Completes the repository's kata board one reviewed kata at a time as a looping subgraph, so every
+# ABOUTME: kata's steps stream to this console; lands each on its trunk, then holds the morning review to sweep or stop.
 workflow CompleteKataBoard
-  goal: "Complete all ready unowned katas sequentially, landing each on its trunk, then hold the morning review until the operator sweeps again or stops."
-  start: RunBoard
+  goal: "Complete all ready unowned katas sequentially, landing each on its trunk while streaming every kata's steps to the console, then hold the morning review until the operator sweeps again or stops."
+  start: Preflight
   exit: Exit
 
   defaults
-    # Each "Sweep again" is one restart; Tracker's default of five would end a week-long board early.
-    # The 51st "Sweep again" ends the run with a restart-limit failure; start a new board run then.
-    max_restarts: 50
+    # Tracker counts restarts once per run, not per node: every restart edge spends from one budget, so
+    # the sweep-again after each kata and Sweep again at the morning review both draw on this cap, and it
+    # bounds total sweeps per run. 200 clears a large board with headroom; the run that trips it fails with
+    # "max restarts (200) exceeded", so start a fresh board run to keep going. tests/board.sh pins this
+    # per-run counting against a two-restart probe.
+    max_restarts: 200
 
-  tool RunBoard
-    label: "Complete the board one reviewed kata at a time"
-    timeout: 168h
-    marker_grep: "^(board-clean|board-needs-human)$"
-    command: sh "${graph.workflow_dir}/scripts/run-board.sh" "${graph.workflow_dir}/complete.dip"
+  tool Preflight
+    label: "Prepare the next sweep"
+    timeout: 10m
+    marker_grep: "^preflight-ok$"
+    command: sh "${graph.workflow_dir}/scripts/board-preflight.sh" "${graph.workflow_dir}"
+
+  # The body is complete.dip with two extra fail edges (a failed claim or handoff still reaches Exit).
+  # Its nodes stream to this console as RunKata/<Node>, which is the whole point of the rewrite.
+  subgraph RunKata
+    ref: board-item.dip
+
+  tool RecordOutcome
+    label: "Record the sweep and decide what is next"
+    timeout: 10m
+    marker_grep: "^(sweep-again|board-clean|board-needs-human)$"
+    command: sh "${graph.workflow_dir}/scripts/board-record.sh" "${graph.workflow_dir}"
 
   tool Report
     label: "Print the morning review"
@@ -39,9 +53,18 @@ workflow CompleteKataBoard
     command: true
 
   edges
-    RunBoard -> Report  on board-needs-human
-    RunBoard -> Exit  on board-clean
+    Preflight -> RunKata  on preflight-ok
+    # RecordOutcome classifies by the records the body left at the workspace root, not by the subgraph
+    # outcome. The body's fail edges always carry it to its own Exit, so the subgraph reports success and
+    # the success edge is the live one. The bare edge below is the default dippin requires on every node;
+    # it is dead at runtime, because a body that never reaches Exit fails the parent outright and cannot
+    # be caught here (a failed subgraph does not route, not even on ctx.outcome = fail).
+    RunKata -> RecordOutcome  when ctx.outcome = success
+    RunKata -> RecordOutcome
+    RecordOutcome -> Preflight  on sweep-again  restart: true
+    RecordOutcome -> Exit  on board-clean
+    RecordOutcome -> Report  on board-needs-human
     Report -> MorningReview
     # Done is first on purpose: with no default, Escape and --auto-approve take the first choice.
     MorningReview -> Exit  label: "Done"  choice: done
-    MorningReview -> RunBoard  label: "Sweep again"  choice: sweep  restart: true
+    MorningReview -> Preflight  label: "Sweep again"  choice: sweep  restart: true

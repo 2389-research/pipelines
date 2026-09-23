@@ -1,6 +1,6 @@
 #!/bin/sh
 # ABOUTME: Prints the morning review for a board run: completed katas, katas needing a decision or review, remaining open.
-# ABOUTME: Reads the board ledger, child records, and the live open list read-only; --json emits the same data for agents.
+# ABOUTME: Reads the self-contained board ledger and the live open list read-only; --json emits the same data for agents.
 set -eu
 
 usage() {
@@ -24,7 +24,7 @@ home=$(CDPATH='' cd -- "${HOME:-/nonexistent}" 2>/dev/null && pwd -P || true)
 runs="$workspace/.tracker/runs"
 board_id=${1:-}
 if [ -z "$board_id" ]; then
-  # The board rewrites its ledger after every child, so the newest ledger belongs to the latest board run.
+  # The board rewrites its ledger after every kata, so the newest ledger belongs to the latest board run.
   newest=
   for ledger in "$runs"/*/board/state.json; do
     [ -f "$ledger" ] || continue
@@ -38,13 +38,11 @@ fi
 case "$board_id" in ''|*/*|.|..) printf 'invalid board run id: %s\n' "$board_id" >&2; exit 2 ;; esac
 ledger="$runs/$board_id/board/state.json"
 [ -f "$ledger" ] || { printf 'no board ledger at %s\n' "$ledger" >&2; exit 1; }
-# The controller writes the ledger, but every child run id in it names a directory this script reads,
-# so each id is checked before it touches a path.
+# The board writes this ledger from the records each kata left behind; every run id in it names a branch
+# and an actor, so each must be branch-safe before it reaches a pasteable command below.
 jq -e '(.finished | type == "boolean") and (.runs | type == "array") and
   (.stop_reason == null or (.stop_reason | type == "string")) and
-  (.stop_child == null or ((.stop_child | type == "string" and test("^[a-f0-9]{12}$")) and
-    (.pipeline | type == "string" and length > 0))) and
-  all(.runs[]; (.run_id | type == "string" and test("^[a-f0-9]{12}$")) and
+  all(.runs[]; (.run_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
     (.kind == "completed" or .kind == "failed" or .kind == "empty") and
     (.kind == "empty" or (.issue_uid | type == "string" and length > 0)))' "$ledger" >/dev/null ||
   { printf 'invalid board ledger: %s\n' "$ledger" >&2; exit 1; }
@@ -54,37 +52,21 @@ trap 'exit 130' HUP INT TERM
 kata list --workspace "$workspace" --status open --limit 0 --json >"$tmp/open.json"
 jq -e '.issues | type == "array"' "$tmp/open.json" >/dev/null || { printf 'invalid open-board response\n' >&2; exit 1; }
 
-# One item per kata, in ledger order. A board that swept more than once carries several entries
-# for one kata; only its latest entry describes it. Empty attempts carry no kata.
-: >"$tmp/items.jsonl"
+# One item per kata, in ledger order, built straight from the self-contained ledger entry. A board that
+# swept more than once carries several entries for one kata; only its latest entry describes it. Empty
+# attempts carry no kata.
 jq -c '.runs as $runs | $runs | to_entries[] | select(.value.kind != "empty") |
-  select(.key as $i | .value.issue_uid as $uid | any($runs[$i + 1:][]; .issue_uid == $uid) | not) | .value' \
-  "$ledger" >"$tmp/runs.jsonl"
-while IFS= read -r entry; do
-  kind=$(printf '%s' "$entry" | jq -r '.kind')
-  run_id=$(printf '%s' "$entry" | jq -r '.run_id')
-  child="$runs/$run_id"
-  case "$kind" in
-    completed)
-      qualified=$(jq -er '.qualified_id' "$child/selected.json" 2>/dev/null) ||
-        { printf 'completed child %s has no selection record: %s\n' "$run_id" "$child/selected.json" >&2; exit 1; }
-      printf '%s' "$entry" | jq -c --arg qualified "$qualified" '{group:"completed",qualified_id:$qualified,issue_uid,run_id,branch,
-        base_commit:null,wip_commit:null,commit:.commit,reason:null,question:null}' \
-        >>"$tmp/items.jsonl"
-      ;;
-    failed)
-      [ -f "$child/handoff.json" ] ||
-        { printf 'failed child %s has no handoff record: %s\n' "$run_id" "$child/handoff.json" >&2; exit 1; }
-      # run_id always comes from the ledger-validated $run_id, never the worker-written handoff copy.
-      jq -c --arg run "$run_id" '{group:(if .reason == "decision" then "needs_decision" else "needs_review" end),
-        qualified_id,issue_uid,run_id:$run,branch,base_commit,wip_commit,commit:null,reason,question}' \
-        "$child/handoff.json" >>"$tmp/items.jsonl"
-      ;;
-  esac
-done <"$tmp/runs.jsonl"
+  select(.key as $i | .value.issue_uid as $uid | any($runs[$i + 1:][]; .issue_uid == $uid) | not) | .value |
+  if .kind == "completed" then
+    {group:"completed", qualified_id, issue_uid, run_id, branch,
+     base_commit:null, wip_commit:null, commit, reason:null, question:null}
+  else
+    {group:(if .reason == "decision" then "needs_decision" else "needs_review" end),
+     qualified_id, issue_uid, run_id, branch, base_commit, wip_commit, commit:null, reason, question}
+  end' "$ledger" >"$tmp/items.jsonl"
 
-# Child records are written by the worker's run. Every field that reaches a pasteable command
-# must look like what it claims to be, or the whole review is refused.
+# Every ledger field that reaches a pasteable command must look like what it claims to be, or the whole
+# review is refused.
 jq -se --arg qid '^[A-Za-z0-9._-]+(#[A-Za-z0-9._-]+)?$' --arg branch '^[A-Za-z0-9][A-Za-z0-9._/-]*$' \
   --arg commit '^([0-9a-f]{40}|[0-9a-f]{64})$' '
   def clean: type == "string" and (test("[[:cntrl:]]") | not);
@@ -94,7 +76,7 @@ jq -se --arg qid '^[A-Za-z0-9._-]+(#[A-Za-z0-9._-]+)?$' --arg branch '^[A-Za-z0-
     (.base_commit | commit_or_null) and (.wip_commit | commit_or_null) and
     (if .group == "completed" then (.commit | clean and test($commit)) else (.commit | commit_or_null) end))
 ' "$tmp/items.jsonl" >/dev/null ||
-  { printf 'refusing to print the review: a child record under %s has a missing or unsafe id, branch, or commit\n' "$runs" >&2; exit 1; }
+  { printf 'refusing to print the review: a ledger entry in %s has a missing or unsafe id, branch, or commit\n' "$ledger" >&2; exit 1; }
 
 jq -n --arg board "$board_id" --arg workspace "$workspace" --arg answer "$kata_dir/answer" \
   --slurpfile state "$ledger" --slurpfile listing "$tmp/open.json" --slurpfile entries "$tmp/items.jsonl" '
@@ -111,7 +93,7 @@ jq -n --arg board "$board_id" --arg workspace "$workspace" --arg answer "$kata_d
     $item + (if $item.group == "completed" then {owner:null, labels:[]}
              else {owner:($live.owner // null), labels:($live.labels // [])} end) + {next:($item | next)})) as $items |
   {board_run_id:$board, workspace:$workspace, pipeline:($ledger.pipeline // null), finished:$ledger.finished,
-   stop_reason:($ledger.stop_reason // null), stop_child:($ledger.stop_child // null),
+   stop_reason:($ledger.stop_reason // null),
    completed:[$items[] | select(.group == "completed")],
    needs_decision:[$items[] | select(.group == "needs_decision")],
    needs_review:[$items[] | select(.group == "needs_review")],
@@ -143,7 +125,6 @@ jq -r --arg kata "$kata_dir" --arg home "$home" --arg q "'" '
     "  branch \(.branch), base \(.base_commit | short), wip \(.wip_commit | short)";
   "Board \(.board_run_id) in \(.workspace): \(if .stop_reason != null then "stopped" elif .finished then "finished" else "in progress" end)",
   (if .stop_reason != null then "Stop reason: \(.stop_reason | flat)" else empty end),
-  (if .stop_child != null then "  tracker -r \(.stop_child) \(.pipeline | path_arg)" else empty end),
   "Completed (\(.completed | length))",
   (.completed[] | "- \(.qualified_id): landed \(.commit | short) (run \(.run_id))"),
   "Needs decision (\(.needs_decision | length))",

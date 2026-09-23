@@ -44,19 +44,20 @@ pipeline makes no remote Git or GitHub calls; the operator decides when to push.
 Doctor Biz chose local trunk landing for whole-board runs. Each approved child
 fast-forwards trunk, so the next child starts from the landed commit; failed
 workers and unlanded task branches return to trunk and do not become a base. A
-close failure after the ref update leaves the approved commit on trunk. Tracker 0.73.1 native
-subgraphs share run identity/artifacts, so board.dip calls separate complete.dip
-CLI runs and records their IDs. Resume resolves the current child before another
-claim. No ready work with open items remaining means incomplete.
+close failure after the ref update leaves the approved commit on trunk. board.dip
+runs board-item.dip as a native looping subgraph (tracker 0.76.0), one kata per
+pass, recording each in the ledger; resume continues the whole board run. No
+ready work with open items remaining means incomplete.
 
 Tracker 0.73.1 treats any TUI exit as a run cancel. Pressing `q` or Ctrl-C in
-the TUI cancels the pipeline context, SIGKILLs the running tool's process group
-(for board.dip: the controller and its child tracker), and reports the failure
-as `command timed out after <node timeout>` because translateExecError labels
-every ctx.Err() a timeout. Run board.dip with `--no-tui`. A killed child keeps
-its kata claim, so resume the child before the board. Verified 2026-09-15 under
-tmux with a sleeping nested child: `q` and Ctrl-C both reproduced the exact
-board failure; the same runs left alone completed with the TUI on or off.
+the TUI cancels the pipeline context, SIGKILLs the running tool's process group,
+and reports the failure as `command timed out after <node timeout>` because
+translateExecError labels every ctx.Err() a timeout. Run board.dip with
+`--no-tui`. A killed run leaves its kata claim in place; recover by resuming the
+whole board run (there is no per-kata resume). Verified 2026-09-15 under tmux
+with a sleeping nested child on the old shell controller: `q` and Ctrl-C both
+reproduced the exact board failure; the same runs left alone completed with the
+TUI on or off. Cancel-on-TUI-exit is tracker-wide, not board-specific.
 
 kata scripts resolve every path physically (`pwd -P`), so a test that compares
 a path against script output must resolve its own path the same way. On this
@@ -78,7 +79,7 @@ in `board/state.json` and still ends with `board-needs-human`, so the parent
 holds the `Morning review` gate with the reason under the review's header; only
 failures before the ledger exists (Tracker variables unset, a missing tool, a
 held lock, an untrusted ledger) exit 1 with no marker, and their message is in
-`.tracker/runs/<board-run-id>/RunBoard/status.json`. `kata/board-report`
+`.tracker/runs/<board-run-id>/Preflight/status.json`. `kata/board-report`
 summarizes a board run and `kata/answer` comments a reply and releases the
 pipeline claim. Implement gets one automatic warm continue (450 turns) after a
 steady turn-limit breach; the second breach hands off.
@@ -169,14 +170,55 @@ prints among the event lines, and `gate_resolved` shares the `Enter choice` line
 dippin 0.72.0 and tracker 0.73.1 fail to parse ("unexpected top-level
 identifier").
 
-## Guard controller command substitutions under `set -e` (verified 2026-09-19)
+## Guard board command substitutions under `set -e` (verified 2026-09-20)
 
-A bare `value=$(kata ...)` exits `kata/scripts/run-board.sh` immediately when
-Kata fails, before the ledger stop helpers can save `stop_reason` and print
-`board-needs-human`. Route list failures through `stop_board` and child-specific
-show failures through `stop_for_inspection`; validating successful JSON does not
-cover a nonzero CLI exit.
+A bare `value=$(kata ...)` or `value=$(git ...)` exits the script the moment the
+command fails, before the ledger can save `stop_reason` and hold the board for a
+human. `kata/scripts/board-record.sh` guards every capture with
+`|| { stop_for_inspection "..."; return; }`, so a nonzero CLI exit becomes a
+recorded stop instead of a silent death; validating the JSON of a successful
+call does not cover the failing call.
 
-The close path has the same rule for Git reads: capture and check `git status`
-and `git worktree list` exit codes before interpreting their output. Empty output
-after a failed command does not prove a clean tree or an unused trunk.
+Git reads follow the same rule: capture and check `git symbolic-ref`,
+`git status --porcelain`, and `git rev-parse` exit codes before trusting their
+output. Empty output after a failed command does not prove a clean tree or a
+checked-out trunk.
+
+## The board is a looping subgraph, not a shell controller (rewritten 2026-09-20)
+
+board.dip runs `board-item.dip` (complete.dip's graph plus two fail edges) as a
+native looping subgraph inside ONE tracker run (tracker 0.76.0). Its nodes are
+Preflight, RunKata (the subgraph), RecordOutcome, Report, MorningReview, Exit —
+there is no RunBoard node and no run-board.sh (the old controller script was
+deleted). Every kata's steps now stream to the board console as `RunKata/<Node>`
+(ClaimNext, Implement, CloseSelected, Handoff, Exit, ...) under `--no-tui
+--json`. That streaming is the whole point of the rewrite: the old controller ran
+each kata as a hidden child process, so the board printed nothing for hours.
+
+`max_restarts` is pinned per run (`max_restarts: 200` in board.dip defaults).
+Tracker counts restarts once per run, not per node, so the sweep-again after each
+kata and Sweep again at the morning review both spend from the one budget. The
+run that trips it fails with `max restarts (200) exceeded`; start a fresh board
+run to keep going. tests/board.sh pins this against a two-restart probe.
+
+The durable board memory is the ledger
+(`.tracker/runs/<board-run-id>/board/state.json`), the Git branches and landed
+commits, and each kata's own labels and comments. After RecordOutcome reads them,
+`board-record.sh` scrubs the body's records — the RunKata node dirs (`ClaimNext/`,
+`CloseSelected/`, ...) and artifact files (`selected.json`, `handoff.json`, ...) —
+from the workspace ROOT; it NEVER touches Git state or `.tracker/`. A sweep-again
+rotates the run-id file so the next claim lands on a fresh branch name; a terminal
+outcome strips the managed excludes. `blocked.json` still lives in the board dir,
+removed once nothing remains open.
+
+Capabilities removed with the controller (lost, not disabled): per-kata resume
+via `tracker -r <child-id>` (the body is a nested run with no per-kata run dir or
+checkpoint — resume the whole board run instead), per-kata restart (one shared
+budget), and the controller runtime health-check (`child.pid`, `child.log`, and
+live-process reconciliation are gone).
+
+`kata/board-report <run-id>` prints the morning review from the ledger: a header
+`Board <id> in <ws>: stopped|finished|in progress`, a `Stop reason: <r>` line
+when one is set, then `Completed`, `Needs decision`, `Needs review`, and
+`Remaining open` sections, each with a count and one line per kata. It refuses to
+print when a ledger entry has a missing or unsafe id, branch, or commit.

@@ -4,6 +4,41 @@ Goal: process the target repository's board through the existing complete.dip,
 one ready, unowned item at a time. Run it from the local branch where approved
 work should land.
 
+## 2026-09-20: board.dip is now a looping subgraph
+
+board.dip no longer drives a shell controller. It is a native looping subgraph:
+board.dip runs `board-item.dip` (complete.dip's graph plus two fail edges) once
+per kata inside one Tracker run, on tracker 0.76.0. Every kata's steps now stream
+to the board console as `RunKata/<Node>` events (`--no-tui --json`), which is the
+whole reason for the change: the old controller ran each kata as a hidden child
+process, so the board printed nothing for hours.
+
+Preflight, RecordOutcome, and Report are tool nodes; the body's records live at
+the workspace root during a sweep and are scrubbed after RecordOutcome reads
+them. The durable board memory is the ledger under
+`.tracker/runs/<board-run-id>/board/state.json`, the Git branches and landed
+commits, and each kata's own labels and comments.
+
+Removed with the controller — capability lost, not disabled:
+
+- **Per-kata resume.** The body runs as a nested run whose nodes get only
+  `TRACKER_WORKDIR`; there is no per-kata run directory or checkpoint, so a stuck
+  kata can no longer be resumed on its own with `tracker -r <child-id>`. Resume
+  the whole board run instead.
+- **Per-kata restart.** One `max_restarts` budget belongs to the board run, not
+  to a kata, so a single kata can no longer be restarted independently.
+- **The controller's runtime health-check.** `child.pid`, `child.log`, and the
+  live-process reconciliation are gone; there is no child process to watch.
+
+`max_restarts` is now pinned per run. Tracker counts restarts once per run, so
+the sweep-again after each kata and `Sweep again` at the morning review both
+spend from the same budget (`max_restarts: 200` in board.dip). The run that trips
+it fails with `max restarts (200) exceeded`; start a fresh board run to keep
+going. tests/board.sh pins this against a two-restart probe.
+
+Everything below describes the superseded shell controller and is kept as
+history.
+
 Design: board.dip calls a shell controller through graph.workflow_dir. The
 controller launches separate Tracker CLI runs of complete.dip, since native
 subgraphs in Tracker 0.73.1 share run identity/artifacts and lack child checkpoints.

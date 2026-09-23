@@ -8,8 +8,8 @@ test -n "${TRACKER_WORKDIR:-}" || { printf 'TRACKER_WORKDIR is required\n' >&2; 
 # TRACKER_WORKDIR is set, so run state lives in the workspace and identity comes from the board's run-id file.
 workspace_dir=$(cd "$TRACKER_WORKDIR" && pwd -P)
 base="${TRACKER_RUN_DIR:-$workspace_dir}"
-# Tracker blanks a ${VAR:-DEFAULT} in command_file text when DEFAULT holds a command substitution that
-# redirects, so read the board's run-id file into a plain variable and fall back to that instead.
+# Tracker blanks any ${...} holding a literal dot in command_file text (even ${VAR:-DEFAULT} with VAR set),
+# and the .tracker path has one, so read it into a plain variable and fall back to that dot-free default.
 board_run_id=$(cat "$workspace_dir/.tracker/kata-board-run-id" 2>/dev/null || echo unknown)
 run_id="${TRACKER_RUN_ID:-$board_run_id}"
 state="$base/selected.json"

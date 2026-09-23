@@ -12,8 +12,8 @@ workspace=$(cd "$TRACKER_WORKDIR" && pwd -P)
 # Standalone complete.dip supplies TRACKER_RUN_DIR and TRACKER_RUN_ID. As a board subgraph body only
 # TRACKER_WORKDIR is set, so run state lives in the workspace and identity comes from the board's run-id file.
 base="${TRACKER_RUN_DIR:-$workspace}"
-# Tracker blanks a ${VAR:-DEFAULT} in command_file text when DEFAULT holds a command substitution that
-# redirects, so read the board's run-id file into a plain variable and fall back to that instead.
+# Tracker blanks any ${...} holding a literal dot in command_file text (even ${VAR:-DEFAULT} with VAR set),
+# and the .tracker path has one, so read it into a plain variable and fall back to that dot-free default.
 board_run_id=$(cat "$workspace/.tracker/kata-board-run-id" 2>/dev/null || true)
 run_id="${TRACKER_RUN_ID:-$board_run_id}"
 [ -n "$run_id" ] || { printf 'no run identity: set TRACKER_RUN_ID or write .tracker/kata-board-run-id\n' >&2; exit 1; }
