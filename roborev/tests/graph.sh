@@ -277,3 +277,64 @@ printf 'not-a-number\n' >"$repair_run_dir/roborev/repair-attempts"
 got=$(TRACKER_RUN_DIR="$repair_run_dir" sh "$test_root/RepairBudget.sh")
 [ "$(printf '%s\n' "$got" | tail -n 1)" = exhausted ] ||
   fail "RepairBudget with an unreadable counter printed '$got', want exhausted"
+
+# DeferCurrent stashes uncommitted work outside .tracker before it comments, so the
+# next review's `git add -A` can never commit an abandoned repair under the wrong
+# job. A stand-in roborev records the comment instead of calling the daemon, so
+# the assertions below read exactly what DeferCurrent sent it.
+extract_command DeferCurrent
+defer_repo="$test_root/defer-repo"
+git -c init.defaultBranch=main init -q "$defer_repo"
+mkdir -p "$defer_repo/.tracker"
+printf 'tracked\n' >"$defer_repo/tracked.txt"
+git -C "$defer_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t add tracked.txt
+git -C "$defer_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t commit -q -m seed
+
+defer_bin="$test_root/defer-bin"
+mkdir -p "$defer_bin"
+cat >"$defer_bin/roborev" <<'EOF'
+#!/bin/sh
+if [ "$1" = comment ]; then
+  shift
+  printf '%s\n' "$@" >"$DEFER_COMMENT_ARGS"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$defer_bin/roborev"
+
+defer_run_dir="$test_root/run-defer"
+mkdir -p "$defer_run_dir/roborev"
+printf '77\n' >"$defer_run_dir/roborev/current-job"
+comment_args="$test_root/defer-comment-args"
+
+# Dirty case: a tracked edit and an untracked file outside .tracker both stash;
+# .tracker itself is left alone.
+printf 'edited\n' >"$defer_repo/tracked.txt"
+printf 'new\n' >"$defer_repo/untracked.txt"
+printf 'scratch\n' >"$defer_repo/.tracker/scratch"
+(cd "$defer_repo" && PATH="$defer_bin:$PATH" TRACKER_RUN_DIR="$defer_run_dir" \
+  DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh") \
+  >"$test_root/DeferCurrent.out" 2>"$test_root/DeferCurrent.err" ||
+  fail "DeferCurrent exited nonzero on a dirty tree"
+[ "$(tail -n 1 "$test_root/DeferCurrent.out")" = defer_ok ] ||
+  fail "DeferCurrent did not end with defer_ok on a dirty tree"
+[ "$(cat "$defer_repo/tracked.txt")" = tracked ] || fail "DeferCurrent left the tracked edit unstashed"
+[ ! -e "$defer_repo/untracked.txt" ] || fail "DeferCurrent left the untracked file unstashed"
+[ -f "$defer_repo/.tracker/scratch" ] || fail "DeferCurrent stashed .tracker"
+git -C "$defer_repo" stash list | grep -q 'deferred job 77' || fail "the stash is not named for job 77"
+grep -q 'stash@{0}' "$comment_args" || fail "the roborev comment did not name stash@{0}"
+grep -q 'deferred job 77' "$comment_args" || fail "the roborev comment did not name the stash message"
+
+# Clean case: nothing outside .tracker is dirty, so no stash is made even though
+# .tracker itself still has untracked scratch content.
+git -C "$defer_repo" stash clear
+printf 'more scratch\n' >"$defer_repo/.tracker/scratch2"
+(cd "$defer_repo" && PATH="$defer_bin:$PATH" TRACKER_RUN_DIR="$defer_run_dir" \
+  DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh") \
+  >"$test_root/DeferCurrent.out" 2>"$test_root/DeferCurrent.err" ||
+  fail "DeferCurrent exited nonzero on a clean tree"
+[ "$(tail -n 1 "$test_root/DeferCurrent.out")" = defer_ok ] ||
+  fail "DeferCurrent did not end with defer_ok on a clean tree"
+[ -z "$(git -C "$defer_repo" stash list)" ] ||
+  fail "DeferCurrent stashed a tree that was clean outside .tracker"

@@ -337,8 +337,31 @@ workflow RoboRevIssueFixer
       job=$(tr -d '\r\n ' < "$STATE/current-job" 2>/dev/null || true)
       case "$job" in *[!0-9]*|0|'') printf 'defer_error\n'; exit 0 ;; esac
       grep -qx "$job" "$STATE/deferred" 2>/dev/null || printf '%s\n' "$job" >> "$STATE/deferred"
+
+      # A repair or secret-risk failure can leave edits behind. Without this, the
+      # next review's `git add -A` would commit them under the wrong job.
+      stash_note=
+      git status --porcelain --untracked-files=all -- . ':(exclude).tracker/**' > "$STATE/defer-status"
+      if [ -s "$STATE/defer-status" ]; then
+        stash_message="roborev_issue_fixer: deferred job $job"
+        if ! git stash push --include-untracked -m "$stash_message" -- . ':(exclude).tracker' \
+            >>"$STATE/defer.log" 2>&1; then
+          printf 'defer_error\n'
+          exit 0
+        fi
+        git status --porcelain --untracked-files=all -- . ':(exclude).tracker/**' > "$STATE/defer-status"
+        if [ -s "$STATE/defer-status" ]; then
+          printf 'defer_error\n'
+          exit 0
+        fi
+        stash_note="Stashed uncommitted changes as stash@{0} (\"$stash_message\")."
+      fi
+
       {
         printf 'Deferred by Tracker RoboRevIssueFixer; review intentionally left open.\n\n'
+        if [ -n "$stash_note" ]; then
+          printf '%s\n\n' "$stash_note"
+        fi
         cat "$STATE/triage.md" 2>/dev/null || true
         if [ -f "$TRACKER_RUN_DIR/ImplementFix/response.md" ]; then
           printf '\n\nImplementation attempt:\n'

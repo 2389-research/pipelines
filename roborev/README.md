@@ -45,6 +45,9 @@ CI pin (dippin 0.72.0), and the roborev commands match the 0.69.0 CLI.
   repair loop; past it, the review is deferred instead of repaired further.
   Both must stay below `max_restarts: 40`, which remains the engine's own
   backstop, and every agent still carries a `max_turns`.
+- A deferred review's uncommitted edits (outside `.tracker`) are stashed with
+  `git stash push --include-untracked`; the roborev comment on that review
+  names the stash message and `stash@{0}` so a human can find and recover it.
 - Quitting tracker 0.73.1's TUI cancelled the run it was showing (see
   [`gotchas.md`](../gotchas.md)).
 
