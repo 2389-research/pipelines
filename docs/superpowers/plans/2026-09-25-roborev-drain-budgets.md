@@ -5,6 +5,7 @@
 - Next: one independent review pass, then report to Doctor Biz
 - Open: none
 - Approved: "2" (2026-09-25): option 2, keep the queue loop in one run
+- Approved: "A" (2026-09-25): DeepSeek turn ceilings matching kata's, `max_turns: 100` for Triage, PatchAudit, NoOracleAudit, and AuditReReview, and `max_turns: 300` for ImplementFix
 - Withdrawn: Doctor Biz picked "a" (raise the limits to 400 restarts and 24h), then withdrew it: "but wait. isnt that a pipeline weakness that shoukd br solved in thr pipeline" and "not a hack" (2026-09-25)
 - Compactions: 0
 
