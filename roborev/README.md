@@ -5,7 +5,7 @@ A headless repair loop for [roborev](https://github.com/kenn-io/roborev) finding
 | File | Purpose |
 |------|---------|
 | [`roborev_issue_fixer.dip`](roborev_issue_fixer.dip) | Re-check each open review's findings against the code, repair the valid ones, verify, audit, commit, wait for roborev's re-review, and close what it resolves. |
-| [`drainrev.sh`](drainrev.sh) | Run the pipeline on a repository's current branch until its roborev queue is empty. |
+| [`drainrev.sh`](drainrev.sh) | Run the pipeline on a repository's current branch for up to `max_reviews` (30) reviews per run; run again to continue. |
 | [`check`](check) | Offline graph, audit-verdict, `drainrev.sh`, and shellcheck tests. Calls no model and no roborev daemon. |
 
 ## Run
@@ -21,12 +21,13 @@ Flags after `repo` go to tracker and win over the defaults: `--no-tui`, or
 
 The pipeline's Preflight validates `max_reviews` and `max_repairs` before
 touching the repository — both must be positive integers below
-`max_restarts`, else the run stops with `invalid_params` — then stops unless
-`roborev` and `jq` are on `PATH`, the tree is clean (tracker's own
-`.tracker/` aside), HEAD is on a named branch, `git var GIT_AUTHOR_IDENT`
-succeeds, and `roborev list` reaches the daemon. Queue snapshots use `jq` to
-pass agents each review's id, commit, branch, status, and verdict, never
-roborev's stored review prompt.
+`max_restarts`, else the run stops with `invalid_params` — then makes sure
+`.tracker/` is git-ignored (appending it to `.git/info/exclude` if it is not
+already ignored) and stops unless `roborev` and `jq` are on `PATH`, the tree
+is clean (`.tracker/` aside), HEAD is on a named branch, `git var
+GIT_AUTHOR_IDENT` succeeds, and `roborev list` reaches the daemon. Queue
+snapshots use `jq` to pass agents each review's id, commit, branch, status,
+and verdict, never roborev's stored review prompt.
 
 Agents run `deepseek-4.1-flash` through `openai-compat`, so tracker needs
 `OPENAI_COMPAT_API_KEY` and an `OPENAI_COMPAT_BASE_URL` that points at
@@ -42,12 +43,27 @@ CI pin (dippin 0.72.0), and the roborev commands match the 0.69.0 CLI.
   `max_reviews` (default 30) ends the run cleanly at a review boundary once
   that many reviews have been selected; run `drainrev.sh` again to continue
   with the rest of the queue. `max_repairs` (default 3) bounds each review's
-  repair loop; past it, the review is deferred instead of repaired further.
-  Both must stay below `max_restarts: 40`, which remains the engine's own
-  backstop, and every agent still carries a `max_turns`.
-- A deferred review's uncommitted edits (outside `.tracker`) are stashed with
+  repair loop, counting ImplementFix's first attempt as attempt 1 (three
+  ImplementFix runs per review at the default); past it, the review is
+  deferred instead of repaired further. ImplementFix's own `max_retries: 1`
+  can double the model calls behind a single counted attempt, since a
+  transient failure retries that same attempt once before RepairBudget sees
+  it. Both `max_reviews` and `max_repairs` must stay below `max_restarts: 40`,
+  which remains the engine's own backstop, and every agent still carries a
+  `max_turns`.
+- A deferred review's uncommitted edits are stashed with
   `git stash push --include-untracked`; the roborev comment on that review
-  names the stash message and `stash@{0}` so a human can find and recover it.
+  names the stash by its commit SHA (`git rev-parse -q --verify refs/stash`,
+  which still resolves after the stash entry itself is later dropped) and the
+  stash message, so a human can find and recover it. A `secret_risk` deferral
+  still stashes the flagged file — local only, inside `.git/objects`, never
+  pushed — and the comment names the flagged paths so a human knows what to
+  rotate before recovering it.
+- A review deferred in any run is recorded in
+  `<repo root>/.tracker/roborev/deferred`, so a later `drainrev.sh` run skips
+  it instead of re-attempting it before newer work. To retry a deferred
+  review, delete its id from that file before running `drainrev.sh` again;
+  there is no `--param` for this.
 - Quitting tracker 0.73.1's TUI cancelled the run it was showing (see
   [`gotchas.md`](../gotchas.md)).
 

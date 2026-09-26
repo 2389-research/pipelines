@@ -8,11 +8,13 @@ case ${1:-} in
     cat <<EOF
 usage: $0 [repo] [tracker flags...]
 
-Fixes and closes every open roborev review on the current branch of repo
-(default: the current directory) with roborev_issue_fixer.dip. Flags after
-repo go to tracker and win over the defaults, for example --no-tui, or
+Fixes and closes open roborev reviews on the current branch of repo (default:
+the current directory) with roborev_issue_fixer.dip, up to max_reviews
+(default 30) per run; run again to continue, and the final summary's REVIEW
+CAP block says whether more remain. Flags after repo go to tracker and win
+over the defaults, for example --no-tui, or
 --param review_id=42 --param drain_queue=false to fix one review, or
---param max_reviews=10 to stop cleanly after 10 reviews in one run.
+--param max_reviews=10 to change the per-run cap.
 EOF
     exit 0
     ;;

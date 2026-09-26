@@ -25,8 +25,11 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   independently of queue size: `max_reviews` (default 30) ends the run cleanly
   at a review boundary, and `max_repairs` (default 3) defers a review with its
   edits stashed instead of retrying it forever; `max_restarts: 40` remains the
-  engine's own backstop. `roborev/drainrev.sh` drains a repository's queue;
-  `roborev/check` runs the offline tests.
+  engine's own backstop. A deferral persists across runs
+  (`.tracker/roborev/deferred`, alongside `.tracker/` itself, which Preflight
+  git-ignores automatically), so a later run skips it instead of re-attempting
+  it before newer work. `roborev/drainrev.sh` drains a repository's queue, up
+  to the cap, one run at a time; `roborev/check` runs the offline tests.
 
 - `tracker-claw/agent.dip`: a conversational agent with human approval for each
   bounded task, proposal revision, result review, checkpoint-backed session

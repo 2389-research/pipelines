@@ -122,7 +122,7 @@ Human-in-the-loop games and debates.
 
 | Pipeline | Description |
 |----------|-------------|
-| [`roborev_issue_fixer.dip`](roborev/roborev_issue_fixer.dip) | Re-check, repair, verify, and re-review open roborev findings on the current branch, committing only audited fixes. [`drainrev.sh`](roborev/drainrev.sh) runs it until the queue is empty. |
+| [`roborev_issue_fixer.dip`](roborev/roborev_issue_fixer.dip) | Re-check, repair, verify, and re-review open roborev findings on the current branch, committing only audited fixes. [`drainrev.sh`](roborev/drainrev.sh) runs it for up to `max_reviews` (30) reviews per run; run again to continue. |
 
 ## How It Works
 
