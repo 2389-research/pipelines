@@ -16,6 +16,14 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `roborev/roborev_issue_fixer.dip`: a headless loop over open roborev reviews
+  on the current branch. It re-checks each finding against the code, repairs the
+  valid ones, runs the project's tests, audits the patch, commits, waits for
+  roborev's re-review, and closes the reviews that pass. Agents run
+  `deepseek-4.1-flash` over LunaRoute (`openai-compat`), and a validated
+  `AUDIT: approve` line gates every commit. `roborev/drainrev.sh` drains a
+  repository's queue; `roborev/check` runs the offline tests.
+
 - `tracker-claw/agent.dip`: a conversational agent with human approval for each
   bounded task, proposal revision, result review, checkpoint-backed session
   memory, and no automatic execution retry. Includes offline gate checks and
