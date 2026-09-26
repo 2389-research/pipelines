@@ -384,6 +384,7 @@ workflow RoboRevIssueFixer
   tool RepairBudget
     label: "Repair Budget Gate"
     timeout: 10s
+    output_limit: 1048576
     marker_grep: "^(repair|exhausted)$"
     command:
       #!/bin/sh
