@@ -118,6 +118,12 @@ Human-in-the-loop games and debates.
 |----------|-------------|
 | [`agent.dip`](tracker-claw/agent.dip) | Conversation with session memory: propose a bounded task, get human approval, execute, and review before the next request. |
 
+### [roborev](roborev/)
+
+| Pipeline | Description |
+|----------|-------------|
+| [`roborev_issue_fixer.dip`](roborev/roborev_issue_fixer.dip) | Re-check, repair, verify, and re-review open roborev findings on the current branch, committing only audited fixes. [`drainrev.sh`](roborev/drainrev.sh) runs it for up to `max_reviews` (30) reviews per run; run again to continue. |
+
 ## How It Works
 
 Each `.dip` file defines a workflow in the [Dippin language](https://github.com/2389-research/dippin-lang) — a DSL for describing agentic pipelines. Workflows declare nodes (agents, tools, human gates, parallel branches, conditionals) and edges with optional conditions.

@@ -1,0 +1,21 @@
+#!/bin/sh
+# ABOUTME: Runs the roborev pipeline's offline checks: graph routes, audit verdicts, drainrev, shellcheck.
+# ABOUTME: Never calls a model provider or a roborev daemon.
+set -eu
+
+case ${1:-} in
+  -h|--help)
+    printf 'usage: %s\nRuns offline Dippin, Tracker, and shell checks for roborev/.\n' "$0"
+    exit 0
+    ;;
+esac
+
+roborev_dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+command -v dippin >/dev/null
+command -v tracker >/dev/null
+command -v jq >/dev/null
+command -v shellcheck >/dev/null
+
+sh "$roborev_dir/tests/graph.sh"
+sh "$roborev_dir/tests/drainrev.sh"
+shellcheck "$roborev_dir/check" "$roborev_dir/drainrev.sh" "$roborev_dir"/tests/*.sh

@@ -16,6 +16,29 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `roborev/roborev_issue_fixer.dip`: a headless loop over open roborev reviews
+  on the current branch. It re-checks each finding against the code, repairs the
+  valid ones, runs the project's tests, audits the patch, commits, waits for
+  roborev's re-review, and closes the reviews that pass. Agents run
+  `deepseek-4.1-flash` over LunaRoute (`openai-compat`), and a validated
+  `AUDIT: approve` line gates every commit. CommitFix verifies the tree it is
+  about to commit still matches the one DiffGate audited (`git write-tree`),
+  aborting instead of committing an unreviewed change if anything wrote to
+  the tree in between; DiffGate itself also screens staged file names for
+  secrets before building any audit packet, so a secret's contents never
+  reach PatchAudit's prompt. On-disk counters bound each drain independently
+  of queue size: `max_reviews` (default 30) ends the run cleanly at a review
+  boundary, and `max_repairs` (default 3) defers a review with its edits
+  stashed instead of retrying it forever; a Triage failure defers that one
+  review too, instead of aborting the whole run; `max_restarts: 40` remains
+  the engine's own backstop. A deferral persists across runs, once fully
+  successful, in `.tracker/roborev/deferred` (alongside `.tracker/` itself,
+  which Preflight git-ignores automatically, creating `.git/info/` if needed
+  and never corrupting an existing exclude rule), so a later run skips it
+  instead of re-attempting it before newer work. `roborev/drainrev.sh` drains
+  a repository's queue, up to the cap, one run at a time; `roborev/check`
+  runs the offline tests.
+
 - `tracker-claw/agent.dip`: a conversational agent with human approval for each
   bounded task, proposal revision, result review, checkpoint-backed session
   memory, and no automatic execution retry. Includes offline gate checks and
