@@ -11,7 +11,8 @@ usage: $0 [repo] [tracker flags...]
 Fixes and closes every open roborev review on the current branch of repo
 (default: the current directory) with roborev_issue_fixer.dip. Flags after
 repo go to tracker and win over the defaults, for example --no-tui, or
---param review_id=42 --param drain_queue=false to fix one review.
+--param review_id=42 --param drain_queue=false to fix one review, or
+--param max_reviews=10 to stop cleanly after 10 reviews in one run.
 EOF
     exit 0
     ;;

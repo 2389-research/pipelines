@@ -32,6 +32,12 @@ jq -e '
 ' "$test_root/check.json" >/dev/null || fail "unexpected dippin diagnostics; see $test_root/check.json"
 tracker validate "$workflow" >"$test_root/tracker-validate" 2>&1 || fail "tracker validate failed"
 
+# The per-review counters (option 2) replace the run-wide clock: no code path
+# should reintroduce a graph-level max_wall_time.
+if grep -q 'max_wall_time' "$workflow"; then
+  fail "max_wall_time must not appear in the workflow"
+fi
+
 dippin simulate "$workflow" --all-paths >"$test_root/events" 2>"$test_root/paths" ||
   fail "dippin simulate failed"
 
@@ -49,15 +55,44 @@ jq -se '
   and all(.from == "RoutePatchAudit" and .condition == "ctx.tool_marker = approve")
 ' "$test_root/events" >/dev/null || fail "CommitFix must be reachable only from RoutePatchAudit on approve"
 
-# extract_command NODE: write the tool node's command, dedented, to $test_root/NODE.sh.
+# RepairBudget is the only gate that may hand work to ImplementFix, so every path
+# into it -- including re-review failures and no-change loops that loop back
+# through RouteTriage's fix edge -- is bounded by the same repair budget.
+jq -se '
+  [.[] | select(.event == "edge_traverse" and .to == "ImplementFix")]
+  | length > 0
+  and all(.from == "RepairBudget" and .condition == "ctx.tool_marker = repair")
+' "$test_root/events" >/dev/null || fail "ImplementFix must be reachable only from RepairBudget on repair"
+
+jq -se '
+  any(.[]; .event == "edge_traverse" and .from == "RepairBudget" and .to == "DeferCurrent" and .condition == "ctx.tool_marker = exhausted")
+' "$test_root/events" >/dev/null || fail "RepairBudget must route exhausted to DeferCurrent"
+
+jq -se '
+  any(.[]; .event == "edge_traverse" and .from == "QueueContext" and .to == "FinalContext" and .condition == "ctx.tool_marker = review_cap")
+' "$test_root/events" >/dev/null || fail "QueueContext must route review_cap to FinalContext"
+
+# extract_command NODE [KEY=VALUE...]: write the tool node's command, dedented, to
+# $test_root/NODE.sh. Tracker replaces ${params.KEY} and ${graph.KEY} textually
+# before a tool command ever reaches sh, so plain sh cannot parse those raw
+# tokens; each KEY=VALUE renders both namespaces' token to VALUE the same way.
 extract_command() {
-  awk -v node="$1" '
+  node=$1
+  shift
+  awk -v node="$node" '
     $1 == "tool" && $2 == node { found = 1; next }
     found && /^  [^ ]/ { exit }
     found && $1 == "command:" { body = 1; next }
     body { sub(/^      /, ""); print }
-  ' "$workflow" >"$test_root/$1.sh"
-  [ -s "$test_root/$1.sh" ] || fail "$1 has no command"
+  ' "$workflow" >"$test_root/$node.sh"
+  [ -s "$test_root/$node.sh" ] || fail "$node has no command"
+  for kv in "$@"; do
+    key=${kv%%=*}
+    value=${kv#*=}
+    sed "s/\${params\.$key}/$value/g; s/\${graph\.$key}/$value/g" \
+      "$test_root/$node.sh" >"$test_root/$node.sh.tmp"
+    mv "$test_root/$node.sh.tmp" "$test_root/$node.sh"
+  done
 }
 
 # Run the verdict parser exactly as the pipeline writes it against sample audit responses.
@@ -97,30 +132,68 @@ EOF
 printf '#!/bin/sh\ncat "%s"\n' "$test_root/queue.json" >"$stub_bin/roborev"
 chmod +x "$stub_bin/roborev"
 
-# expect_queue_snapshot NODE MARKER SAVED: the node keeps the full list in roborev/SAVED but
-# prints only per-review selection fields. Forty open reviews once put 1.3 MB of job
-# prompts into SelectReview and overflowed DeepSeek's 1M-token context.
+# expect_queue_snapshot NODE MARKER SAVED [KEY=VALUE...]: the node keeps the full list
+# in roborev/SAVED but prints only per-review selection fields. Forty open reviews
+# once put 1.3 MB of job prompts into SelectReview and overflowed DeepSeek's 1M-token
+# context. selected-count defaults to 0 (well under any max_reviews used here), so
+# the snapshot runs its normal, uncapped path.
 expect_queue_snapshot() {
-  extract_command "$1"
-  run_dir="$test_root/run-$1"
+  node=$1
+  marker=$2
+  saved=$3
+  shift 3
+  extract_command "$node" "$@"
+  run_dir="$test_root/run-$node"
   mkdir -p "$run_dir/roborev"
-  (cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$run_dir" sh "$test_root/$1.sh") \
-    >"$test_root/$1.out" 2>"$test_root/$1.err" || fail "$1 exited nonzero"
-  [ "$(tail -n 1 "$test_root/$1.out")" = "$2" ] || fail "$1 did not end with $2"
-  if grep -q REVIEW-PROMPT-BODY "$test_root/$1.out"; then
-    fail "$1 passed job prompts to the agent"
+  printf '0\n' >"$run_dir/roborev/selected-count"
+  (cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$run_dir" sh "$test_root/$node.sh") \
+    >"$test_root/$node.out" 2>"$test_root/$node.err" || fail "$node exited nonzero"
+  [ "$(tail -n 1 "$test_root/$node.out")" = "$marker" ] || fail "$node did not end with $marker"
+  if grep -q REVIEW-PROMPT-BODY "$test_root/$node.out"; then
+    fail "$node passed job prompts to the agent"
   fi
-  grep -q '"id":61,"git_ref":"929d219"' "$test_root/$1.out" || fail "$1 dropped review 61"
-  grep -q '"verdict":"P"' "$test_root/$1.out" || fail "$1 dropped review 64's verdict"
-  grep -q REVIEW-PROMPT-BODY "$run_dir/roborev/$3" || fail "$1 did not keep the full list in $3"
+  grep -q '"id":61,"git_ref":"929d219"' "$test_root/$node.out" || fail "$node dropped review 61"
+  grep -q '"verdict":"P"' "$test_root/$node.out" || fail "$node dropped review 64's verdict"
+  grep -q REVIEW-PROMPT-BODY "$run_dir/roborev/$saved" || fail "$node did not keep the full list in $saved"
 }
 
-expect_queue_snapshot QueueContext queue_ready open.json
-expect_queue_snapshot FinalContext final_ready final-open.json
+expect_queue_snapshot QueueContext queue_ready open.json max_reviews=30
+expect_queue_snapshot FinalContext final_ready final-open.json max_reviews=30
 
-# Preflight names a missing jq before any queue snapshot needs it. macOS ships /usr/bin/jq,
-# so the run gets a PATH holding only git, mkdir, and the stand-in roborev.
-extract_command Preflight
+# At the review cap, QueueContext must stop before ever calling roborev.
+extract_command QueueContext max_reviews=2
+cap_run_dir="$test_root/run-queuecap"
+mkdir -p "$cap_run_dir/roborev"
+printf '2\n' >"$cap_run_dir/roborev/selected-count"
+got=$(cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$cap_run_dir" sh "$test_root/QueueContext.sh")
+[ "$got" = review_cap ] || fail "QueueContext at the cap printed '$got', want review_cap"
+[ ! -e "$cap_run_dir/roborev/open.json" ] || fail "QueueContext called roborev after reaching the cap"
+
+# FinalContext reports the review-cap block whether or not the cap was reached.
+extract_command FinalContext max_reviews=3
+atcap_run_dir="$test_root/run-finalcap"
+mkdir -p "$atcap_run_dir/roborev"
+printf '3\n' >"$atcap_run_dir/roborev/selected-count"
+(cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$atcap_run_dir" sh "$test_root/FinalContext.sh") \
+  >"$test_root/FinalContext-cap.out" 2>"$test_root/FinalContext-cap.err" ||
+  fail "FinalContext at the cap exited nonzero"
+grep -q '^selected: 3$' "$test_root/FinalContext-cap.out" || fail "FinalContext did not report selected at the cap"
+grep -q '^max_reviews: 3$' "$test_root/FinalContext-cap.out" || fail "FinalContext did not report max_reviews at the cap"
+grep -q '^cap_reached: yes$' "$test_root/FinalContext-cap.out" || fail "FinalContext did not mark cap_reached yes at the cap"
+
+extract_command FinalContext max_reviews=30
+belowcap_run_dir="$test_root/run-finalbelowcap"
+mkdir -p "$belowcap_run_dir/roborev"
+printf '5\n' >"$belowcap_run_dir/roborev/selected-count"
+(cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$belowcap_run_dir" sh "$test_root/FinalContext.sh") \
+  >"$test_root/FinalContext-belowcap.out" 2>"$test_root/FinalContext-belowcap.err" ||
+  fail "FinalContext below the cap exited nonzero"
+grep -q '^cap_reached: no$' "$test_root/FinalContext-belowcap.out" || fail "FinalContext marked cap_reached yes below the cap"
+
+# Preflight validates the review-loop params before touching git or roborev at all
+# (invalid_params below), then names a missing jq before any queue snapshot needs
+# it. macOS ships /usr/bin/jq, so the run gets a PATH holding only git, mkdir, and
+# the stand-in roborev.
 preflight_repo="$test_root/preflight-repo"
 git -c init.defaultBranch=main init -q "$preflight_repo"
 bare_bin="$test_root/bare-bin"
@@ -129,6 +202,78 @@ for tool in git mkdir; do
   ln -s "$(command -v "$tool")" "$bare_bin/$tool"
 done
 ln -s "$stub_bin/roborev" "$bare_bin/roborev"
+
+# invalid_params cases: a bad value in either param, and either param at or above
+# max_restarts, all short-circuit before Preflight ever reads git or roborev.
+extract_command Preflight max_reviews=0 max_repairs=3 max_restarts=40
+got=$(cd "$preflight_repo" &&
+  PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight-zero" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = invalid_params ] || fail "Preflight with max_reviews=0 printed '$got', want invalid_params"
+
+extract_command Preflight max_reviews=30 max_repairs=abc max_restarts=40
+got=$(cd "$preflight_repo" &&
+  PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight-nan" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = invalid_params ] || fail "Preflight with max_repairs=abc printed '$got', want invalid_params"
+
+extract_command Preflight max_reviews=40 max_repairs=3 max_restarts=40
+got=$(cd "$preflight_repo" &&
+  PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight-reviews-ge" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = invalid_params ] || fail "Preflight with max_reviews >= max_restarts printed '$got', want invalid_params"
+
+extract_command Preflight max_reviews=30 max_repairs=40 max_restarts=40
+got=$(cd "$preflight_repo" &&
+  PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight-repairs-ge" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = invalid_params ] || fail "Preflight with max_repairs >= max_restarts printed '$got', want invalid_params"
+
+extract_command Preflight max_reviews=30 max_repairs=3 max_restarts=40
 got=$(cd "$preflight_repo" &&
   PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight" /bin/sh "$test_root/Preflight.sh")
 [ "$got" = missing_jq ] || fail "Preflight without jq printed '$got', want missing_jq"
+
+# RecordSelection starts a fresh repair budget and clears the previous review's
+# logs on every new top-level selection, so no feedback leaks between reviews.
+extract_command RecordSelection
+record_run_dir="$test_root/run-record"
+mkdir -p "$record_run_dir/roborev" "$record_run_dir/SelectReview"
+printf 'SELECTION: 91\nSTATUS: success\n' >"$record_run_dir/SelectReview/response.md"
+printf '2\n' >"$record_run_dir/roborev/selected-count"
+printf '1\n' >"$record_run_dir/roborev/repair-attempts"
+printf 'stale verify output\n' >"$record_run_dir/roborev/verify.log"
+printf 'stale commit output\n' >"$record_run_dir/roborev/commit.log"
+got=$(TRACKER_RUN_DIR="$record_run_dir" sh "$test_root/RecordSelection.sh")
+[ "$got" = selected ] || fail "RecordSelection with a valid selection printed '$got', want selected"
+[ "$(cat "$record_run_dir/roborev/selected-count")" = 3 ] || fail "RecordSelection did not increment selected-count"
+[ "$(cat "$record_run_dir/roborev/repair-attempts")" = 0 ] || fail "RecordSelection did not reset repair-attempts"
+[ ! -s "$record_run_dir/roborev/verify.log" ] || fail "RecordSelection did not empty verify.log"
+[ ! -s "$record_run_dir/roborev/commit.log" ] || fail "RecordSelection did not empty commit.log"
+
+# RepairBudget gates ImplementFix on an on-disk per-review counter and feeds it the
+# previous attempt's verification/commit tails, since ImplementFix's ${ctx.tool_stdout}
+# now comes from this node instead of straight from VerifyProject/CommitFix.
+extract_command RepairBudget max_repairs=3
+repair_run_dir="$test_root/run-repair"
+mkdir -p "$repair_run_dir/roborev"
+printf '1\n' >"$repair_run_dir/roborev/repair-attempts"
+printf 'VERIFY TAIL MARKER\n' >"$repair_run_dir/roborev/verify.log"
+printf 'COMMIT TAIL MARKER\n' >"$repair_run_dir/roborev/commit.log"
+out=$(TRACKER_RUN_DIR="$repair_run_dir" sh "$test_root/RepairBudget.sh")
+[ "$(printf '%s\n' "$out" | tail -n 1)" = repair ] || fail "RepairBudget under budget did not print repair"
+[ "$(cat "$repair_run_dir/roborev/repair-attempts")" = 2 ] || fail "RepairBudget did not increment repair-attempts"
+printf '%s\n' "$out" | grep -q 'VERIFY TAIL MARKER' ||
+  fail "RepairBudget dropped the verification log tail before its marker"
+printf '%s\n' "$out" | grep -q 'COMMIT TAIL MARKER' ||
+  fail "RepairBudget dropped the commit log tail before its marker"
+
+# At budget, RepairBudget defers instead of trying again, and logs why.
+printf '3\n' >"$repair_run_dir/roborev/repair-attempts"
+: >"$repair_run_dir/roborev/repair-budget.log"
+got=$(TRACKER_RUN_DIR="$repair_run_dir" sh "$test_root/RepairBudget.sh")
+[ "$(printf '%s\n' "$got" | tail -n 1)" = exhausted ] || fail "RepairBudget at budget did not print exhausted"
+[ "$(cat "$repair_run_dir/roborev/repair-attempts")" = 3 ] || fail "RepairBudget at budget must not increment further"
+[ -s "$repair_run_dir/roborev/repair-budget.log" ] || fail "RepairBudget did not log the exhaustion reason"
+
+# An unreadable counter fails closed to exhausted rather than restarting from zero.
+printf 'not-a-number\n' >"$repair_run_dir/roborev/repair-attempts"
+got=$(TRACKER_RUN_DIR="$repair_run_dir" sh "$test_root/RepairBudget.sh")
+[ "$(printf '%s\n' "$got" | tail -n 1)" = exhausted ] ||
+  fail "RepairBudget with an unreadable counter printed '$got', want exhausted"

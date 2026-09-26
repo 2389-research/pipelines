@@ -19,11 +19,14 @@ Flags after `repo` go to tracker and win over the defaults: `--no-tui`, or
 `--param review_id=42 --param drain_queue=false` to fix one review.
 `drainrev.sh` resolves symlinks, so a link on your `PATH` works.
 
-The pipeline's Preflight stops the run unless `roborev` and `jq` are on `PATH`,
-the tree is clean (tracker's own `.tracker/` aside), HEAD is on a named branch,
-`git var GIT_AUTHOR_IDENT` succeeds, and `roborev list` reaches the daemon.
-Queue snapshots use `jq` to pass agents each review's id, commit, branch,
-status, and verdict, never roborev's stored review prompt.
+The pipeline's Preflight validates `max_reviews` and `max_repairs` before
+touching the repository — both must be positive integers below
+`max_restarts`, else the run stops with `invalid_params` — then stops unless
+`roborev` and `jq` are on `PATH`, the tree is clean (tracker's own
+`.tracker/` aside), HEAD is on a named branch, `git var GIT_AUTHOR_IDENT`
+succeeds, and `roborev list` reaches the daemon. Queue snapshots use `jq` to
+pass agents each review's id, commit, branch, status, and verdict, never
+roborev's stored review prompt.
 
 Agents run `deepseek-4.1-flash` through `openai-compat`, so tracker needs
 `OPENAI_COMPAT_API_KEY` and an `OPENAI_COMPAT_BASE_URL` that points at
@@ -35,8 +38,13 @@ CI pin (dippin 0.72.0), and the roborev commands match the 0.69.0 CLI.
 
 - No token cap: `--max-tokens` defaults to 0. `--max-cost` never trips, because
   tracker prices `openai-compat` models missing from dippin's catalog at $0.
-- The pipeline bounds itself with `max_wall_time: 4h`, `max_restarts: 40`, and a
-  `max_turns` on every agent.
+- No run-wide clock: operators can still bound one with `--max-wall-time`.
+  `max_reviews` (default 30) ends the run cleanly at a review boundary once
+  that many reviews have been selected; run `drainrev.sh` again to continue
+  with the rest of the queue. `max_repairs` (default 3) bounds each review's
+  repair loop; past it, the review is deferred instead of repaired further.
+  Both must stay below `max_restarts: 40`, which remains the engine's own
+  backstop, and every agent still carries a `max_turns`.
 - Quitting tracker 0.73.1's TUI cancelled the run it was showing (see
   [`gotchas.md`](../gotchas.md)).
 

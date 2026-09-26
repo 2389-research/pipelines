@@ -11,22 +11,25 @@ workflow RoboRevIssueFixer
     provider: openai-compat
     max_retries: 2
     max_restarts: 40
-    max_wall_time: 4h
     stall_timeout: 20m
     fidelity: summary:high
     compaction: summary
 
   # CLI-friendly controls. Tracker exposes these through repeatable --param.
+  # No run-wide clock: the review and repair counters below bound a drain
+  # instead, independent of queue size (roborev/README.md Limits).
   vars
     review_id: 0
     drain_queue: true
+    max_reviews: 30
+    max_repairs: 3
 
   # Fail closed before touching source. Tracker creates .tracker artifacts itself,
   # so the cleanliness check deliberately ignores only that tree.
   tool Preflight
     label: "Preflight repository and RoboRev"
     timeout: 30s
-    marker_grep: "^(ok|not_repo|dirty|missing_roborev|missing_jq|daemon_error|detached_head|git_identity_error)$"
+    marker_grep: "^(ok|not_repo|dirty|missing_roborev|missing_jq|daemon_error|detached_head|git_identity_error|invalid_params)$"
     command:
       #!/bin/sh
       set -u
@@ -34,6 +37,34 @@ workflow RoboRevIssueFixer
       mkdir -p "$STATE"
       LOG="$STATE/preflight.log"
       : > "$LOG"
+
+      # Validate the review-loop budgets before touching git or roborev at all, so
+      # a typo'd --param cannot leave a half-initialized run. Both must be positive
+      # integers and stay below the engine's own max_restarts, which bounds them.
+      max_reviews=${params.max_reviews}
+      max_repairs=${params.max_repairs}
+      max_restarts=${graph.max_restarts}
+      is_positive_int() {
+        case $1 in
+          ''|*[!0-9]*|0) return 1 ;;
+          *) return 0 ;;
+        esac
+      }
+      reason=
+      if ! is_positive_int "$max_reviews"; then
+        reason="max_reviews ($max_reviews) is not a positive integer"
+      elif ! is_positive_int "$max_repairs"; then
+        reason="max_repairs ($max_repairs) is not a positive integer"
+      elif [ "$max_reviews" -ge "$max_restarts" ]; then
+        reason="max_reviews ($max_reviews) must be below max_restarts ($max_restarts)"
+      elif [ "$max_repairs" -ge "$max_restarts" ]; then
+        reason="max_repairs ($max_repairs) must be below max_restarts ($max_restarts)"
+      fi
+      if [ -n "$reason" ]; then
+        printf '%s\n' "$reason" >>"$LOG"
+        printf 'invalid_params\n'
+        exit 0
+      fi
 
       if ! git rev-parse --show-toplevel >>"$LOG" 2>&1; then
         printf 'not_repo\n'
@@ -76,6 +107,8 @@ workflow RoboRevIssueFixer
       : > "$STATE/chain"
       : > "$STATE/triage.md"
       : > "$STATE/verify.log"
+      printf '0\n' > "$STATE/selected-count"
+      printf '0\n' > "$STATE/repair-attempts"
       git rev-parse HEAD > "$STATE/expected-head"
       printf 'ok\n'
 
@@ -87,11 +120,20 @@ workflow RoboRevIssueFixer
     label: "Snapshot open review queue"
     timeout: 30s
     output_limit: 4194304
-    marker_grep: "^(queue_ready|queue_error)$"
+    marker_grep: "^(queue_ready|queue_error|review_cap)$"
     command:
       #!/bin/sh
       set -u
       STATE="$TRACKER_RUN_DIR/roborev"
+      # The review cap is checked before any roborev call, so a capped run costs
+      # nothing beyond reading its own counter.
+      max_reviews=${params.max_reviews}
+      selected=$(tr -d '\r\n ' < "$STATE/selected-count" 2>/dev/null || true)
+      case $selected in ''|*[!0-9]*) selected=0 ;; esac
+      if [ "$selected" -ge "$max_reviews" ]; then
+        printf 'review_cap\n'
+        exit 0
+      fi
       if ! roborev list --open --json --limit 200 > "$STATE/open.json" 2>"$STATE/open.err"; then
         printf 'queue_error\n'
         exit 0
@@ -175,6 +217,14 @@ workflow RoboRevIssueFixer
           # A new top-level selection starts a fresh repair chain. A re-review
           # failure updates current-job later without coming through this node.
           printf '%s\n' "$selection" > "$STATE/chain"
+          # A new review gets a fresh repair budget and no leftover feedback from
+          # whichever review ran before it.
+          selected_count=$(tr -d '\r\n ' < "$STATE/selected-count" 2>/dev/null || true)
+          case $selected_count in ''|*[!0-9]*) selected_count=0 ;; esac
+          printf '%s\n' "$((selected_count + 1))" > "$STATE/selected-count"
+          printf '0\n' > "$STATE/repair-attempts"
+          : > "$STATE/verify.log"
+          : > "$STATE/commit.log"
           printf 'selected\n'
           ;;
       esac
@@ -301,6 +351,42 @@ workflow RoboRevIssueFixer
       else
         printf 'defer_error\n'
       fi
+
+  # The only gate into ImplementFix. Bounds the whole repair chain -- including
+  # re-review failures and no-change loops, which all pass back through
+  # RouteTriage's fix edge -- so max_restarts stays the engine's backstop, not a
+  # per-review budget. ImplementFix's ${ctx.tool_stdout} now comes from here, so
+  # the previous attempt's verification/commit tails are printed before the
+  # marker for it to read.
+  tool RepairBudget
+    label: "Repair Budget Gate"
+    timeout: 10s
+    marker_grep: "^(repair|exhausted)$"
+    command:
+      #!/bin/sh
+      set -u
+      STATE="$TRACKER_RUN_DIR/roborev"
+      max_repairs=${params.max_repairs}
+      printf '%s\n' '--- LAST VERIFICATION LOG TAIL ---'
+      tail -n 250 "$STATE/verify.log" 2>/dev/null || true
+      printf '%s\n' '--- LAST COMMIT LOG TAIL ---'
+      tail -n 120 "$STATE/commit.log" 2>/dev/null || true
+
+      attempts=$(tr -d '\r\n ' < "$STATE/repair-attempts" 2>/dev/null || true)
+      case $attempts in
+        ''|*[!0-9]*)
+          printf 'repair-attempts (%s) is unreadable; deferring\n' "$attempts" >>"$STATE/repair-budget.log"
+          printf 'exhausted\n'
+          exit 0
+          ;;
+      esac
+      if [ "$attempts" -ge "$max_repairs" ]; then
+        printf 'repair budget exhausted: %s attempts (max %s)\n' "$attempts" "$max_repairs" >>"$STATE/repair-budget.log"
+        printf 'exhausted\n'
+        exit 0
+      fi
+      printf '%s\n' "$((attempts + 1))" > "$STATE/repair-attempts"
+      printf 'repair\n'
 
   agent ImplementFix
     label: "Implement minimal verified repair"
@@ -707,6 +793,7 @@ workflow RoboRevIssueFixer
       #!/bin/sh
       set -u
       STATE="$TRACKER_RUN_DIR/roborev"
+      max_reviews=${params.max_reviews}
       if ! roborev list --open --json --limit 200 > "$STATE/final-open.json" 2>"$STATE/final-open.err"; then
         printf 'final_error\n'
         exit 0
@@ -721,6 +808,17 @@ workflow RoboRevIssueFixer
         printf 'final_error\n'
         exit 0
       fi
+      selected=$(tr -d '\r\n ' < "$STATE/selected-count" 2>/dev/null || true)
+      case $selected in ''|*[!0-9]*) selected=0 ;; esac
+      if [ "$selected" -ge "$max_reviews" ]; then
+        cap_reached=yes
+      else
+        cap_reached=no
+      fi
+      printf '%s\n' '--- REVIEW CAP ---'
+      printf 'selected: %s\n' "$selected"
+      printf 'max_reviews: %s\n' "$max_reviews"
+      printf 'cap_reached: %s\n' "$cap_reached"
       printf '%s\n' '--- FINAL HEAD ---'
       git rev-parse HEAD
       printf '%s\n' 'final_ready'
@@ -748,11 +846,12 @@ workflow RoboRevIssueFixer
       - if review_id > 0, that exact ID appears in COMPLETED; or
       - if review_id == 0 and drain_queue == false, either at least one review
         is COMPLETED or there are no remaining open reviews; or
-      - if review_id == 0 and drain_queue == true, no eligible open review remains.
+      - if review_id == 0 and drain_queue == true, no eligible open review
+        remains, or the REVIEW CAP block shows cap_reached: yes.
 
-      A malformed parameter, deferred item, missing requested completion, or
-      remaining eligible review is failure. Summarize completed/deferred/open IDs
-      and final HEAD.
+      A malformed parameter, deferred item, missing requested completion, or a
+      remaining eligible review with cap_reached: no is failure. Summarize
+      completed/deferred/open IDs, the review cap, and final HEAD.
 
       End with STATUS: success only when the criteria are met.
       Otherwise end with STATUS: fail.
@@ -778,6 +877,7 @@ workflow RoboRevIssueFixer
     Preflight -> Abort
 
     QueueContext -> SelectReview when ctx.tool_marker = queue_ready
+    QueueContext -> FinalContext when ctx.tool_marker = review_cap
     QueueContext -> Abort
 
     SelectReview -> RecordSelection when ctx.outcome = success
@@ -793,7 +893,7 @@ workflow RoboRevIssueFixer
     Triage -> RouteTriage when ctx.outcome = success
     Triage -> Abort when ctx.outcome = fail
 
-    RouteTriage -> ImplementFix when ctx.tool_marker = fix
+    RouteTriage -> RepairBudget when ctx.tool_marker = fix
     RouteTriage -> CloseDisproved when ctx.tool_marker = close
     RouteTriage -> DeferCurrent when ctx.tool_marker = defer
     RouteTriage -> Abort
@@ -804,16 +904,20 @@ workflow RoboRevIssueFixer
     DeferCurrent -> QueueContext when ctx.tool_marker = defer_ok restart: true
     DeferCurrent -> Abort
 
+    RepairBudget -> ImplementFix when ctx.tool_marker = repair
+    RepairBudget -> DeferCurrent when ctx.tool_marker = exhausted
+    RepairBudget -> Abort
+
     ImplementFix -> VerifyProject when ctx.outcome = success
     ImplementFix -> DeferCurrent when ctx.outcome = fail
 
     VerifyProject -> DiffGate when ctx.tool_marker = verify_pass
-    VerifyProject -> ImplementFix when ctx.tool_marker = verify_fail restart: true
+    VerifyProject -> RepairBudget when ctx.tool_marker = verify_fail restart: true
     VerifyProject -> NoOracleAudit when ctx.tool_marker = verify_unknown
     VerifyProject -> Abort
 
     NoOracleAudit -> DiffGate when ctx.outcome = success
-    NoOracleAudit -> ImplementFix when ctx.outcome = fail restart: true
+    NoOracleAudit -> RepairBudget when ctx.outcome = fail restart: true
 
     DiffGate -> PatchAudit when ctx.tool_marker = diff_safe
     DiffGate -> SnapshotReview when ctx.tool_marker = no_changes restart: true
@@ -821,16 +925,16 @@ workflow RoboRevIssueFixer
     DiffGate -> Abort
 
     PatchAudit -> RoutePatchAudit when ctx.outcome = success
-    PatchAudit -> ImplementFix when ctx.outcome = fail restart: true
+    PatchAudit -> RepairBudget when ctx.outcome = fail restart: true
 
     RoutePatchAudit -> CommitFix when ctx.tool_marker = approve
-    RoutePatchAudit -> ImplementFix when ctx.tool_marker = reject restart: true
+    RoutePatchAudit -> RepairBudget when ctx.tool_marker = reject restart: true
     RoutePatchAudit -> Abort
 
     CommitFix -> WaitRoboRev when ctx.tool_marker = commit_ok
     CommitFix -> SnapshotReview when ctx.tool_marker = no_changes restart: true
     CommitFix -> DeferCurrent when ctx.tool_marker = secret_risk
-    CommitFix -> ImplementFix when ctx.tool_marker = commit_fail restart: true
+    CommitFix -> RepairBudget when ctx.tool_marker = commit_fail restart: true
     CommitFix -> Abort when ctx.tool_marker = head_moved
     CommitFix -> Abort
 

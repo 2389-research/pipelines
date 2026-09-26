@@ -21,8 +21,12 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   valid ones, runs the project's tests, audits the patch, commits, waits for
   roborev's re-review, and closes the reviews that pass. Agents run
   `deepseek-4.1-flash` over LunaRoute (`openai-compat`), and a validated
-  `AUDIT: approve` line gates every commit. `roborev/drainrev.sh` drains a
-  repository's queue; `roborev/check` runs the offline tests.
+  `AUDIT: approve` line gates every commit. On-disk counters bound each drain
+  independently of queue size: `max_reviews` (default 30) ends the run cleanly
+  at a review boundary, and `max_repairs` (default 3) defers a review instead
+  of retrying it forever; `max_restarts: 40` remains the engine's own
+  backstop. `roborev/drainrev.sh` drains a repository's queue; `roborev/check`
+  runs the offline tests.
 
 - `tracker-claw/agent.dip`: a conversational agent with human approval for each
   bounded task, proposal revision, result review, checkpoint-backed session
