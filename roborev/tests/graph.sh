@@ -51,6 +51,35 @@ if grep -q 'Fixes and closes every open roborev review' "$roborev_dir/drainrev.s
   fail "drainrev.sh --help still promises to fix every open review in one run"
 fi
 
+# N1: rule 5 (the review_id=0, drain_queue=false stop condition) must ignore
+# earlier-run deferrals -- only this run's own COMPLETED/DEFERRED stop it, or
+# a repo with any persisted deferral could never select even one review in
+# that mode.
+if grep -q 'one ID appears in COMPLETED or either DEFERRED list' "$workflow"; then
+  fail "SelectReview rule 5 must not count earlier-run deferrals"
+fi
+grep -q 'one ID appears in COMPLETED or DEFERRED (this run)' "$workflow" ||
+  fail "SelectReview rule 5 must count only this run's COMPLETED/DEFERRED"
+
+# Doctor Biz's DeepSeek turn ceilings (kata parity): pin the five raised
+# values and the three left unchanged, straight from the .dip text -- these
+# never appear on a dippin simulate node_enter event.
+agent_max_turns() {
+  awk -v node="$1" '
+    $1 == "agent" && $2 == node { found = 1; next }
+    found && /^  [^ ]/ { exit }
+    found && $1 == "max_turns:" { print $2; exit }
+  ' "$workflow"
+}
+[ "$(agent_max_turns Triage)" = 100 ] || fail "Triage's max_turns is not pinned to 100"
+[ "$(agent_max_turns PatchAudit)" = 100 ] || fail "PatchAudit's max_turns is not pinned to 100"
+[ "$(agent_max_turns NoOracleAudit)" = 100 ] || fail "NoOracleAudit's max_turns is not pinned to 100"
+[ "$(agent_max_turns AuditReReview)" = 100 ] || fail "AuditReReview's max_turns is not pinned to 100"
+[ "$(agent_max_turns ImplementFix)" = 300 ] || fail "ImplementFix's max_turns is not pinned to 300"
+[ "$(agent_max_turns SelectReview)" = 12 ] || fail "SelectReview's max_turns must stay 12"
+[ "$(agent_max_turns FinalAudit)" = 14 ] || fail "FinalAudit's max_turns must stay 14"
+[ "$(agent_max_turns Abort)" = 2 ] || fail "Abort's max_turns must stay 2"
+
 dippin simulate "$workflow" --all-paths >"$test_root/events" 2>"$test_root/paths" ||
   fail "dippin simulate failed"
 
@@ -84,6 +113,28 @@ jq -se '
 jq -se '
   any(.[]; .event == "edge_traverse" and .from == "QueueContext" and .to == "FinalContext" and .condition == "ctx.tool_marker = review_cap")
 ' "$test_root/events" >/dev/null || fail "QueueContext must route review_cap to FinalContext"
+
+# A Triage failure (STATUS: fail or a turn-limit breach) defers just that one
+# review instead of aborting the whole drain.
+jq -se '
+  any(.[]; .event == "edge_traverse" and .from == "Triage" and .to == "DeferCurrent" and .condition == "ctx.outcome = fail")
+' "$test_root/events" >/dev/null || fail "Triage must route a failed outcome to DeferCurrent, not Abort"
+
+# DiffGate catches a secret-named file before any packet is built (N4).
+jq -se '
+  any(.[]; .event == "edge_traverse" and .from == "DiffGate" and .to == "DeferCurrent" and .condition == "ctx.tool_marker = secret_risk")
+' "$test_root/events" >/dev/null || fail "DiffGate must route secret_risk to DeferCurrent"
+
+# A failed git add -A in DiffGate (N3) must abort, never silently proceed.
+jq -se '
+  any(.[]; .event == "edge_traverse" and .from == "DiffGate" and .to == "Abort" and .condition == "ctx.tool_marker = add_failed")
+' "$test_root/events" >/dev/null || fail "DiffGate must route add_failed to Abort"
+
+# A tree that changed after DiffGate's audit (the post-audit gap) must abort
+# instead of committing.
+jq -se '
+  any(.[]; .event == "edge_traverse" and .from == "CommitFix" and .to == "Abort" and .condition == "ctx.tool_marker = changed_after_audit")
+' "$test_root/events" >/dev/null || fail "CommitFix must route changed_after_audit to Abort"
 
 # extract_command NODE [KEY=VALUE...]: write the tool node's command, dedented, to
 # $test_root/NODE.sh. Tracker replaces ${params.KEY} and ${graph.KEY} textually
@@ -208,7 +259,7 @@ printf '5\n' >"$belowcap_run_dir/roborev/selected-count"
 grep -q '^cap_reached: no$' "$test_root/FinalContext-belowcap.out" || fail "FinalContext marked cap_reached yes below the cap"
 
 # An unreadable selected-count fails closed: QueueContext caps the run rather than
-# resuming at 0, and FinalContext reports the cap as reached rather than open.
+# resuming at 0, and FinalContext reports the cap as unknown (N5) rather than open.
 extract_command QueueContext max_reviews=30
 unreadable_run_dir="$test_root/run-queue-unreadable"
 mkdir -p "$unreadable_run_dir/roborev"
@@ -227,8 +278,10 @@ printf 'garbage\n' >"$final_unreadable_run_dir/roborev/selected-count"
 (cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$final_unreadable_run_dir" sh "$test_root/FinalContext.sh") \
   >"$test_root/FinalContext-unreadable.out" 2>"$test_root/FinalContext-unreadable.err" ||
   fail "FinalContext with an unreadable selected-count exited nonzero"
-grep -q '^cap_reached: yes$' "$test_root/FinalContext-unreadable.out" ||
-  fail "FinalContext did not fail closed to cap_reached: yes on an unreadable selected-count"
+# N5: cap_reached: unknown (not yes) so FinalAudit can never read this as a
+# successfully capped drain.
+grep -q '^cap_reached: unknown$' "$test_root/FinalContext-unreadable.out" ||
+  fail "FinalContext did not report cap_reached: unknown on an unreadable selected-count"
 [ -s "$final_unreadable_run_dir/roborev/final-context.log" ] ||
   fail "FinalContext did not log the unreadable selected-count"
 
@@ -272,12 +325,14 @@ got=$(cd "$preflight_repo" &&
   PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight" /bin/sh "$test_root/Preflight.sh")
 [ "$got" = missing_jq ] || fail "Preflight without jq printed '$got', want missing_jq"
 
-# full_bin adds jq/cat/cp to bare_bin's git/mkdir/roborev-stand-in, so Preflight
-# can run all the way to its state resets (ok) instead of stopping at
-# missing_jq; cat is also what the roborev stand-in itself shells out to.
+# full_bin adds jq/cat/cp/dirname/tail/wc/tr to bare_bin's git/mkdir/roborev-
+# stand-in, so Preflight can run all the way to its state resets (ok) instead
+# of stopping at missing_jq; cat is also what the roborev stand-in itself
+# shells out to, and dirname/tail/wc/tr are what the exclude write's
+# mkdir-p / no-final-newline check use.
 full_bin="$test_root/full-bin"
 mkdir -p "$full_bin"
-for tool in git mkdir jq cat cp; do
+for tool in git mkdir jq cat cp dirname tail wc tr; do
   ln -s "$(command -v "$tool")" "$full_bin/$tool"
 done
 ln -s "$stub_bin/roborev" "$full_bin/roborev"
@@ -318,6 +373,44 @@ printf '11\n22\n' >"$test_root/want-deferred-earlier"
 diff "$test_root/want-deferred-earlier" "$ok_run_dir/roborev/deferred-earlier" >/dev/null ||
   fail "Preflight did not seed deferred-earlier from the repo-root ledger"
 [ ! -s "$ok_run_dir/roborev/deferred" ] || fail "Preflight's fresh deferred ledger should start empty"
+
+# N2: the exclude write creates .git/info when a repo (e.g. made from an
+# empty template) does not have it yet.
+noinfo_repo="$test_root/noinfo-repo"
+git -c init.defaultBranch=main init -q "$noinfo_repo"
+git -C "$noinfo_repo" config user.name t
+git -C "$noinfo_repo" config user.email t@t
+printf 'seed\n' >"$noinfo_repo/seed.txt"
+git -C "$noinfo_repo" -c core.hooksPath=/dev/null add seed.txt
+git -C "$noinfo_repo" -c core.hooksPath=/dev/null commit -q -m seed
+rm -rf "$noinfo_repo/.git/info"
+noinfo_run_dir="$test_root/run-noinfo"
+got=$(cd "$noinfo_repo" && PATH="$full_bin" TRACKER_RUN_DIR="$noinfo_run_dir" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = ok ] || fail "Preflight with a missing .git/info printed '$got', want ok"
+git -C "$noinfo_repo" check-ignore -q .tracker ||
+  fail "Preflight did not create .git/info and ignore .tracker/ there"
+
+# N2: the exclude write never corrupts an existing exclude file's last line
+# when that line does not end in a newline (the naive form would fuse
+# *.log with .tracker/ into *.log.tracker/, breaking the user's rule).
+nonewline_repo="$test_root/nonewline-repo"
+git -c init.defaultBranch=main init -q "$nonewline_repo"
+git -C "$nonewline_repo" config user.name t
+git -C "$nonewline_repo" config user.email t@t
+printf 'seed\n' >"$nonewline_repo/seed.txt"
+git -C "$nonewline_repo" -c core.hooksPath=/dev/null add seed.txt
+git -C "$nonewline_repo" -c core.hooksPath=/dev/null commit -q -m seed
+printf '*.log' >"$nonewline_repo/.git/info/exclude"
+printf 'x\n' >"$nonewline_repo/debug.log"
+nonewline_run_dir="$test_root/run-nonewline"
+got=$(cd "$nonewline_repo" && PATH="$full_bin" TRACKER_RUN_DIR="$nonewline_run_dir" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = ok ] || fail "Preflight with a no-final-newline exclude file printed '$got', want ok"
+grep -qxF '*.log' "$nonewline_repo/.git/info/exclude" ||
+  fail "Preflight corrupted the user's existing *.log ignore rule"
+grep -qxF '.tracker/' "$nonewline_repo/.git/info/exclude" ||
+  fail "Preflight did not append a clean .tracker/ line"
+git -C "$nonewline_repo" check-ignore -q debug.log ||
+  fail "the user's *.log rule stopped working after Preflight's write"
 
 # RecordSelection starts a fresh repair budget and clears the previous review's
 # logs on every new top-level selection, so no feedback leaks between reviews.
@@ -499,6 +592,32 @@ got=$(cd "$defer_repo" && PATH="$fail_status_bin:$defer_bin:$PATH" TRACKER_RUN_D
   DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh")
 [ "$got" = defer_error ] ||
   fail "DeferCurrent with a failing git status printed '$got', want defer_error"
+# N6: a defer_error must never persist to the repo-level ledger -- only a
+# fully successful defer_ok does, so a review is never silently hidden under
+# "earlier runs" with no comment ever explaining why.
+grep -qx 80 "$defer_repo/.tracker/roborev/deferred" &&
+  fail "DeferCurrent persisted job 80 to the repo ledger despite a defer_error"
+
+# Triage -> DeferCurrent (a STATUS: fail or turn-limit breach defers that one
+# review instead of aborting the whole drain). RecordSelection resets
+# $STATE/triage.md per review, so on this path it is empty; DeferCurrent's
+# comment must fall back to Triage's own partial response and say why.
+triage_fail_run_dir="$test_root/run-defer-triagefail"
+mkdir -p "$triage_fail_run_dir/roborev" "$triage_fail_run_dir/Triage"
+printf '81\n' >"$triage_fail_run_dir/roborev/current-job"
+: >"$triage_fail_run_dir/roborev/triage.md"
+printf 'PARTIAL-TRIAGE-CONTENT: findings 1-2 of 5 validated so far.\n' \
+  >"$triage_fail_run_dir/Triage/response.md"
+(cd "$defer_repo" && PATH="$defer_bin:$PATH" TRACKER_RUN_DIR="$triage_fail_run_dir" \
+  DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh") \
+  >"$test_root/DeferCurrent-triagefail.out" 2>"$test_root/DeferCurrent-triagefail.err" ||
+  fail "DeferCurrent exited nonzero on a Triage-failure defer"
+[ "$(tail -n 1 "$test_root/DeferCurrent-triagefail.out")" = defer_ok ] ||
+  fail "DeferCurrent did not end with defer_ok on a Triage-failure defer"
+grep -q 'did not finish validating' "$comment_args" ||
+  fail "the roborev comment did not say triage could not finish"
+grep -qF 'PARTIAL-TRIAGE-CONTENT' "$comment_args" ||
+  fail "the roborev comment did not carry Triage's partial response"
 
 # I3 + C1: DiffGate stages with git add -A and audits git diff --cached, so a
 # brand-new untracked file's contents (not just its ?? status line) reach
@@ -560,6 +679,10 @@ mkdir -p "$commit_run_dir/roborev" "$commit_run_dir/PatchAudit"
 git -C "$commit_repo" rev-parse HEAD >"$commit_run_dir/roborev/expected-head"
 printf '56\n' >"$commit_run_dir/roborev/current-job"
 printf 'AUDIT: approve\nSTATUS: success\n' >"$commit_run_dir/PatchAudit/response.md"
+# Mirrors what DiffGate itself would have done: stage, then save the audited
+# tree, and leave the index staged for CommitFix's own git add -A to repeat.
+git -C "$commit_repo" add -A
+git -C "$commit_repo" write-tree >"$commit_run_dir/roborev/audited-tree"
 got=$(cd "$commit_repo" && TRACKER_RUN_DIR="$commit_run_dir" sh "$test_root/CommitFix.sh")
 [ "$got" = commit_ok ] || fail "CommitFix with .tracker/ gitignored printed '$got', want commit_ok"
 git -C "$commit_repo" show --stat HEAD | grep -q 'new.txt' ||
@@ -568,3 +691,70 @@ git -C "$commit_repo" show --stat HEAD | grep -q '\.tracker' &&
   fail "CommitFix committed something under .tracker even though it was gitignored"
 [ -f "$commit_repo/.tracker/scratch" ] ||
   fail "CommitFix removed .tracker/scratch even though it only commits"
+
+# Post-audit gap: if the tree changes after DiffGate saved audited-tree (e.g.
+# PatchAudit's own tool access touching a file), CommitFix must refuse to
+# commit the unaudited result instead of committing it.
+printf 'audited version\n' >"$commit_repo/tampered.txt"
+git -C "$commit_repo" add -A
+tampered_run_dir="$test_root/run-commit-tampered"
+mkdir -p "$tampered_run_dir/roborev" "$tampered_run_dir/PatchAudit"
+git -C "$commit_repo" rev-parse HEAD >"$tampered_run_dir/roborev/expected-head"
+printf '57\n' >"$tampered_run_dir/roborev/current-job"
+printf 'AUDIT: approve\nSTATUS: success\n' >"$tampered_run_dir/PatchAudit/response.md"
+git -C "$commit_repo" write-tree >"$tampered_run_dir/roborev/audited-tree"
+printf 'changed after audit\n' >"$commit_repo/tampered.txt"
+before_head=$(git -C "$commit_repo" rev-parse HEAD)
+got=$(cd "$commit_repo" && TRACKER_RUN_DIR="$tampered_run_dir" sh "$test_root/CommitFix.sh")
+[ "$got" = changed_after_audit ] ||
+  fail "CommitFix after a post-audit change printed '$got', want changed_after_audit"
+after_head=$(git -C "$commit_repo" rev-parse HEAD)
+[ "$before_head" = "$after_head" ] || fail "CommitFix committed a change made after the audit"
+grep -q 'tampered.txt' "$tampered_run_dir/roborev/commit.log" ||
+  fail "CommitFix did not name the changed path after a post-audit change"
+git -C "$commit_repo" reset -q --hard "$before_head"
+
+# N3: a failed git add -A (e.g. a background process briefly holding
+# .git/index.lock) must abort instead of reading as no_changes or building a
+# packet from a stale index.
+lock_run_dir="$test_root/run-diffgate-lock"
+mkdir -p "$lock_run_dir/roborev"
+git -C "$diff_repo" rev-parse HEAD >"$lock_run_dir/roborev/expected-head"
+printf '59\n' >"$lock_run_dir/roborev/current-job"
+: >"$lock_run_dir/roborev/triage.md"
+: >"$lock_run_dir/roborev/verify.log"
+printf 'LOCKED-ATTEMPT\n' >"$diff_repo/locked.txt"
+: >"$diff_repo/.git/index.lock"
+# git reset -q (DiffGate's own belt-and-suspenders cleanup on a failed add)
+# also fails while the lock is held; redirect it like every other stderr in
+# this file so that expected noise never reaches the test's own output.
+got=$(cd "$diff_repo" && TRACKER_RUN_DIR="$lock_run_dir" sh "$test_root/DiffGate.sh" 2>"$test_root/DiffGate-lock.err")
+rm -f "$diff_repo/.git/index.lock"
+[ "$got" = add_failed ] || fail "DiffGate with a held index.lock printed '$got', want add_failed"
+
+# N4: DiffGate catches a secret-named file before any packet content is
+# built, so its value never reaches PatchAudit's prompt (stdout) or
+# repair.diff -- CommitFix's own check still runs too (M3).
+secret_repo="$test_root/diffgate-secret-repo"
+git -c init.defaultBranch=main init -q "$secret_repo"
+printf '.tracker/\n' >"$secret_repo/.gitignore"
+printf 'seed\n' >"$secret_repo/seed.txt"
+git -C "$secret_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t add .gitignore seed.txt
+git -C "$secret_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t commit -q -m seed
+secret_run_dir="$test_root/run-diffgate-secret"
+mkdir -p "$secret_run_dir/roborev"
+git -C "$secret_repo" rev-parse HEAD >"$secret_run_dir/roborev/expected-head"
+printf '60\n' >"$secret_run_dir/roborev/current-job"
+: >"$secret_run_dir/roborev/triage.md"
+: >"$secret_run_dir/roborev/verify.log"
+mkdir -p "$secret_repo/app"
+printf 'TOKEN=SECRET-MARKER-VALUE\n' >"$secret_repo/app/.env"
+out=$(cd "$secret_repo" && TRACKER_RUN_DIR="$secret_run_dir" sh "$test_root/DiffGate.sh")
+[ "$(printf '%s\n' "$out" | tail -n 1)" = secret_risk ] ||
+  fail "DiffGate with a new .env did not end with secret_risk"
+printf '%s\n' "$out" | grep -q 'SECRET-MARKER-VALUE' &&
+  fail "DiffGate's stdout leaked the secret file's value"
+[ ! -f "$secret_run_dir/roborev/repair.diff" ] ||
+  fail "DiffGate wrote repair.diff before its secret check"
+grep -qF 'app/.env' "$secret_run_dir/roborev/secret-risk-paths" ||
+  fail "DiffGate did not record the secret-risk path"
