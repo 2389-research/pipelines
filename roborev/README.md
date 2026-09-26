@@ -19,9 +19,11 @@ Flags after `repo` go to tracker and win over the defaults: `--no-tui`, or
 `--param review_id=42 --param drain_queue=false` to fix one review.
 `drainrev.sh` resolves symlinks, so a link on your `PATH` works.
 
-The pipeline's Preflight stops the run unless the tree is clean (tracker's own
-`.tracker/` aside), HEAD is on a named branch, `git var GIT_AUTHOR_IDENT`
-succeeds, and `roborev list` reaches the daemon.
+The pipeline's Preflight stops the run unless `roborev` and `jq` are on `PATH`,
+the tree is clean (tracker's own `.tracker/` aside), HEAD is on a named branch,
+`git var GIT_AUTHOR_IDENT` succeeds, and `roborev list` reaches the daemon.
+Queue snapshots use `jq` to pass agents each review's id, commit, branch,
+status, and verdict, never roborev's stored review prompt.
 
 Agents run `deepseek-4.1-flash` through `openai-compat`, so tracker needs
 `OPENAI_COMPAT_API_KEY` and an `OPENAI_COMPAT_BASE_URL` that points at

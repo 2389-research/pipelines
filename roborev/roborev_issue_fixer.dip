@@ -26,7 +26,7 @@ workflow RoboRevIssueFixer
   tool Preflight
     label: "Preflight repository and RoboRev"
     timeout: 30s
-    marker_grep: "^(ok|not_repo|dirty|missing_roborev|daemon_error|detached_head|git_identity_error)$"
+    marker_grep: "^(ok|not_repo|dirty|missing_roborev|missing_jq|daemon_error|detached_head|git_identity_error)$"
     command:
       #!/bin/sh
       set -u
@@ -41,6 +41,10 @@ workflow RoboRevIssueFixer
       fi
       if ! command -v roborev >>"$LOG" 2>&1; then
         printf 'missing_roborev\n'
+        exit 0
+      fi
+      if ! command -v jq >>"$LOG" 2>&1; then
+        printf 'missing_jq\n'
         exit 0
       fi
       if ! git symbolic-ref -q HEAD >>"$LOG" 2>&1; then
@@ -76,7 +80,9 @@ workflow RoboRevIssueFixer
       printf 'ok\n'
 
   # Gather selection evidence in a tool node so run-local state never has to be
-  # exposed to an agent through environment variables.
+  # exposed to an agent through environment variables. roborev's list JSON carries
+  # every job's full review prompt, diff included, so open.json keeps the full list
+  # for audit while the agent sees only the fields selection needs.
   tool QueueContext
     label: "Snapshot open review queue"
     timeout: 30s
@@ -95,7 +101,11 @@ workflow RoboRevIssueFixer
       printf '%s\n' '--- DEFERRED IDS ---'
       cat "$STATE/deferred" 2>/dev/null || true
       printf '%s\n' '--- OPEN REVIEWS JSON ---'
-      cat "$STATE/open.json"
+      if ! jq -c '.[] | {id, git_ref, branch, repo_path, status, verdict, enqueued_at}' \
+        "$STATE/open.json" 2>>"$STATE/open.err"; then
+        printf 'queue_error\n'
+        exit 0
+      fi
       printf '%s\n' 'queue_ready'
 
   # Selection is agentic only where judgment is useful. It emits a tiny typed
@@ -686,7 +696,8 @@ workflow RoboRevIssueFixer
       fi
 
   # Build final evidence entirely in a tool node; FinalAudit therefore needs no
-  # shell access and cannot mutate the repo or reviews.
+  # shell access and cannot mutate the repo or reviews. Like QueueContext, it keeps
+  # job prompts out of the agent's view.
   tool FinalContext
     label: "Build final audit context"
     timeout: 30s
@@ -705,7 +716,11 @@ workflow RoboRevIssueFixer
       printf '%s\n' '--- DEFERRED IDS ---'
       cat "$STATE/deferred" 2>/dev/null || true
       printf '%s\n' '--- REMAINING OPEN REVIEWS JSON ---'
-      cat "$STATE/final-open.json"
+      if ! jq -c '.[] | {id, git_ref, branch, repo_path, status, verdict, enqueued_at}' \
+        "$STATE/final-open.json" 2>>"$STATE/final-open.err"; then
+        printf 'final_error\n'
+        exit 0
+      fi
       printf '%s\n' '--- FINAL HEAD ---'
       git rev-parse HEAD
       printf '%s\n' 'final_ready'
