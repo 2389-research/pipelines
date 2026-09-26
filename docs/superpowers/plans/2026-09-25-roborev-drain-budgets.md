@@ -1,11 +1,12 @@
 # roborev drain budgets
 
 ## Now
-- Step: option 2 implemented and reviewed (branch review, two fix rounds, two scoped re-reviews); checks green at bedd98b
-- Next: Doctor Biz decides on the residuals, then finish the branch (no push without his say)
-- Open: fix I-1 (cap transcripts in deferral comments) and the re-review-job triage comment now, or run as is
+- Step: fix round 3 (implementer), then one scoped re-review
+- Next: finish the branch (no push without Doctor Biz's say)
+- Open: none
 - Approved: "2" (2026-09-25): option 2, keep the queue loop in one run
 - Approved: "A" (2026-09-25): DeepSeek turn ceilings matching kata's, `max_turns: 100` for Triage, PatchAudit, NoOracleAudit, and AuditReReview, and `max_turns: 300` for ImplementFix
+- Approved: "a" (2026-09-26): one more small round: cap transcripts in deferral comments, fix the re-review-job triage comment, and on a WaitRoboRev timeout leave the review open with a comment naming the fix commit, move on, never save it as deferred, never fail the run
 - Withdrawn: Doctor Biz picked "a" (raise the limits to 400 restarts and 24h), then withdrew it: "but wait. isnt that a pipeline weakness that shoukd br solved in thr pipeline" and "not a hack" (2026-09-25)
 - Compactions: 0
 
