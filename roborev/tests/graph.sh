@@ -38,6 +38,19 @@ if grep -q 'max_wall_time' "$workflow"; then
   fail "max_wall_time must not appear in the workflow"
 fi
 
+# A capped run stops at max_reviews, not when the queue is empty; the docs must
+# say so instead of promising to drain the whole queue in one run.
+root_readme="$roborev_dir/../README.md"
+if grep -q 'runs it until the queue is empty' "$root_readme"; then
+  fail "root README.md still promises to drain the whole queue in one run"
+fi
+if grep -q 'until its roborev queue is empty' "$roborev_dir/README.md"; then
+  fail "roborev/README.md still promises to drain the whole queue in one run"
+fi
+if grep -q 'Fixes and closes every open roborev review' "$roborev_dir/drainrev.sh"; then
+  fail "drainrev.sh --help still promises to fix every open review in one run"
+fi
+
 dippin simulate "$workflow" --all-paths >"$test_root/events" 2>"$test_root/paths" ||
   fail "dippin simulate failed"
 
@@ -155,6 +168,10 @@ expect_queue_snapshot() {
   grep -q '"id":61,"git_ref":"929d219"' "$test_root/$node.out" || fail "$node dropped review 61"
   grep -q '"verdict":"P"' "$test_root/$node.out" || fail "$node dropped review 64's verdict"
   grep -q REVIEW-PROMPT-BODY "$run_dir/roborev/$saved" || fail "$node did not keep the full list in $saved"
+  grep -qF -- '--- DEFERRED IDS (this run) ---' "$test_root/$node.out" ||
+    fail "$node dropped the this-run deferred heading"
+  grep -qF -- '--- DEFERRED IDS (earlier runs) ---' "$test_root/$node.out" ||
+    fail "$node dropped the earlier-run deferred heading"
 }
 
 expect_queue_snapshot QueueContext queue_ready open.json max_reviews=30
@@ -189,6 +206,31 @@ printf '5\n' >"$belowcap_run_dir/roborev/selected-count"
   >"$test_root/FinalContext-belowcap.out" 2>"$test_root/FinalContext-belowcap.err" ||
   fail "FinalContext below the cap exited nonzero"
 grep -q '^cap_reached: no$' "$test_root/FinalContext-belowcap.out" || fail "FinalContext marked cap_reached yes below the cap"
+
+# An unreadable selected-count fails closed: QueueContext caps the run rather than
+# resuming at 0, and FinalContext reports the cap as reached rather than open.
+extract_command QueueContext max_reviews=30
+unreadable_run_dir="$test_root/run-queue-unreadable"
+mkdir -p "$unreadable_run_dir/roborev"
+printf 'garbage\n' >"$unreadable_run_dir/roborev/selected-count"
+got=$(cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$unreadable_run_dir" sh "$test_root/QueueContext.sh")
+[ "$got" = review_cap ] || fail "QueueContext with an unreadable selected-count printed '$got', want review_cap"
+[ ! -e "$unreadable_run_dir/roborev/open.json" ] ||
+  fail "QueueContext called roborev with an unreadable selected-count"
+[ -s "$unreadable_run_dir/roborev/queue-context.log" ] ||
+  fail "QueueContext did not log the unreadable selected-count"
+
+extract_command FinalContext max_reviews=30
+final_unreadable_run_dir="$test_root/run-final-unreadable"
+mkdir -p "$final_unreadable_run_dir/roborev"
+printf 'garbage\n' >"$final_unreadable_run_dir/roborev/selected-count"
+(cd "$test_root" && PATH="$stub_bin:$PATH" TRACKER_RUN_DIR="$final_unreadable_run_dir" sh "$test_root/FinalContext.sh") \
+  >"$test_root/FinalContext-unreadable.out" 2>"$test_root/FinalContext-unreadable.err" ||
+  fail "FinalContext with an unreadable selected-count exited nonzero"
+grep -q '^cap_reached: yes$' "$test_root/FinalContext-unreadable.out" ||
+  fail "FinalContext did not fail closed to cap_reached: yes on an unreadable selected-count"
+[ -s "$final_unreadable_run_dir/roborev/final-context.log" ] ||
+  fail "FinalContext did not log the unreadable selected-count"
 
 # Preflight validates the review-loop params before touching git or roborev at all
 # (invalid_params below), then names a missing jq before any queue snapshot needs
@@ -230,6 +272,53 @@ got=$(cd "$preflight_repo" &&
   PATH="$bare_bin" TRACKER_RUN_DIR="$test_root/run-preflight" /bin/sh "$test_root/Preflight.sh")
 [ "$got" = missing_jq ] || fail "Preflight without jq printed '$got', want missing_jq"
 
+# full_bin adds jq/cat/cp to bare_bin's git/mkdir/roborev-stand-in, so Preflight
+# can run all the way to its state resets (ok) instead of stopping at
+# missing_jq; cat is also what the roborev stand-in itself shells out to.
+full_bin="$test_root/full-bin"
+mkdir -p "$full_bin"
+for tool in git mkdir jq cat cp; do
+  ln -s "$(command -v "$tool")" "$full_bin/$tool"
+done
+ln -s "$stub_bin/roborev" "$full_bin/roborev"
+
+# C1: Preflight makes an unignored .tracker/ git-ignored (appended to
+# .git/info/exclude) before the cleanliness check, so every git command later
+# in the run can rely on .tracker/ being invisible instead of carrying its own
+# :(exclude) pathspec.
+exclude_repo="$test_root/exclude-repo"
+git -c init.defaultBranch=main init -q "$exclude_repo"
+git -C "$exclude_repo" config user.name t
+git -C "$exclude_repo" config user.email t@t
+printf 'seed\n' >"$exclude_repo/seed.txt"
+git -C "$exclude_repo" -c core.hooksPath=/dev/null add seed.txt
+git -C "$exclude_repo" -c core.hooksPath=/dev/null commit -q -m seed
+mkdir -p "$exclude_repo/.tracker"
+git -C "$exclude_repo" check-ignore -q .tracker &&
+  fail "test setup bug: .tracker/ was already ignored in exclude_repo"
+(cd "$exclude_repo" && PATH="$full_bin" TRACKER_RUN_DIR="$test_root/run-exclude" /bin/sh "$test_root/Preflight.sh") \
+  >/dev/null 2>&1 || true
+git -C "$exclude_repo" check-ignore -q .tracker || fail "Preflight did not make .tracker/ git-ignored"
+
+# I1: Preflight seeds this run's deferred-earlier list from the repo-root
+# ledger without touching $STATE/deferred, which stays this run's own, empty.
+ok_repo="$test_root/ok-repo"
+git -c init.defaultBranch=main init -q "$ok_repo"
+git -C "$ok_repo" config user.name t
+git -C "$ok_repo" config user.email t@t
+printf 'seed\n' >"$ok_repo/seed.txt"
+git -C "$ok_repo" -c core.hooksPath=/dev/null add seed.txt
+git -C "$ok_repo" -c core.hooksPath=/dev/null commit -q -m seed
+mkdir -p "$ok_repo/.tracker/roborev"
+printf '11\n22\n' >"$ok_repo/.tracker/roborev/deferred"
+ok_run_dir="$test_root/run-ok"
+got=$(cd "$ok_repo" && PATH="$full_bin" TRACKER_RUN_DIR="$ok_run_dir" /bin/sh "$test_root/Preflight.sh")
+[ "$got" = ok ] || fail "Preflight in a clean, fully-equipped repo printed '$got', want ok"
+printf '11\n22\n' >"$test_root/want-deferred-earlier"
+diff "$test_root/want-deferred-earlier" "$ok_run_dir/roborev/deferred-earlier" >/dev/null ||
+  fail "Preflight did not seed deferred-earlier from the repo-root ledger"
+[ ! -s "$ok_run_dir/roborev/deferred" ] || fail "Preflight's fresh deferred ledger should start empty"
+
 # RecordSelection starts a fresh repair budget and clears the previous review's
 # logs on every new top-level selection, so no feedback leaks between reviews.
 extract_command RecordSelection
@@ -240,12 +329,14 @@ printf '2\n' >"$record_run_dir/roborev/selected-count"
 printf '1\n' >"$record_run_dir/roborev/repair-attempts"
 printf 'stale verify output\n' >"$record_run_dir/roborev/verify.log"
 printf 'stale commit output\n' >"$record_run_dir/roborev/commit.log"
+printf 'stale/secret.env\n' >"$record_run_dir/roborev/secret-risk-paths"
 got=$(TRACKER_RUN_DIR="$record_run_dir" sh "$test_root/RecordSelection.sh")
 [ "$got" = selected ] || fail "RecordSelection with a valid selection printed '$got', want selected"
 [ "$(cat "$record_run_dir/roborev/selected-count")" = 3 ] || fail "RecordSelection did not increment selected-count"
 [ "$(cat "$record_run_dir/roborev/repair-attempts")" = 0 ] || fail "RecordSelection did not reset repair-attempts"
 [ ! -s "$record_run_dir/roborev/verify.log" ] || fail "RecordSelection did not empty verify.log"
 [ ! -s "$record_run_dir/roborev/commit.log" ] || fail "RecordSelection did not empty commit.log"
+[ ! -s "$record_run_dir/roborev/secret-risk-paths" ] || fail "RecordSelection did not empty secret-risk-paths"
 
 # RepairBudget gates ImplementFix on an on-disk per-review counter and feeds it the
 # previous attempt's verification/commit tails, since ImplementFix's ${ctx.tool_stdout}
@@ -286,8 +377,9 @@ extract_command DeferCurrent
 defer_repo="$test_root/defer-repo"
 git -c init.defaultBranch=main init -q "$defer_repo"
 mkdir -p "$defer_repo/.tracker"
+printf '.tracker/\n' >"$defer_repo/.gitignore"
 printf 'tracked\n' >"$defer_repo/tracked.txt"
-git -C "$defer_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t add tracked.txt
+git -C "$defer_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t add .gitignore tracked.txt
 git -C "$defer_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t commit -q -m seed
 
 defer_bin="$test_root/defer-bin"
@@ -309,10 +401,13 @@ printf '77\n' >"$defer_run_dir/roborev/current-job"
 comment_args="$test_root/defer-comment-args"
 
 # Dirty case: a tracked edit and an untracked file outside .tracker both stash;
-# .tracker itself is left alone.
+# .tracker itself is left alone. Also covers M2 (stash named by SHA, not the
+# stale stash@{0}), I1 (persisted to the repo-root ledger), and M3 (a
+# secret-risk path, when CommitFix left one, is named in the comment).
 printf 'edited\n' >"$defer_repo/tracked.txt"
 printf 'new\n' >"$defer_repo/untracked.txt"
 printf 'scratch\n' >"$defer_repo/.tracker/scratch"
+printf 'app/.env\n' >"$defer_run_dir/roborev/secret-risk-paths"
 (cd "$defer_repo" && PATH="$defer_bin:$PATH" TRACKER_RUN_DIR="$defer_run_dir" \
   DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh") \
   >"$test_root/DeferCurrent.out" 2>"$test_root/DeferCurrent.err" ||
@@ -323,12 +418,20 @@ printf 'scratch\n' >"$defer_repo/.tracker/scratch"
 [ ! -e "$defer_repo/untracked.txt" ] || fail "DeferCurrent left the untracked file unstashed"
 [ -f "$defer_repo/.tracker/scratch" ] || fail "DeferCurrent stashed .tracker"
 git -C "$defer_repo" stash list | grep -q 'deferred job 77' || fail "the stash is not named for job 77"
-grep -q 'stash@{0}' "$comment_args" || fail "the roborev comment did not name stash@{0}"
+stash_sha=$(git -C "$defer_repo" rev-parse -q --verify refs/stash) || fail "no stash entry was created"
+grep -qF "$stash_sha" "$comment_args" || fail "the roborev comment did not name the stash SHA"
 grep -q 'deferred job 77' "$comment_args" || fail "the roborev comment did not name the stash message"
+if grep -q 'stash@{0}' "$comment_args"; then
+  fail "the roborev comment still names the stash by its unstable stash@{0} index"
+fi
+grep -qF 'app/.env' "$comment_args" || fail "the roborev comment did not name the secret-risk path"
+grep -qx 77 "$defer_repo/.tracker/roborev/deferred" ||
+  fail "DeferCurrent did not persist the deferral to the repo-root ledger"
 
 # Clean case: nothing outside .tracker is dirty, so no stash is made even though
 # .tracker itself still has untracked scratch content.
 git -C "$defer_repo" stash clear
+: >"$defer_run_dir/roborev/secret-risk-paths"
 printf 'more scratch\n' >"$defer_repo/.tracker/scratch2"
 (cd "$defer_repo" && PATH="$defer_bin:$PATH" TRACKER_RUN_DIR="$defer_run_dir" \
   DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh") \
@@ -338,3 +441,130 @@ printf 'more scratch\n' >"$defer_repo/.tracker/scratch2"
   fail "DeferCurrent did not end with defer_ok on a clean tree"
 [ -z "$(git -C "$defer_repo" stash list)" ] ||
   fail "DeferCurrent stashed a tree that was clean outside .tracker"
+
+# C1 (unignored control): after Preflight's exclude-write runs in a repo where
+# .tracker/ was NOT already ignored, DeferCurrent's stash still succeeds there
+# -- proving the exclude write, not just an already-ignored fixture, is what
+# makes this work.
+unignored_repo="$test_root/unignored-repo"
+git -c init.defaultBranch=main init -q "$unignored_repo"
+git -C "$unignored_repo" config user.name t
+git -C "$unignored_repo" config user.email t@t
+printf 'tracked\n' >"$unignored_repo/tracked.txt"
+git -C "$unignored_repo" -c core.hooksPath=/dev/null add tracked.txt
+git -C "$unignored_repo" -c core.hooksPath=/dev/null commit -q -m seed
+mkdir -p "$unignored_repo/.tracker"
+printf 'scratch\n' >"$unignored_repo/.tracker/scratch"
+unignored_run_dir="$test_root/run-unignored"
+git -C "$unignored_repo" check-ignore -q .tracker &&
+  fail "test setup bug: .tracker/ was already ignored in unignored_repo"
+(cd "$unignored_repo" && PATH="$full_bin" TRACKER_RUN_DIR="$unignored_run_dir" /bin/sh "$test_root/Preflight.sh") \
+  >/dev/null 2>&1 || true
+git -C "$unignored_repo" check-ignore -q .tracker ||
+  fail "Preflight did not make the unignored .tracker/ git-ignored"
+
+printf '79\n' >"$unignored_run_dir/roborev/current-job"
+printf 'edited\n' >"$unignored_repo/tracked.txt"
+printf 'new\n' >"$unignored_repo/untracked.txt"
+(cd "$unignored_repo" && PATH="$defer_bin:$PATH" TRACKER_RUN_DIR="$unignored_run_dir" \
+  DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh") \
+  >"$test_root/DeferCurrent-unignored.out" 2>"$test_root/DeferCurrent-unignored.err" ||
+  fail "DeferCurrent exited nonzero after Preflight ignored .tracker/"
+[ "$(tail -n 1 "$test_root/DeferCurrent-unignored.out")" = defer_ok ] ||
+  fail "DeferCurrent did not end with defer_ok after Preflight ignored .tracker/"
+[ ! -e "$unignored_repo/untracked.txt" ] ||
+  fail "DeferCurrent left the untracked file unstashed after Preflight ignored .tracker/"
+[ -f "$unignored_repo/.tracker/scratch" ] ||
+  fail "DeferCurrent stashed .tracker after Preflight ignored it"
+
+# M1: a git status that fails outright is never read as a clean tree. A
+# stand-in git delegates every subcommand to the real one except status, which
+# it always fails, so DeferCurrent's own cleanliness check cannot succeed.
+fail_status_bin="$test_root/fail-status-bin"
+mkdir -p "$fail_status_bin"
+real_git=$(command -v git)
+cat >"$fail_status_bin/git" <<EOF
+#!/bin/sh
+if [ "\$1" = status ]; then
+  echo 'probe: forced status failure' >&2
+  exit 129
+fi
+exec $real_git "\$@"
+EOF
+chmod +x "$fail_status_bin/git"
+status_fail_run_dir="$test_root/run-defer-statusfail"
+mkdir -p "$status_fail_run_dir/roborev"
+printf '80\n' >"$status_fail_run_dir/roborev/current-job"
+got=$(cd "$defer_repo" && PATH="$fail_status_bin:$defer_bin:$PATH" TRACKER_RUN_DIR="$status_fail_run_dir" \
+  DEFER_COMMENT_ARGS="$comment_args" sh "$test_root/DeferCurrent.sh")
+[ "$got" = defer_error ] ||
+  fail "DeferCurrent with a failing git status printed '$got', want defer_error"
+
+# I3 + C1: DiffGate stages with git add -A and audits git diff --cached, so a
+# brand-new untracked file's contents (not just its ?? status line) reach
+# PatchAudit's packet, and .tracker/ (git-ignored) is never staged.
+extract_command DiffGate
+diff_repo="$test_root/diff-repo"
+git -c init.defaultBranch=main init -q "$diff_repo"
+printf '.tracker/\n' >"$diff_repo/.gitignore"
+printf 'seed\n' >"$diff_repo/seed.txt"
+git -C "$diff_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t add .gitignore seed.txt
+git -C "$diff_repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t commit -q -m seed
+mkdir -p "$diff_repo/.tracker"
+printf 'scratch\n' >"$diff_repo/.tracker/scratch"
+
+diff_run_dir="$test_root/run-diffgate"
+mkdir -p "$diff_run_dir/roborev"
+git -C "$diff_repo" rev-parse HEAD >"$diff_run_dir/roborev/expected-head"
+printf '55\n' >"$diff_run_dir/roborev/current-job"
+: >"$diff_run_dir/roborev/triage.md"
+: >"$diff_run_dir/roborev/verify.log"
+
+# no_changes: nothing touched yet.
+got=$(cd "$diff_repo" && TRACKER_RUN_DIR="$diff_run_dir" sh "$test_root/DiffGate.sh")
+[ "$got" = no_changes ] || fail "DiffGate on a clean tree printed '$got', want no_changes"
+
+# diff_safe: a brand-new untracked file's own content must appear in the DIFF
+# section, which only staging (git add -A) before diffing (git diff --cached)
+# can show for a wholly-new file.
+printf 'NEW-FILE-MARKER-CONTENT\n' >"$diff_repo/brand_new.txt"
+out=$(cd "$diff_repo" && TRACKER_RUN_DIR="$diff_run_dir" sh "$test_root/DiffGate.sh")
+[ "$(printf '%s\n' "$out" | tail -n 1)" = diff_safe ] ||
+  fail "DiffGate with a new untracked file did not end with diff_safe"
+printf '%s\n' "$out" | grep -q 'NEW-FILE-MARKER-CONTENT' ||
+  fail "DiffGate's packet did not include the new file's content"
+printf '%s\n' "$out" | grep -q '^+NEW-FILE-MARKER-CONTENT$' ||
+  fail "DiffGate's DIFF section did not show the new file as an added hunk"
+git -C "$diff_repo" diff --cached --name-only | grep -qx '.tracker/scratch' &&
+  fail "DiffGate staged .tracker even though it was gitignored"
+
+# I3: CommitFix commits exactly the index DiffGate staged (same git add -A),
+# and C1: a git-ignored .tracker/ is left alone by both.
+extract_command CommitFix
+commit_repo="$test_root/commit-repo"
+git -c init.defaultBranch=main init -q "$commit_repo"
+git -C "$commit_repo" config user.name t
+git -C "$commit_repo" config user.email t@t
+git -C "$commit_repo" config core.hooksPath /dev/null
+printf '.tracker/\n' >"$commit_repo/.gitignore"
+printf 'seed\n' >"$commit_repo/seed.txt"
+git -C "$commit_repo" add .gitignore seed.txt
+git -C "$commit_repo" commit -q -m seed
+mkdir -p "$commit_repo/.tracker"
+printf 'scratch\n' >"$commit_repo/.tracker/scratch"
+printf 'fixed\n' >"$commit_repo/seed.txt"
+printf 'new\n' >"$commit_repo/new.txt"
+
+commit_run_dir="$test_root/run-commit"
+mkdir -p "$commit_run_dir/roborev" "$commit_run_dir/PatchAudit"
+git -C "$commit_repo" rev-parse HEAD >"$commit_run_dir/roborev/expected-head"
+printf '56\n' >"$commit_run_dir/roborev/current-job"
+printf 'AUDIT: approve\nSTATUS: success\n' >"$commit_run_dir/PatchAudit/response.md"
+got=$(cd "$commit_repo" && TRACKER_RUN_DIR="$commit_run_dir" sh "$test_root/CommitFix.sh")
+[ "$got" = commit_ok ] || fail "CommitFix with .tracker/ gitignored printed '$got', want commit_ok"
+git -C "$commit_repo" show --stat HEAD | grep -q 'new.txt' ||
+  fail "CommitFix did not commit the new file with .tracker/ gitignored"
+git -C "$commit_repo" show --stat HEAD | grep -q '\.tracker' &&
+  fail "CommitFix committed something under .tracker even though it was gitignored"
+[ -f "$commit_repo/.tracker/scratch" ] ||
+  fail "CommitFix removed .tracker/scratch even though it only commits"
