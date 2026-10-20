@@ -163,6 +163,36 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
     self-report` and `# needs-seed` on `speedrun` and `# opens-pr: true` on
     `idea-to-pr`. tracker ignores them, and tracker-runner uses them to group
     and label its pipeline picker.
+  - **Verification fail-opens fixed (found in review of this change):**
+    - `bug-hunter`: a reproduction now has to be *attributed*. An added test must
+      fail, or the changed test file must fail to build or collect. Before, a
+      non-zero aggregate run counted, so an unrelated pre-existing failure in the
+      same file or package passed as a reproduction, and a later no-op fix could
+      be certified `regression-pass`.
+    - `idea-to-pr`:
+      - A docs-only change now ends `validation-deferred`, never
+        `validation-pass`, because nothing ran.
+      - `*.txt` (`requirements.txt`, `CMakeLists.txt`) is no longer counted as
+        docs.
+      - A pass is refused when the change touched a language the in-sandbox run
+        didn't exercise. A Go build no longer certifies a JS-only change.
+      - A clean install that ran no test now defers instead of passing.
+      - A seeded JS target needs a real `test` script and a reported passing
+        test.
+    - `doc-writer`: examples now run with stdin from `/dev/null`. Before, an
+      example that read stdin swallowed the example index, the later broken
+      examples never ran, and the docs were certified. `docs-verified` also
+      requires every harvested example to have been reached.
+  - Other fixes from the same review:
+    - `doc-writer`: the `uv` fallback ran the literal text `$UV_FROZEN` as the
+      command, and examples couldn't import the project (they now run with
+      `PYTHONPATH` at the project root).
+    - `bug-hunter`: the VERIFIED note now describes what the language's run
+      actually re-ran, instead of a Python-only count, and it no longer claims a
+      neighbour re-run for Rust.
+    - `bug-hunter` and `refactor-express`: PASS_TO_PASS capture keeps a whole
+      pytest node-id when the id contains spaces, and runs with
+      `-p no:xdist`.
   - No tracker pin change: every file passes `dippin check` at this repo's
     pinned dippin v0.72.0, and tracker-runner runs them on tracker v0.80.1.
 

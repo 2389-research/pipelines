@@ -207,13 +207,24 @@ workflow bug_hunter
       elif [ -x venv/bin/python ]; then PY=venv/bin/python
       fi
       rc=127
+      # A reproduction is ATTRIBUTED: an ADDED test (the same targets Verify gates on) failed, or
+      # the changed test file failed to build/collect. A non-zero aggregate run alone is NOT one —
+      # an unrelated pre-existing failure in the same file/package/suite would otherwise certify a
+      # "reproduction" that reproduces nothing, and a later no-op fix as regression-pass.
+      attributed=0
       if [ -n "$py_tests" ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; }; then
-        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -v $py_tests 2>&1); rc=$?
-        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -v $py_tests 2>&1); rc=$?
-        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -v $py_tests 2>&1); rc=$?
+        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -p no:xdist -v $py_tests 2>&1); rc=$?
+        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -p no:xdist -v $py_tests 2>&1); rc=$?
+        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -p no:xdist -v $py_tests 2>&1); rc=$?
         else out=""; rc=127; fi
         printf '%s\n' "$out" >&2
-        printf '%s\n' "$out" | grep -E ' PASSED' | awk '{print $1}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        printf '%s\n' "$out" | sed -nE 's/^(.+::.+) PASSED( +\[ *[0-9]+%\])?[[:space:]]*$/\1/p' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true  # whole node-id: a parametrized id may contain spaces (#844)
+        for f in $py_tests; do
+          printf '%s\n' "$out" | grep -qE "^ERROR[[:space:]]+(collecting[[:space:]]+)?(\./)?$f" && attributed=1
+          for nm in $(git diff "$root" HEAD -- "$f" 2>/dev/null | grep -E '^\+' | grep -oE 'def[[:space:]]+test_[A-Za-z0-9_]+' | sed -E 's/^def[[:space:]]+//' | sort -u); do
+            printf '%s\n' "$out" | grep -qE "::$nm(\[[^]]*\])?[[:space:]]+(FAILED|ERROR)" && attributed=1
+          done
+        done
       elif [ -n "$go_tests" ] && [ -f go.mod ]; then
         rc=0
         for f in $go_tests; do
@@ -221,6 +232,10 @@ workflow bug_hunter
           out=$(go test "./$d" -v -run . 2>&1) || rc=1
           printf '%s\n' "$out" >&2
           printf '%s\n' "$out" | awk -v d="$d" '/^--- PASS: /{print d"::"$3}' >> .tracker/pass_to_pass.txt 2>/dev/null || true
+          printf '%s\n' "$out" | grep -qE '\[(build|setup) failed\]' && attributed=1
+          for nm in $(git diff "$root" HEAD -- "$f" 2>/dev/null | grep -E '^\+func[[:space:]]+Test[A-Za-z0-9_]+' | sed -E 's/^\+func[[:space:]]+(Test[A-Za-z0-9_]+).*/\1/' | sort -u); do
+            printf '%s\n' "$out" | grep -qE "^[[:space:]]*--- FAIL: $nm( |/|$)" && attributed=1
+          done
         done
       elif [ -n "$js_tests" ] && [ -f package.json ]; then
         out=$(npm test 2>&1); rc=$?
@@ -230,6 +245,9 @@ workflow bug_hunter
         # runners emit nothing here -> degrade safe (no p2p, still deny-by-default in Verify).
         printf '%s\n' "$out" | grep -oE 'PASS[[:space:]]+[^[:space:]]+\.(test|spec)\.[jt]sx?' \
           | awk '{print "js::"$2}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        for f in $js_tests; do
+          printf '%s\n' "$out" | grep -qE "FAIL[[:space:]]+(\./)?$f" && attributed=1
+        done
       elif [ -n "$rust_tests" ] && [ -f Cargo.toml ]; then
         rc=0
         rust_targets=$(git diff "$root" HEAD -- '*.rs' 2>/dev/null \
@@ -237,17 +255,21 @@ workflow bug_hunter
           | grep -E '^\+[[:space:]]*(async[[:space:]]+)?fn[[:space:]]+' \
           | sed -E 's/^\+[[:space:]]*(async[[:space:]]+)?fn[[:space:]]+([A-Za-z0-9_]+).*/\2/' | sort -u)
         if [ -n "$rust_targets" ]; then
-          for t in $rust_targets; do out=$(cargo test "$t" 2>&1) || rc=1; printf '%s\n' "$out" >&2; done
+          for t in $rust_targets; do
+            out=$(cargo test "$t" 2>&1) || rc=1
+            printf '%s\n' "$out" >&2
+            printf '%s\n' "$out" | grep -qE "^test ([A-Za-z0-9_]+::)*$t \.\.\. FAILED|^error(\[E[0-9]+\])?:|could not compile" && attributed=1
+          done
         else
           rc=127
         fi
       fi
       if [ "$rc" -eq 127 ]; then
         printf 'reproduced'          # could not run the test -> accept liberally, the post-fix gate still denies
-      elif [ "$rc" -ne 0 ]; then
-        printf 'reproduced'          # test FAILS on unfixed code -> genuine reproduction
+      elif [ "$rc" -ne 0 ] && [ "$attributed" -eq 1 ]; then
+        printf 'reproduced'          # an ADDED test FAILS on unfixed code -> genuine reproduction
       else
-        give_up                      # test PASSES on unfixed code -> not a reproduction
+        give_up                      # added test passes (any failure is unrelated) -> not a reproduction
       fi
 
   agent Fix
@@ -294,6 +316,7 @@ workflow bug_hunter
       marker=regression-unknown
       targets=""
       nodeids=""
+      ran_p2p=""   # the previously-passing neighbours THIS run actually re-ran (feeds the note)
       {
         if [ ! -x .venv/bin/python ] && [ ! -x venv/bin/python ]; then
           for hook in bughunt-setup.sh .bughunt/setup.sh scripts/bughunt-setup.sh; do
@@ -353,6 +376,7 @@ workflow bug_hunter
             done
           done
           p2p_py=$(printf '%s\n' "$p2p" | grep -E '\.py::' || true)
+          ran_p2p="$p2p_py"
           nodeids=$(printf '%s\n%s\n' "$targets" "$p2p_py" | grep -vE '^[[:space:]]*$' | sort -u)
           echo "TARGET (F2P): $targets"
           echo "PASS_TO_PASS (py): $p2p_py"
@@ -393,6 +417,7 @@ workflow bug_hunter
             p2p_names=$(printf '%s\n' "$p2p" | awk -F:: -v d="$d" '$1==d{print $2}' | sort -u)
             allnames=$(printf '%s %s' "$add" "$p2p_names" | tr ' ' '\n' | grep -vE '^[[:space:]]*$' | sort -u)
             [ -z "$allnames" ] && continue
+            ran_p2p=$(printf '%s\n%s' "$ran_p2p" "$(printf '%s\n' "$p2p_names" | grep -vE '^[[:space:]]*$' | sed "s|^|$d::|")")
             printf '%s' "$add" | grep -q 'Test' && { ran_target=1; targets="$targets $add"; }
             pat=$(printf '%s\n' "$allnames" | paste -sd'|' -)
             echo "--- go test ./$d -run ^(${pat})\$ (TARGET + PASS_TO_PASS) ---"
@@ -417,6 +442,7 @@ workflow bug_hunter
           p2p_js=$(printf '%s\n' "$p2p" | grep -E '^js::' | sed 's/^js:://' || true)
           run_specs=$(printf '%s\n%s\n' "$js_tests" "$p2p_js" | grep -vE '^[[:space:]]*$' | sort -u)
           if [ "$ran_target" -eq 1 ]; then
+            ran_p2p="$p2p_js"
             echo "TARGET (F2P): $targets"
             echo "PASS_TO_PASS (js): $p2p_js"
             npm test -- $run_specs 2>&1 || marker=regression-fail
@@ -469,17 +495,30 @@ workflow bug_hunter
         echo 'Full test output: .tracker/regression-evidence.txt'
       } > .tracker/DELIVERY-NOTE.md
       if [ "$marker" = regression-pass ]; then
-        n_p2p=$(printf '%s\n' "$nodeids" | grep -cvE '^[[:space:]]*$')
+        # Built from what THIS run re-ran (ran_p2p, per language) — never a Python-only count or a
+        # neighbour claim for a language whose branch re-runs none (Rust).
+        n_p2p=$(printf '%s\n' "$ran_p2p" | grep -cvE '^[[:space:]]*$' || true)
         {
           echo 'VERIFIED — by the project'"'"'s own tests, run by the pipeline'
           echo
-          echo 'Reproduction target(s) — these FAILED on the unfixed code and PASS with this change:'
-          printf '%s\n' "$targets" | grep -vE '^[[:space:]]*$' | sed 's/^/  - /'
+          echo 'Reproduction target(s) — tests added by this run; at least one FAILED on the unfixed'
+          echo 'code (attributed at Baseline), and all PASS with this change:'
+          # python node-ids are NEWLINE-delimited and may contain spaces (#844); go/js/rust
+          # targets are space-joined names/paths with none — split only those.
+          case "$targets" in
+            *::*) printf '%s\n' "$targets" ;;
+            *)    printf '%s\n' "$targets" | tr ' ' '\n' ;;
+          esac | grep -vE '^[[:space:]]*$' | sed 's/^/  - /'
           echo
-          echo "Also re-run: every test that passed alongside them before the fix ($n_p2p node-ids"
-          echo 'in total, listed in .tracker/py-nodeids.txt). All still pass.'
+          if [ "${n_p2p:-0}" -gt 0 ]; then
+            echo "Also re-run: $n_p2p test(s) that passed before the fix (PASS_TO_PASS, captured at"
+            echo 'Baseline into .tracker/pass_to_pass.txt). All still pass.'
+          else
+            echo 'No previously-passing neighbour test was re-run (none was captured for this'
+            echo 'language): only the target(s) above were checked.'
+          fi
           echo
-          echo 'Scope of this claim: ONLY those node-ids were run. This is a targeted check, not a'
+          echo 'Scope of this claim: ONLY those tests were run. This is a targeted check, not a'
           echo 'full-suite green, and pre-existing failures elsewhere were neither fixed nor masked.'
           echo
           echo 'Full test output: .tracker/regression-evidence.txt'

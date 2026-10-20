@@ -158,12 +158,12 @@ workflow refactor_express
       fi
       if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; then
         echo 'build_system=python' >> "$BL"
-        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -v 2>&1); rc=$?
-        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -v 2>&1); rc=$?
-        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -v 2>&1); rc=$?
+        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -p no:xdist -v 2>&1); rc=$?
+        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -p no:xdist -v 2>&1); rc=$?
+        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -p no:xdist -v 2>&1); rc=$?
         else out=''; rc=127; fi
         printf '%s\n' "$out" >> "$BL"
-        printf '%s\n' "$out" | grep -E ' PASSED' | awk '{print $1}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        printf '%s\n' "$out" | sed -nE 's/^(.+::.+) PASSED( +\[ *[0-9]+%\])?[[:space:]]*$/\1/p' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true  # whole node-id: a parametrized id may contain spaces (#844)
         [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
       elif [ -f go.mod ]; then
         echo 'build_system=go' >> "$BL"
@@ -284,12 +284,12 @@ workflow refactor_express
       elif [ -x venv/bin/python ]; then PY=venv/bin/python
       fi
       if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; then
-        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -v 2>&1); rc=$?
-        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -v 2>&1); rc=$?
-        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -v 2>&1); rc=$?
+        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -p no:xdist -v 2>&1); rc=$?
+        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -p no:xdist -v 2>&1); rc=$?
+        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -p no:xdist -v 2>&1); rc=$?
         else out=''; rc=127; fi
         printf '%s\n' "$out" >> "$BL"
-        printf '%s\n' "$out" | grep -E ' PASSED' | awk '{print $1}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        printf '%s\n' "$out" | sed -nE 's/^(.+::.+) PASSED( +\[ *[0-9]+%\])?[[:space:]]*$/\1/p' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true  # whole node-id: a parametrized id may contain spaces (#844)
         [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
       elif [ -f go.mod ]; then
         rc=0

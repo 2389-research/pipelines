@@ -37,7 +37,7 @@ Single-pass build pipelines — fastest path from spec or bug report to shipped 
 | [`speedrun.dip`](build-and-ship/speedrun.dip) | Ultra-minimal build pipeline — read spec, plan, implement, test, ship. Fully headless. |
 | [`build_from_superpowers.dip`](build-and-ship/build_from_superpowers.dip) | Builds from a superpowers spec — finds the spec, executes every task, commits with passing tests. |
 | [`bug-hunter.dip`](build-and-ship/bug-hunter.dip) | Autonomous bug fix — reproduces, diagnoses, fixes via TDD, and commits the fix on a branch for a PR. |
-| [`idea-to-pr.dip`](build-and-ship/idea-to-pr.dip) | Free-text idea to shipped change — writes a reviewable spec/plan/tasks first, then builds and validates the P1 slice. |
+| [`idea-to-pr.dip`](build-and-ship/idea-to-pr.dip) | Free-text idea to a validated change — writes a reviewable spec/plan/tasks first, then builds and validates the P1 slice. |
 | [`refactor-express.dip`](build-and-ship/refactor-express.dip) | Incremental refactoring — tests stay green at every step, rollback on failure. |
 | [`doc-writer.dip`](build-and-ship/doc-writer.dip) | Documentation generator — README, API reference, architecture guide, and tutorials. |
 

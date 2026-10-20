@@ -246,16 +246,17 @@ workflow IdeaToPR
       # (README, docs, images) has nothing to build or run in-sandbox — and for a repo-seeded run
       # the target repo's own CI is the real gate on the delivered PR. Skip toolchain execution
       # instead of spinning up (and looping on) a build that has nothing to validate. Build/config
-      # manifests (*.toml/*.yaml/*.json/etc.) are deliberately NOT treated as docs, so a change to
-      # the build system still gets validated.
+      # manifests (*.toml/*.yaml/*.json/*.txt — requirements.txt, CMakeLists.txt) are deliberately
+      # NOT treated as docs, so a change to the build system still gets validated. Nothing RAN on
+      # this path, so it DEFERS (validation-deferred): it never loops, and it is never certified.
       if [ -n "$changed_paths" ]; then
         nondocs="$(printf '%s\n' "$changed_paths" \
-          | grep -vE '\.(md|markdown|mdx|rst|txt|adoc|png|jpe?g|gif|svg|webp|ico|pdf)$' \
+          | grep -vE '\.(md|markdown|mdx|rst|adoc|png|jpe?g|gif|svg|webp|ico|pdf)$' \
           | grep -vE '(^|/)(LICENSE|LICENCE|NOTICE|COPYING|AUTHORS|CONTRIBUTORS|CHANGELOG)(\.[A-Za-z0-9]+)?$' \
           || true)"
         if [ -z "$(printf '%s' "$nondocs" | tr -d '[:space:]')" ]; then
           echo "P1 changed only documentation/asset files — nothing to build or test in-sandbox; the delivered PR's own CI validates the change. (#560)"
-          printf 'validation-pass'
+          printf 'validation-deferred'
           exit 0
         fi
       fi
@@ -291,8 +292,14 @@ workflow IdeaToPR
       # the same "defer to PR CI" posture #560 gave repo-seeded runs, now extended to the
       # greenfield toolchain-absent case, #666/#667). Every fallible step is guarded with
       # `|| return 1` so the outcome does not depend on `set -e` (disabled inside `if`/`||`).
+      # TOOLCHAIN_ECO records which ecosystem the run actually exercised (go|py|js|rust), so the
+      # final pass can be refused when P1 changed source in a DIFFERENT one (a Go+JS repo whose
+      # first manifest is go.mod must not certify a JS-only change). Return 3 = the install ran
+      # but NO test executed — nothing is verified, so callers DEFER, never pass.
+      TOOLCHAIN_ECO=""
       run_toolchain() {
         if [ -f go.mod ]; then
+          TOOLCHAIN_ECO=go
           if ! command -v go >/dev/null 2>&1; then
             echo "Go toolchain (go) is not present in this sandbox — cannot build/test here; deferring to the delivered PR's CI. (#666/#667)"
             return 2
@@ -304,6 +311,7 @@ workflow IdeaToPR
           echo "=== go test ==="
           go test ./... 2>&1 || return 1
         elif [ -f pyproject.toml ] || [ -f setup.py ] || [ -f requirements.txt ]; then
+          TOOLCHAIN_ECO=py
           if ! command -v python3 >/dev/null 2>&1; then
             echo "Python toolchain (python3) is not present in this sandbox — cannot build/test here; deferring to the delivered PR's CI. (#666/#667)"
             return 2
@@ -336,9 +344,11 @@ workflow IdeaToPR
             echo "=== pytest ==="
             python -m pytest -q 2>&1 || { echo "pytest failed on a clean install" >&2; return 1; }
           else
-            echo "No test suite found — clean-install smoke passed, nothing to run."
+            echo "No test suite found — clean-install smoke passed, but no test ran: nothing is verified."
+            return 3
           fi
         elif [ -f package.json ]; then
+          TOOLCHAIN_ECO=js
           if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
             echo "Node toolchain (node/npm) is not present in this sandbox — cannot build/test here; deferring to the delivered PR's CI. (#666/#667)"
             return 2
@@ -359,9 +369,11 @@ workflow IdeaToPR
             echo "=== npm test ==="
             npm test 2>&1 || { echo "npm test failed on a clean install" >&2; return 1; }
           else
-            echo "No test script in package.json — install smoke passed, nothing to run."
+            echo "No test script in package.json — install smoke passed, but no test ran: nothing is verified."
+            return 3
           fi
         elif [ -f Cargo.toml ]; then
+          TOOLCHAIN_ECO=rust
           if ! command -v cargo >/dev/null 2>&1; then
             echo "Rust toolchain (cargo) is not present in this sandbox — cannot build/test here; deferring to the delivered PR's CI. (#666/#667)"
             return 2
@@ -390,6 +402,25 @@ workflow IdeaToPR
           return 1
         fi
         return 0
+      }
+
+      # change_uncovered: true when P1 changed source belonging to an ecosystem other than the one
+      # TOOLCHAIN_ECO validated. Only recognized source/manifests classify; other files (configs,
+      # scripts, assets) do not, exactly as before.
+      eco_of() {
+        case "$1" in
+          *.go|go.mod|*/go.mod|go.sum|*/go.sum) echo go ;;
+          *.py|pyproject.toml|*/pyproject.toml|setup.py|*/setup.py|setup.cfg|*/setup.cfg|requirements*.txt|*/requirements*.txt) echo py ;;
+          *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|package.json|*/package.json|package-lock.json|*/package-lock.json) echo js ;;
+          *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock) echo rust ;;
+        esac
+      }
+      change_uncovered() {
+        printf '%s\n' "$changed_paths" | while IFS= read -r p; do
+          [ -n "$p" ] || continue
+          e="$(eco_of "${p#./}")"
+          if [ -n "$e" ] && [ "$e" != "$TOOLCHAIN_ECO" ]; then echo "$p ($e)"; fi
+        done | grep . >/dev/null
       }
 
       # Real build/test output is captured to .tracker/validation-report.txt so the
@@ -427,6 +458,7 @@ workflow IdeaToPR
         ran_target=0
         tgt_rc=0
         if [ -n "$py_tests" ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; }; then
+          TOOLCHAIN_ECO=py
           if [ -n "$PY" ]; then
             ran_target=1; "$PY" -m pytest -p no:cacheprovider -v $py_tests > .tracker/validation-report.txt 2>&1 && tgt_rc=0 || tgt_rc=1
           elif command -v pytest >/dev/null 2>&1; then
@@ -438,6 +470,7 @@ workflow IdeaToPR
             echo "P1 added Python test(s) but no interpreter (.venv/venv/pytest/uv) is available in-sandbox — deferring to the delivered PR's CI. (#560)"
           fi
         elif [ -n "$go_tests" ] && [ -f go.mod ] && command -v go >/dev/null 2>&1; then
+          TOOLCHAIN_ECO=go
           export GOCACHE="$(pwd)/.gocache" GOPATH="$(pwd)/.gopath" GOMODCACHE="$(pwd)/.gomodcache"
           mkdir -p "$GOCACHE" "$GOPATH" "$GOMODCACHE"
           # Scope to the test functions P1 DEFINED in its own changed *_test.go files, per
@@ -465,9 +498,20 @@ workflow IdeaToPR
             echo "--- go test ./$d -run ^(${pat})\$ (P1-added test targets, per-test not whole-package) ---" >> .tracker/validation-report.txt
             go test "./$d" -run "^(${pat})\$" -v >> .tracker/validation-report.txt 2>&1 || tgt_rc=1
           done
-        elif [ -n "$js_tests" ] && [ -f package.json ] && command -v npm >/dev/null 2>&1; then
+        elif [ -n "$js_tests" ] && [ -f package.json ] && command -v npm >/dev/null 2>&1 \
+            && node -e "const s=(require('./package.json').scripts)||{}; process.exit(s.test?0:1)" 2>/dev/null; then
+          # Only a REAL `test` script is a target (no script -> fall through to the best-effort
+          # path, never loop FixP1 on "Missing script: test"); and exit 0 alone is not evidence —
+          # the reporter must show >=1 passing test (jest/vitest/mocha/node:test), else DEFER.
+          TOOLCHAIN_ECO=js
           ran_target=1
           npm test -- $js_tests > .tracker/validation-report.txt 2>&1 && tgt_rc=0 || tgt_rc=1
+          if [ "$tgt_rc" -eq 0 ] && ! grep -qE 'Tests:?[[:space:]].*[1-9][0-9]* passed|(#|ℹ) pass [1-9]|[1-9][0-9]* passing' .tracker/validation-report.txt; then
+            cat .tracker/validation-report.txt >&2 || true
+            echo "WARNING: the test script exited 0 but reported no passing test — nothing is verified; deferring to the delivered PR's CI." >&2
+            printf 'validation-deferred'
+            exit 0
+          fi
         fi
         if [ "$ran_target" = 1 ]; then
           cat .tracker/validation-report.txt >&2 || true
@@ -505,7 +549,11 @@ workflow IdeaToPR
         else
           rc=$?
           cat .tracker/validation-report.txt >&2 || true
-          if [ "$rc" = 2 ]; then
+          if [ "$rc" = 3 ]; then
+            echo "WARNING: the clean install passed but no test ran — nothing is verified; deferring to the delivered PR's CI."
+            printf 'validation-deferred'
+            exit 0
+          elif [ "$rc" = 2 ]; then
             echo "WARNING: required toolchain is absent from this sandbox — the P1 slice was written but could not be built/tested here. Deferring validation to the delivered PR's CI rather than looping. (#666/#667)"
             # Nothing executed, so nothing is verified: deferral marker, not
             # `validation-pass` (#920) — the ledger credits no verify evidence.
@@ -519,7 +567,13 @@ workflow IdeaToPR
       fi
       # Reached only when something actually ran and passed: P1's own test targets
       # (seeded), the full build+test (seeded best-effort success, or greenfield).
-      # This is the ONLY line that emits the bound verify marker (#920).
+      # This is the ONLY line that emits the bound verify marker (#920) — and only when what RAN
+      # covers every ecosystem P1 changed: a Go build/test says nothing about changed JavaScript.
+      if change_uncovered; then
+        echo "WARNING: P1 changed source in an ecosystem the in-sandbox run (${TOOLCHAIN_ECO:-none}) did not exercise — not verified; deferring to the delivered PR's CI." >&2
+        printf 'validation-deferred'
+        exit 0
+      fi
       printf 'validation-pass'
 
   agent ReviewP1
