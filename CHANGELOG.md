@@ -16,6 +16,16 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `build-and-ship/idea-to-pr.dip`: turns a free-text idea into a shipped change.
+  It writes a reviewable `spec.md`, `plan.md` and `tasks.md` (P1/P2/P3 slices)
+  before any code, then builds the P1 slice, validates it deny-by-default (an
+  unknown or Rust build with no real check does not pass), and quality-reviews
+  it. It declares a required `idea` text input. It does not commit or branch
+  itself: tracker-runner commits the result to the run's branch and opens the
+  PR, and a standalone run leaves the change in the working tree for you. It
+  was previously maintained only inside tracker-runner; this repo is now
+  canonical.
+
 - `roborev/roborev_issue_fixer.dip`: a headless loop over open roborev reviews
   on the current branch. It re-checks each finding against the code, repairs the
   valid ones, runs the project's tests, audits the patch, commits, waits for
@@ -126,6 +136,79 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   [#38](https://github.com/2389-research/pipelines/issues/38)).
 
 ### Changed
+
+- **BREAKING — `build-and-ship/` client pipelines now track the hardened
+  versions tracker-runner runs in production** (`bug-hunter`, `doc-writer`,
+  `refactor-express`, `speedrun`; this repo is now the canonical source and
+  tracker-runner consumes it instead of keeping its own copies):
+  - **They no longer open the pull request themselves.** `bug-hunter`,
+    `doc-writer` and `refactor-express` used to run `gh pr create` in-pipeline.
+    They now commit their change on the run's branch and stop. Whoever runs the
+    pipeline (tracker-runner's host, or you) opens the PR, so a run never holds
+    a GitHub write token. Standalone users: open the PR yourself from the
+    branch the run leaves behind.
+  - Tool gates route on the typed `ctx.tool_marker` channel instead of matching
+    stdout byte-for-byte, and marker nodes no longer route by edge weight
+    (tracker-runner #826, #840). Node graphs and routing changed throughout,
+    which is part of why this is MAJOR.
+  - Verification is deny-by-default: a suite that ran zero tests, a refactor
+    that changed nothing, or an unknown language is not a pass. That covers Go,
+    JS and Rust as well as Python (tracker-runner #857, #861, #870, #873, #878,
+    #887). A verify step never rewrites the lockfile it is verifying.
+  - A failed environment or toolchain bootstrap fails loudly up front instead of
+    surfacing later as a test failure (tracker-runner #846). `bug-hunter` derives
+    its diff baseline from the recorded run baseline (#857) and keeps
+    parametrized pytest node ids intact (#844).
+  - Each file declares a `# category:` header comment, plus `# ship-verdict:
+    self-report` and `# needs-seed` on `speedrun` and `# opens-pr: true` on
+    `idea-to-pr`. tracker ignores them, and tracker-runner uses them to group
+    and label its pipeline picker.
+  - **Verification fail-opens fixed (found in review of this change):**
+    - `bug-hunter`: a reproduction now has to be *attributed*. An added test must
+      fail, or the changed test file must fail to build or collect. Before, a
+      non-zero aggregate run counted, so an unrelated pre-existing failure in the
+      same file or package passed as a reproduction, and a later no-op fix could
+      be certified `regression-pass`.
+    - `idea-to-pr`:
+      - A docs-only change now ends `validation-deferred`, never
+        `validation-pass`, because nothing ran.
+      - `*.txt` (`requirements.txt`, `CMakeLists.txt`) is no longer counted as
+        docs.
+      - A pass is refused when the change touched a language the in-sandbox run
+        didn't exercise. A Go build no longer certifies a JS-only change. This
+        is an allowlist: a non-doc file in no recognized language (`.sh`,
+        `.java`, `.yaml` and so on) counts as not exercised too. Only
+        `.gitignore`, `.gitattributes` and `.editorconfig` are exempt. The
+        refusal names the files.
+      - A clean install that ran no test now defers instead of passing.
+      - A seeded JS target needs a real `test` script and a reported passing
+        test.
+      - ValidateP1 refuses to run when the pre-implementation snapshot
+        (`.baseline_files`) is missing. Without it, every later check would see
+        no change and be skipped.
+      - A shell comment in VerifyArtifacts no longer contains a `ctx` variable
+        reference. tracker expands those before the shell runs and refuses that
+        key in a tool command, so the node would have failed on a resumed
+        run.
+    - `doc-writer`: examples now run with stdin from `/dev/null`. Before, an
+      example that read stdin swallowed the example index, the later broken
+      examples never ran, and the docs were certified. `docs-verified` also
+      requires every harvested example to have been reached.
+      The run list is frozen when examples are harvested. An example whose file
+      is deleted or emptied before it runs (an earlier example can reach it)
+      counts as a failure, not a skip.
+  - Other fixes from the same review:
+    - `doc-writer`: the `uv` fallback ran the literal text `$UV_FROZEN` as the
+      command, and examples couldn't import the project (they now run with
+      `PYTHONPATH` at the project root).
+    - `bug-hunter`: the VERIFIED note now describes what the language's run
+      actually re-ran, instead of a Python-only count, and it no longer claims a
+      neighbour re-run for Rust.
+    - `bug-hunter` and `refactor-express`: PASS_TO_PASS capture keeps a whole
+      pytest node-id when the id contains spaces, and runs with
+      `-p no:xdist`.
+  - No tracker pin change: every file passes `dippin check` at this repo's
+    pinned dippin v0.72.0, and tracker-runner runs them on tracker v0.80.1.
 
 - Kata now records the checked-out local branch as trunk and lands each
   SHA-bound, two-model-approved task there during closure. The close step

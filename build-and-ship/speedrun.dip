@@ -1,12 +1,15 @@
 workflow speedrun
-  goal: "Given a project with a spec or description already present, produce working software as fast as possible: single-pass plan, bulk implementation, test, ship. Fully headless, no human gates."
+  goal: "Given a project with a spec or description already present, produce working software as fast as possible: single-pass plan, bulk implementation, then a TOOL gate runs the project's own tests. Delivery is an honest DRAFT — green means the agent's own tests pass (a self-authored oracle, not independent proof), red or no-runnable-tests means NOT VERIFIED. Fully headless, no human gates."
+  # category: Build something new
+  # ship-verdict: self-report
+  # needs-seed
   start: Start
   exit: Exit
 
   defaults
     max_retries: 2
     fidelity: summary:high
-    max_restarts: 20
+    max_restarts: 5
 
   tool Start
     label: Start
@@ -22,6 +25,7 @@ workflow speedrun
 
   agent ReadSpec
     label: "Read Spec"
+    model: claude-haiku-4-5
     fidelity: full
     goal_gate: true
     max_retries: 3
@@ -51,6 +55,8 @@ workflow speedrun
 
   agent QuickPlan
     label: "Quick Plan"
+    model: claude-sonnet-5
+    reasoning_effort: high
     fidelity: full
     goal_gate: true
     max_retries: 3
@@ -86,6 +92,7 @@ workflow speedrun
 
   agent SetupProject
     label: "Setup Project"
+    model: claude-haiku-4-5
     goal_gate: true
     max_retries: 3
     retry_target: SetupProject
@@ -109,39 +116,91 @@ workflow speedrun
       4. Set up linter/formatter (ruff for Python, biome for Node, etc.)
       5. Create directory structure per plan
       6. Ensure .gitignore covers: .env, .tracker/, __pycache__/, node_modules/, target/, *.bak
-      7. Run test command to verify setup (even 0 tests is fine)
+      7. Install/resolve dependencies so the toolchain is ready (uv sync / npm install / go mod tidy).
+         Do NOT paper over an install failure — if a dep cannot be resolved, say so; the next
+         step's tool gate will detect a broken toolchain and stop the run honestly.
       8. git add -A && git commit -m 'chore(setup): initialize project'
 
       ## Success Criteria
       - Project initializes cleanly
-      - Test framework runs
+      - The language toolchain and dependencies are installed/resolvable
       - All committed
 
   tool VerifySetup
     label: "Verify Setup"
-    timeout: 30s
+    marker_grep: '^(env-ready|env-failed)$'
+    timeout: 5m
     command:
       #!/bin/sh
-      set -eu
+      # #846 FAIL LOUD: the greenfield equivalent of bug-hunter's EnsureEnv. SetupProject
+      # is an agent, and "I initialized the project" is a self-report. This TOOL confirms the
+      # toolchain is actually usable (interpreter resolves / module builds) BEFORE any code
+      # is written. The old body ran `go build ... || true` / `cargo build ... || true` and
+      # then UNCONDITIONALLY printed `ready-*`, so a broken env sailed on and the agent burned
+      # the run improvising deps. Now we capture the real exit code, record it to
+      # .tracker/env-bootstrap.status (+ .log), and emit a DISTINCT marker: `env-ready` on a
+      # working toolchain (advance to Implement) or `env-failed` on a broken one (routes OUT
+      # of the work loop to an honest DRAFT). "No tests yet" is NOT a failure — a fresh repo
+      # has none. The marker_grep regex lifts the marker into the typed ctx.tool_marker
+      # routing channel (last matching line wins), so a stray stdout line can no longer flip
+      # routing; everything else goes to the log/stderr.
+      #
+      # DENY BY DEFAULT: stamp the delivery note as an unverified DRAFT before any work runs.
+      # Nothing here is backed by a passing test until the TestGate oracle overwrites it.
+      set -u
       mkdir -p .tracker
+      status_file=.tracker/env-bootstrap.status
+      log_file=.tracker/env-bootstrap.log
+      : > "$log_file"
+      cat > .tracker/DELIVERY-NOTE.md <<'NOTE'
+      DRAFT — NOT VERIFIED
+
+      The build has not been implemented or tested yet, so nothing here is backed by a
+      passing test. Treat every claim in this branch as unverified until a human reviews it.
+      NOTE
+      rc=0
+      tool='none'
       if [ -f pyproject.toml ]; then
-        uv run pytest --co -q 2>/dev/null || echo 'no-tests-yet'
-        printf 'ready-python'
+        tool='python'
+        if [ -x .venv/bin/python ]; then .venv/bin/python -c 'import sys' > "$log_file" 2>&1; rc=$?
+        elif [ -x venv/bin/python ]; then venv/bin/python -c 'import sys' > "$log_file" 2>&1; rc=$?
+        elif command -v uv >/dev/null 2>&1; then uv sync > "$log_file" 2>&1; rc=$?
+        elif command -v python3 >/dev/null 2>&1; then python3 -c 'import sys' > "$log_file" 2>&1; rc=$?
+        else rc=127; fi
       elif [ -f package.json ]; then
-        npm test 2>/dev/null || echo 'no-tests-yet'
-        printf 'ready-node'
+        tool='node'
+        if command -v node >/dev/null 2>&1; then node -e 'process.exit(0)' > "$log_file" 2>&1; rc=$?
+        else rc=127; fi
       elif [ -f go.mod ]; then
-        go build ./... 2>&1 || true
-        printf 'ready-go'
+        tool='go'
+        go build ./... > "$log_file" 2>&1; rc=$?
       elif [ -f Cargo.toml ]; then
-        cargo build 2>&1 || true
-        printf 'ready-rust'
+        tool='rust'
+        cargo build > "$log_file" 2>&1; rc=$?
       else
-        printf 'ready-unknown'
+        tool='unknown'
+        rc=0
+      fi
+      cat "$log_file" >&2
+      if [ "$rc" -eq 0 ]; then
+        printf 'status=ok\ntool=%s\nexit=0\n' "$tool" > "$status_file"
+        printf 'env-ready'
+      else
+        printf 'status=failed\ntool=%s\nexit=%s\n' "$tool" "$rc" > "$status_file"
+        cat > .tracker/DELIVERY-NOTE.md <<NOTE
+      DRAFT — NOT VERIFIED (environment setup failed)
+
+      The project toolchain ($tool) could not be built/resolved (exit $rc), so no code was
+      written and nothing was tested. A partial or broken environment would waste the whole
+      run (#846). See .tracker/env-bootstrap.log. A human must fix the setup first.
+      NOTE
+        echo "[VerifySetup] toolchain '$tool' setup FAILED (exit $rc) — aborting to an honest draft (#846)" >&2
+        printf 'env-failed'
       fi
 
   agent Implement
     label: "Implement Everything"
+    model: claude-haiku-4-5
     fidelity: full
     goal_gate: true
     max_retries: 3
@@ -158,11 +217,10 @@ workflow speedrun
          a. Write tests first (TDD — test must fail before implementation)
          b. Write implementation to make tests pass
          c. Run tests to confirm green
-         d. Run linter/formatter and fix issues
+         d. Run the linter/formatter and fix what is quick to fix (lint is advisory, not a ship blocker)
       3. After ALL tasks are done:
-         a. Run the full test suite — everything must pass
-         b. Run linter — no errors
-         c. Stage and commit per logical chunk:
+         a. Run the project's test suite — everything you wrote should pass
+         b. Stage and commit per logical chunk:
             git add <specific files> && git commit -m '<type>(<scope>): <description>'
       4. Mark completed tasks in docs/plans/plan.md by changing [ ] to [x]
 
@@ -175,65 +233,151 @@ workflow speedrun
       - YAGNI: implement exactly what the spec asks for
 
       ## Self-Check Before Finishing
-      - All tests pass?
-      - Linter clean?
+      - Every test you wrote actually runs and passes?
       - All plan tasks marked [x]?
       - Code is readable and maintainable?
 
-  tool RunTests
-    label: "Run Tests"
-    timeout: 2m
+      A deterministic tool gate runs your tests next. It — not you — decides whether the
+      build is green. Do not claim the project is done; just make your tests pass and commit.
+
+  tool TestGate
+    label: "Run Tests (oracle)"
+    marker_grep: '^(tests_pass|tests_fail|tests_unknown|tests_stop)$'
+    timeout: 5m
     command:
       #!/bin/sh
-      set -eu
-      if [ -f pyproject.toml ]; then
-        uv run pytest -v 2>&1 | tail -40
-        uv run pytest -q 2>&1 | tail -5
-      elif [ -f package.json ]; then
-        npm test 2>&1 | tail -40
-      elif [ -f go.mod ]; then
-        go test ./... -v 2>&1 | tail -40
-      elif [ -f Cargo.toml ]; then
-        cargo test 2>&1 | tail -40
-      else
-        echo 'no-test-framework'
-      fi
-      echo '---'
-      if [ -f pyproject.toml ]; then
-        uv run pytest -q 2>&1 | grep -E '(passed|failed|error)' && printf 'DONE' || printf 'NO_RESULTS'
-      elif [ -f package.json ]; then
-        printf 'DONE'
-      elif [ -f go.mod ]; then
-        printf 'DONE'
-      elif [ -f Cargo.toml ]; then
-        printf 'DONE'
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # THE ORACLE. A deterministic TOOL verdict over real world-state — the ONLY thing that
+      # decides whether we deliver a green draft or route back to fixing. It replaces the old
+      # RunTests+CheckTests pair (CheckTests grepped only the LAST stdout line for
+      # failed|error, so "no tests ran", a traceback, or a collection error all read as
+      # PASSING). This is a GREENFIELD builder: there is no pre-existing PASS_TO_PASS baseline
+      # and no changed-test detection — every test in the repo was just authored for THIS
+      # project, so running the project's own suite IS the right scope. But that suite is a
+      # SELF-AUTHORED oracle (the same agent wrote the code and the tests), so a green result
+      # is internal consistency, NOT independent proof — delivery stays an honest DRAFT either
+      # way (tracker-strategy §3/§5). Interpreter selection is a CONVENTION, never a version
+      # literal (.venv -> venv -> PATH pytest -> uv). The marker is routed via the typed
+      # ctx.tool_marker channel (marker_grep), so an extra stdout line can no longer flip
+      # routing; all test output goes to .tracker/test-evidence.txt and stderr.
+      #
+      # DENY BY DEFAULT: an affirmative pass count is REQUIRED. exit-5 / "no tests collected" /
+      # no runner available -> tests_unknown (never a bare pass). Lint is NOT run here — it is
+      # advisory, never a ship blocker (#838/#843/#844).
+      set -u
+      mkdir -p .tracker
+      : > .tracker/test-evidence.txt
+      marker=tests_unknown
+      {
+        if [ -f pyproject.toml ]; then
+          PY=""
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+          elif [ -x venv/bin/python ]; then PY=venv/bin/python
+          fi
+          if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -q 2>&1); rc=$?
+          elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -q 2>&1); rc=$?
+          elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -q 2>&1); rc=$?
+          else out='no python test runner (.venv/venv/pytest/uv all absent)'; rc=127; fi
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE '[1-9][0-9]* passed'; then
+            marker=tests_pass
+          elif [ "$rc" -eq 5 ] || [ "$rc" -eq 127 ]; then
+            marker=tests_unknown        # no tests collected / no runner -> deny by default
+          elif [ "$rc" -eq 0 ]; then
+            marker=tests_unknown        # exit 0 but no affirmative pass count -> not a pass
+          else
+            marker=tests_fail
+          fi
+        elif [ -f package.json ]; then
+          out=$(npm test 2>&1); rc=$?
+          printf '%s\n' "$out"
+          # DENY BY DEFAULT: an affirmative pass count is REQUIRED. A bare rc==0 (a `test`
+          # script that only `echo`s and exits 0) is NOT a green suite (#861/D9). Match the
+          # common JS runners' pass summaries: jest, node:test (tap), mocha.
+          if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE 'Tests:.*[1-9][0-9]* passed|# pass [1-9]|[1-9][0-9]* passing'; then
+            marker=tests_pass
+          elif printf '%s' "$out" | grep -qiE 'no test specified|missing script'; then
+            marker=tests_unknown
+          elif [ "$rc" -eq 0 ]; then
+            marker=tests_unknown        # exit 0 but no affirmative pass count -> not a pass
+          else
+            marker=tests_fail
+          fi
+        elif [ -f go.mod ]; then
+          # Structured verdict (#887): `go test -json` emits per-test
+          # {"Action":"pass|fail|skip","Test":...} events (built-in test2json, no
+          # plugin), so pass/fail is a DETERMINISTIC COUNT of real tests — not a
+          # prose scrape of a leading "ok " line. `^ok` greened a package carrying a
+          # _test.go with zero real test funcs (`ok  pkg  [no tests to run]`) — a
+          # vacuous false-green (#322). Package-level events (no "Test" field) are
+          # excluded, so only genuinely-executed tests count.
+          go test -json ./... > .tracker/go-test.json 2>&1; rc=$?
+          npass=$(grep '"Action":"pass"' .tracker/go-test.json | grep -c '"Test":')
+          nfail=$(grep '"Action":"fail"' .tracker/go-test.json | grep -c '"Test":')
+          echo "go test -json: ${npass} test(s) passed, ${nfail} failed (rc=${rc})"
+          grep '"Action":"fail"' .tracker/go-test.json | grep '"Test":' \
+            | sed -E 's/.*"Test":"([^"]+)".*/  FAIL: \1/' | sort -u
+          if [ "$rc" -ne 0 ] || [ "$nfail" -gt 0 ]; then marker=tests_fail
+          elif [ "$npass" -gt 0 ]; then marker=tests_pass    # >=1 real test ran and all passed
+          else marker=tests_unknown; fi                      # zero tests executed -> not a green
+        elif [ -f Cargo.toml ]; then
+          out=$(cargo test 2>&1); rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE 'test result: ok\. [1-9][0-9]* passed'; then marker=tests_pass
+          elif [ "$rc" -eq 0 ]; then marker=tests_unknown
+          else marker=tests_fail; fi
+        else
+          echo 'no recognized build system (pyproject/package.json/go.mod/Cargo.toml) -> tests_unknown'
+          marker=tests_unknown
+        fi
+      } >>.tracker/test-evidence.txt 2>&1
+      cat .tracker/test-evidence.txt >&2
+
+      # DELIVERY NOTE — written HERE, by the gate, from the gate's own result. The delivery
+      # agent may not author a verdict; it can only copy this one. Deny by default: the DRAFT
+      # text is written first and only a green suite upgrades it (still a DRAFT — self-authored
+      # oracle, tracker-strategy §3).
+      {
+        echo 'DRAFT — NOT VERIFIED'
+        echo
+        echo "The test gate ran and did NOT return a green result (marker: $marker)."
+        if [ "$marker" = tests_unknown ]; then
+          echo 'No runnable tests were collected, so nothing here is backed by a passing test.'
+        else
+          echo 'One or more of the project'"'"'s own tests is failing.'
+        fi
+        echo
+        echo 'Full test output: .tracker/test-evidence.txt'
+      } > .tracker/DELIVERY-NOTE.md
+      if [ "$marker" = tests_pass ]; then
+        {
+          echo 'DRAFT — the project'"'"'s own test suite passes'
+          echo
+          echo 'The tests in this repository run green. IMPORTANT: these tests were authored by'
+          echo 'the same agent that wrote the code, so this is a SELF-AUTHORED oracle — evidence'
+          echo 'of internal consistency, NOT independent proof of correctness. A human must review'
+          echo 'whether the tests actually cover the spec before this is trusted or merged.'
+          echo
+          echo 'Full test output: .tracker/test-evidence.txt'
+        } > .tracker/DELIVERY-NOTE.md
       fi
 
-  tool CheckTests
-    label: "Check Test Results"
-    timeout: 2m
-    command:
-      #!/bin/sh
-      set -eu
-      if [ -f pyproject.toml ]; then
-        result=$(uv run pytest -q 2>&1 | tail -1)
-      elif [ -f package.json ]; then
-        result=$(npm test 2>&1 | tail -1)
-      elif [ -f go.mod ]; then
-        result=$(go test ./... 2>&1 | tail -1)
-      elif [ -f Cargo.toml ]; then
-        result=$(cargo test 2>&1 | tail -1)
-      else
-        result='unknown'
+      # Fix budget: route non-green results back to FixFailures a bounded number of times,
+      # then stop and deliver an honest draft rather than spinning. Only tests_pass and
+      # tests_stop are guarded to Ship; tests_fail / tests_unknown fall through to FixFailures.
+      out="$marker"
+      if [ "$marker" != tests_pass ]; then
+        a=$(cat .tracker/fix-attempts 2>/dev/null || echo 0); a=$((a + 1)); printf '%s' "$a" > .tracker/fix-attempts
+        [ "$a" -ge 3 ] && out=tests_stop
       fi
-      if echo "$result" | grep -qiE '(failed|error|FAIL)'; then
-        printf 'tests_failing'
-      else
-        printf 'tests_passing'
-      fi
+      printf '%s' "$out"
 
   agent FixFailures
     label: "Fix Failures"
+    model: claude-haiku-4-5
     goal_gate: true
     max_retries: 3
     retry_target: FixFailures
@@ -241,47 +385,28 @@ workflow speedrun
       You are working in `run.working_dir`.
 
       ## Task
-      Tests are failing. Fix them. Fast.
+      The test gate did not return green. Fix it. Fast.
 
       ## Process
-      1. Run the full test suite and read the COMPLETE output — every line matters
+      1. Read the ACTUAL gate output in .tracker/test-evidence.txt — every line matters.
+         (If it says no tests were collected, the problem is that your tests don't run or
+         don't exist yet — add/repair real tests, don't fake a pass.)
       2. Identify each failing test and the root cause
       3. Fix the IMPLEMENTATION, not the tests (unless the test itself has a bug)
-      4. Run tests again to confirm all green
-      5. Run linter, fix any issues
-      6. git add <changed files> && git commit -m 'fix: resolve test failures'
+      4. Run tests again locally to confirm green
+      5. git add <changed files> && git commit -m 'fix: resolve test failures'
 
       ## Rules
       - Read the actual error messages carefully
       - Fix root causes, not symptoms
-      - Do NOT delete or skip failing tests
+      - Do NOT delete, skip, or weaken failing tests to make the suite green
       - Do NOT disable functionality to make tests pass
-      - If you truly cannot fix it after careful analysis, explain what's wrong in your output
-
-  agent FinalCheck
-    label: "Final Check"
-    goal_gate: true
-    max_retries: 3
-    retry_target: FinalCheck
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Task
-      Final sanity check before shipping. Quick and dirty.
-
-      ## Process
-      1. Run full test suite — must be green
-      2. Run linter — must be clean
-      3. Verify all plan tasks are marked [x] in docs/plans/plan.md
-      4. Check git status — working tree should be clean
-      5. Do a quick scan of the code: any obvious bugs, missing error handling, or incomplete stubs?
-
-      ## Output
-      If everything looks good, say SHIP_IT.
-      If there are issues, fix them, commit, and then say SHIP_IT.
+      - If you truly cannot fix it after careful analysis, explain what's wrong in your output —
+        the gate has a bounded retry budget and will deliver an honest draft if it stays red.
 
   agent Ship
     label: Ship
+    model: claude-haiku-4-5
     goal_gate: true
     max_retries: 3
     retry_target: Ship
@@ -289,25 +414,29 @@ workflow speedrun
       You are working in `run.working_dir`.
 
       ## Task
-      Ship it. Final commits and summary.
+      Deliver the work. `.tracker/DELIVERY-NOTE.md` holds the verification verdict. A tool
+      gate wrote it, not you. You may not edit it, soften it, summarize it, or contradict it.
 
       ## Process
-      1. Ensure working tree is clean (commit any stragglers)
-      2. Write a brief summary to docs/plans/speedrun-summary.md:
+      1. Ensure the work is on a branch (SetupProject created `speedrun/<name>`; if you are
+         still on main/master, `git checkout -b speedrun/<slug>`). Commit anything uncommitted.
+      2. Write docs/plans/speedrun-summary.md whose FIRST section is the contents of
+         `.tracker/DELIVERY-NOTE.md`, copied verbatim, followed by:
          - What was built
          - How to run it
          - How to test it
          - Any known limitations
       3. git add docs/plans/speedrun-summary.md && git commit -m 'docs: add speedrun summary'
-      4. Log the final state:
-         echo '--- Final git log ---'
-         git log --oneline | head -20
-         echo '--- Test results ---'
-         # run appropriate test command
-         echo '--- Done ---'
+      4. If `git remote` is empty: print the branch name, `git log --oneline | head -20`, and
+         the diffstat. That is the delivery.
+         Otherwise: `git push -u origin HEAD`. Do NOT try to open a PR yourself and do NOT run
+         `gh` — you have only `git` and `curl`, this sandbox holds no GitHub credentials by
+         design, and the HOST opens the PR from the branch you push. Leave
+         `.tracker/DELIVERY-NOTE.md` in place; the host reads it to decide DRAFT vs ready.
 
       ## Output
-      Report what was built and that it's ready for use.
+      Report what was built. Write NO verification claim of your own anywhere — do not say the
+      project is "ready", "working", or "verified". The delivery note is the only verdict.
 
   edges
     Start -> ReadSpec  weight: 2
@@ -317,16 +446,14 @@ workflow speedrun
     QuickPlan -> SetupProject  weight: 2
     SetupProject -> SetupProject  when ctx.outcome = retry  restart: true
     SetupProject -> VerifySetup  weight: 2
-    VerifySetup -> Implement  weight: 2
+    VerifySetup -> Implement  when ctx.tool_marker = env-ready  label: "toolchain ready"
+    VerifySetup -> Ship  label: "env setup failed -> honest draft"
     Implement -> Implement  when ctx.outcome = retry  restart: true
-    Implement -> RunTests  weight: 2
-    RunTests -> CheckTests  weight: 2
-    CheckTests -> FixFailures  restart: true
-    CheckTests -> FinalCheck  weight: 2
+    Implement -> TestGate  weight: 2
+    TestGate -> Ship  when ctx.tool_marker = tests_pass  label: "tests green -> deliver draft"
+    TestGate -> Ship  when ctx.tool_marker = tests_stop  label: "fix budget spent -> honest draft"
+    TestGate -> FixFailures  label: "tests red/unknown -> fix"  restart: true
     FixFailures -> FixFailures  when ctx.outcome = retry  restart: true
-    FixFailures -> Exit  when ctx.outcome = fail  label: unfixable
-    FixFailures -> RunTests  weight: 2  restart: true
-    FinalCheck -> FinalCheck  when ctx.outcome = retry  restart: true
-    FinalCheck -> Ship  weight: 2
+    FixFailures -> TestGate  weight: 2  restart: true
     Ship -> Ship  when ctx.outcome = retry  restart: true
     Ship -> Exit  weight: 2
