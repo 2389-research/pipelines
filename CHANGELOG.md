@@ -183,6 +183,13 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
       - A clean install that ran no test now defers instead of passing.
       - A seeded JS target needs a real `test` script and a reported passing
         test.
+      - ValidateP1 refuses to run when the pre-implementation snapshot
+        (`.baseline_files`) is missing. Without it, every later check would see
+        no change and be skipped.
+      - A shell comment in VerifyArtifacts no longer contains a `ctx` variable
+        reference. tracker expands those before the shell runs and refuses that
+        key in a tool command, so the node would have failed on a resumed
+        run.
     - `doc-writer`: examples now run with stdin from `/dev/null`. Before, an
       example that read stdin swallowed the example index, the later broken
       examples never ran, and the docs were certified. `docs-verified` also

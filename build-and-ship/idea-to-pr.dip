@@ -127,7 +127,9 @@ workflow IdeaToPR
       # Presence is enforced above (hard-fail on missing/empty). Now surface a
       # BOUNDED view of each artifact on stdout so the ApprovePlan human gate can
       # show the reviewer the ACTUAL plan being approved (#266), not just a
-      # presence check. The gate body interpolates this stdout via ${ctx.tool_stdout}.
+      # presence check. The gate body interpolates this node's stdout (ctx.tool_stdout).
+      # (No dollar-brace form in a tool command, comments included: tracker expands it before the
+      # shell runs and REFUSES a ctx key it does not allow — the node would fail on a resume.)
       # Per-file byte cap keeps a huge tasks.md from blowing the gate body.
       cap=4000
       for f in spec.md plan.md tasks.md; do
@@ -217,6 +219,9 @@ workflow IdeaToPR
       echo "=== workspace ==="
       ls -la
       test -s spec.md && test -s plan.md && test -s tasks.md || { echo "FAIL: authoring artifacts vanished" >&2; exit 1; }
+      # The pre-implementation snapshot is what "what P1 changed" — and so docs-only and coverage —
+      # is computed from. Missing, every later check would see NO change and be skipped: deny.
+      test -f .baseline_files || { echo "FAIL: the pre-implementation baseline (.baseline_files) is missing — cannot tell what P1 changed" >&2; exit 1; }
       # Substantive-change gate (#332/#319): require P1 to have ADDED or CHANGED a non-artifact
       # file vs the pre-implementation baseline (.baseline_files, written by VerifyArtifacts).
       # Content-hash comparison, so an uploaded input file P1 never touches does NOT satisfy it.
