@@ -175,7 +175,11 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
       - `*.txt` (`requirements.txt`, `CMakeLists.txt`) is no longer counted as
         docs.
       - A pass is refused when the change touched a language the in-sandbox run
-        didn't exercise. A Go build no longer certifies a JS-only change.
+        didn't exercise. A Go build no longer certifies a JS-only change. This
+        is an allowlist: a non-doc file in no recognized language (`.sh`,
+        `.java`, `.yaml` and so on) counts as not exercised too. Only
+        `.gitignore`, `.gitattributes` and `.editorconfig` are exempt. The
+        refusal names the files.
       - A clean install that ran no test now defers instead of passing.
       - A seeded JS target needs a real `test` script and a reported passing
         test.
@@ -183,6 +187,9 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
       example that read stdin swallowed the example index, the later broken
       examples never ran, and the docs were certified. `docs-verified` also
       requires every harvested example to have been reached.
+      The run list is frozen when examples are harvested. An example whose file
+      is deleted or emptied before it runs (an earlier example can reach it)
+      counts as a failure, not a skip.
   - Other fixes from the same review:
     - `doc-writer`: the `uv` fallback ran the literal text `$UV_FROZEN` as the
       command, and examples couldn't import the project (they now run with

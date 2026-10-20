@@ -249,6 +249,7 @@ workflow IdeaToPR
       # manifests (*.toml/*.yaml/*.json/*.txt — requirements.txt, CMakeLists.txt) are deliberately
       # NOT treated as docs, so a change to the build system still gets validated. Nothing RAN on
       # this path, so it DEFERS (validation-deferred): it never loops, and it is never certified.
+      nondocs=""   # set -u: change_uncovered reads it even when nothing classified
       if [ -n "$changed_paths" ]; then
         nondocs="$(printf '%s\n' "$changed_paths" \
           | grep -vE '\.(md|markdown|mdx|rst|adoc|png|jpe?g|gif|svg|webp|ico|pdf)$' \
@@ -404,23 +405,34 @@ workflow IdeaToPR
         return 0
       }
 
-      # change_uncovered: true when P1 changed source belonging to an ecosystem other than the one
-      # TOOLCHAIN_ECO validated. Only recognized source/manifests classify; other files (configs,
-      # scripts, assets) do not, exactly as before.
+      # change_uncovered: true when P1 changed a non-doc file the run did not exercise. An ALLOWLIST:
+      # a file in a recognized ecosystem other than TOOLCHAIN_ECO is uncovered, and so is any
+      # non-doc file in NO recognized ecosystem (a .sh, .java, .yaml…) — nothing ran over it.
+      # Only inert repo metadata (.gitignore/.gitattributes/.editorconfig) is exempt.
       eco_of() {
         case "$1" in
           *.go|go.mod|*/go.mod|go.sum|*/go.sum) echo go ;;
           *.py|pyproject.toml|*/pyproject.toml|setup.py|*/setup.py|setup.cfg|*/setup.cfg|requirements*.txt|*/requirements*.txt) echo py ;;
           *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|package.json|*/package.json|package-lock.json|*/package-lock.json) echo js ;;
           *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock) echo rust ;;
+          .gitignore|*/.gitignore|.gitattributes|*/.gitattributes|.editorconfig|*/.editorconfig) echo meta ;;
+          *) echo other ;;
         esac
       }
       change_uncovered() {
-        printf '%s\n' "$changed_paths" | while IFS= read -r p; do
+        printf '%s\n' "$nondocs" | while IFS= read -r p; do
           [ -n "$p" ] || continue
-          e="$(eco_of "${p#./}")"
-          if [ -n "$e" ] && [ "$e" != "$TOOLCHAIN_ECO" ]; then echo "$p ($e)"; fi
-        done | grep . >/dev/null
+          # Strip a leading "./" by LENGTH, never with a prefix-pattern expansion containing a dot:
+          # tracker expands any dollar-brace expression with a dot inside as a pipeline variable
+          # BEFORE the shell runs, and an unknown one becomes the empty string.
+          case "$p" in ./*) p="${p#??}" ;; esac
+          e="$(eco_of "$p")"
+          if [ "$e" != meta ] && [ "$e" != "$TOOLCHAIN_ECO" ]; then echo "$p ($e)"; fi
+        done > .tracker/uncovered.txt
+        [ -s .tracker/uncovered.txt ] || return 1
+        echo "uncovered by the ${TOOLCHAIN_ECO:-none} run:" >&2
+        sed 's/^/  - /' .tracker/uncovered.txt >&2
+        return 0
       }
 
       # Real build/test output is captured to .tracker/validation-report.txt so the

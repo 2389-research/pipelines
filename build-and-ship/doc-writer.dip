@@ -610,8 +610,16 @@ workflow doc_writer
 
       ran=0; failed=0; harvested=0; seen=0
       if [ -s "$scratch/index.tsv" ]; then
-        harvested=$(grep -cvE '^[[:space:]]*$' "$scratch/index.tsv")
         tab=$(printf '\t')
+        # Freeze the run list at HARVEST time: only examples with a non-empty body are runnable,
+        # and that set is what must be accounted for. An example's file that is MISSING or EMPTY
+        # at run time (an earlier example deleted/truncated it — they share this dir) is a
+        # FAILURE, never a skip: otherwise one example could silently remove a broken one.
+        : > "$scratch/runnable.tsv"
+        while IFS="$tab" read -r file lang; do
+          [ -n "$file" ] && [ -f "$file" ] && grep -qE '[^[:space:]]' "$file" && printf '%s\t%s\n' "$file" "$lang" >> "$scratch/runnable.tsv"
+        done < "$scratch/index.tsv"
+        harvested=$(grep -cvE '^[[:space:]]*$' "$scratch/runnable.tsv" || true)
         # Examples run with stdin from /dev/null: the loop reads the index on stdin, so an example
         # that reads stdin would otherwise swallow the rest of the index and skip every later
         # (possibly broken) example. `seen` must equal `harvested` (checked below) — an index line
@@ -619,9 +627,11 @@ workflow doc_writer
         while IFS="$tab" read -r file lang; do
           [ -n "$file" ] || continue
           seen=$((seen + 1))
-          [ -f "$file" ] || continue
-          grep -qE '[^[:space:]]' "$file" || continue   # skip an empty example body
           echo "=== [$lang] $file ===" >> "$log"
+          if [ ! -f "$file" ] || ! grep -qE '[^[:space:]]' "$file"; then
+            failed=$((failed + 1)); echo "  RESULT: FAILED (example removed or emptied before it ran)" >> "$log"
+            continue
+          fi
           rc=0
           case "$lang" in
             python|py)
@@ -638,7 +648,7 @@ workflow doc_writer
           else
             echo "  RESULT: passed" >> "$log"
           fi
-        done < "$scratch/index.tsv"
+        done < "$scratch/runnable.tsv"
       fi
       echo "runnable blocks harvested: $harvested; executed: $ran; failed: $failed" >> "$log"
       if [ "$seen" -ne "$harvested" ]; then
