@@ -1,12 +1,13 @@
 workflow doc_writer
-  goal: "Given an existing codebase, explore it thoroughly, audit existing documentation, plan a documentation structure, generate comprehensive docs (README, API reference, architecture guide, tutorials), verify all code examples work, review for accuracy, and create a PR -- fully headless."
+  goal: "Given an existing codebase, explore it, audit and plan the docs, write them (README, API reference, architecture guide, tutorials), then let a TOOL verify the artifacts — the promised files exist and are non-trivial, and every runnable example that CAN be executed exits 0 — and deliver: a PR when that oracle is green, otherwise an honest DRAFT. No agent self-report ever ships."
+  # category: Understand & document
   start: Start
   exit: Exit
 
   defaults
     max_retries: 2
     fidelity: summary:high
-    max_restarts: 20
+    max_restarts: 5
 
   tool Start
     label: Start
@@ -19,6 +20,74 @@ workflow doc_writer
     timeout: 10s
     command:
       echo "exit"
+
+  tool EnsureEnv
+    label: "Bootstrap Environment"
+    marker_grep: '^(env-ready|env-failed)$'
+    timeout: 8m
+    command:
+      #!/bin/sh
+      # GENERAL, seed-driven environment bootstrap (body adopted from bug-hunter, #846).
+      # Verifying documentation examples means RUNNING them, and running them needs the
+      # project's own toolchain (./.venv for Python, node_modules for JS, ...). If the seed
+      # ships an executable bootstrap hook, run it ONCE up front so that toolchain exists
+      # before any example is executed. The pipeline stays language- and repo-agnostic: it
+      # knows nothing about the project; it only runs the seed's hook if one is present.
+      # No hook -> clean no-op (the common case; most repos ship none).
+      #
+      # FAIL LOUD (#846): a hook that is PRESENT and EXITS NON-ZERO means the pinned
+      # dependency/toolchain setup did not complete. Swallowing that (the old
+      # `|| echo continuing`) lets the agent improvise its own deps and burn the whole run
+      # on a doomed env. So we RECORD the outcome to .tracker/env-bootstrap.status (+ .log)
+      # and emit a DISTINCT marker: `env-ready` on success/no-hook (advance), `env-failed`
+      # on a failed hook (routes OUT of the work loop to an honest DRAFT). The marker_grep
+      # regex extracts the marker into the typed ctx.tool_marker routing channel (last
+      # matching line wins), so a stray diagnostic on stdout can no longer flip routing;
+      # hook output still goes to the log/stderr.
+      #
+      # DENY BY DEFAULT: this node also STAMPS the delivery note as an unverified DRAFT
+      # before any work starts. Nothing here is backed by a verifier until the VerifyDocs
+      # oracle overwrites this note with evidence. Every later node may only replace it with
+      # its OWN result; the delivery agent may never author a verdict.
+      set -u
+      mkdir -p .tracker
+      status_file=.tracker/env-bootstrap.status
+      log_file=.tracker/env-bootstrap.log
+      : > "$log_file"
+      cat > .tracker/DELIVERY-NOTE.md <<'NOTE'
+      DRAFT — NOT VERIFIED
+
+      The documentation verifier has not run, so nothing here is backed by a check.
+      Treat every claim in this branch as unverified until a human reviews the docs.
+      NOTE
+      found=''
+      for hook in docwriter-setup.sh .docwriter/setup.sh scripts/docwriter-setup.sh; do
+        if [ -f "$hook" ]; then found="$hook"; break; fi
+      done
+      if [ -z "$found" ]; then
+        printf 'status=ok\nhook=\nexit=0\n' > "$status_file"
+        printf 'env-ready'
+        exit 0
+      fi
+      echo "[EnsureEnv] running seed bootstrap hook: $found" >&2
+      sh "$found" > "$log_file" 2>&1
+      rc=$?
+      cat "$log_file" >&2
+      if [ "$rc" -eq 0 ]; then
+        printf 'status=ok\nhook=%s\nexit=0\n' "$found" > "$status_file"
+        printf 'env-ready'
+      else
+        printf 'status=failed\nhook=%s\nexit=%s\n' "$found" "$rc" > "$status_file"
+        cat > .tracker/DELIVERY-NOTE.md <<'NOTE'
+      DRAFT — NOT VERIFIED (environment bootstrap failed)
+
+      The seed's documentation-setup hook exited non-zero, so the project toolchain is not
+      in a known-good state and no code example could be executed against it. Nothing in
+      this branch has been verified. See .tracker/env-bootstrap.log for the failure.
+      NOTE
+        echo "[EnsureEnv] seed bootstrap hook '$found' FAILED (exit $rc) — aborting; a partial/failed env would waste the whole run (#846)" >&2
+        printf 'env-failed'
+      fi
 
   agent ExploreCodebase
     label: "Explore Codebase"
@@ -77,6 +146,10 @@ workflow doc_writer
       - **Configuration:** All config knobs and their defaults
       - **Test Coverage:** What is tested, what testing patterns are used
       - **Key Design Decisions:** Patterns, conventions, notable choices
+
+      Note the EXACT command that runs a small standalone example in this project (the
+      interpreter/runtime and how it resolves the project's own modules) — the verifier
+      will run the examples you document, so the examples must be runnable as written.
 
       Create the docs/doc-writer/ directory if it does not exist:
       mkdir -p docs/doc-writer
@@ -142,7 +215,8 @@ workflow doc_writer
       ## Process
       1. Read docs/doc-writer/codebase-analysis.md for codebase understanding
       2. Read docs/doc-writer/doc-audit.md for the audit results and recommended plan
-      3. Design the documentation structure with these deliverables (skip any that already exist and are high quality):
+      3. Design the documentation structure with these deliverables (all four are REQUIRED
+         and the verifier checks each exists and is non-trivial; write real content, never a stub):
 
          a. **README.md** (root) -- Project overview, quick start, installation, basic usage, links to other docs
          b. **docs/api-reference.md** -- Complete API reference for all public interfaces
@@ -236,8 +310,10 @@ workflow doc_writer
       - **License**
 
       ## Rules
-      - Every code example MUST be copy-pasteable and actually work
-      - Use fenced code blocks with language tags
+      - Every runnable code example MUST be copy-pasteable and actually work — a downstream
+        tool will EXECUTE the python/JS examples and a non-zero exit blocks the green path.
+      - Tag every fenced block with its language. Tag NON-runnable blocks honestly (`text`,
+        `console`, `output`) so the verifier does not try to execute expected-output snippets.
       - Keep the README under 500 lines -- link to detailed docs for deep dives
       - Do NOT use placeholder text like 'TODO' or 'TBD' -- either write it or omit the section
       - If the project has a CLI, show `--help` output or key flags
@@ -302,7 +378,7 @@ workflow doc_writer
       - Extract signatures from ACTUAL CODE -- do not guess or approximate
       - Group related items logically (by module, by domain, alphabetically within groups)
       - Include a table of contents at the top
-      - Every example must be correct and runnable
+      - Every runnable example must be correct and runnable; tag output-only blocks as `output`/`text`
       - Note deprecations, experimental features, or planned changes if evident from code comments
 
       ## Output
@@ -363,7 +439,7 @@ workflow doc_writer
       - Where to find specific types of code (routes, models, utils, tests)
 
       ## Rules
-      - Use ASCII diagrams for component relationships (no external diagram tools needed)
+      - Use ASCII diagrams for component relationships (tag them as `text` so the verifier does not try to run them)
       - Ground every claim in actual code -- reference specific files and line numbers where helpful
       - Write for a developer who has never seen this codebase
       - Do not speculate about intent -- describe what the code DOES, not what you think it SHOULD do
@@ -407,7 +483,7 @@ workflow doc_writer
       // Complete, runnable code
       ```
       Expected output:
-      ```
+      ```output
       // What the user should see
       ```
 
@@ -425,8 +501,9 @@ workflow doc_writer
       - **Troubleshooting** -- debugging common problems step by step
 
       ## Rules
-      - Every code block must be complete and runnable -- no ellipsis, no 'rest of code here'
-      - Show expected output after every meaningful step
+      - Every runnable code block must be complete and runnable -- no ellipsis, no 'rest of code here'.
+        The verifier EXECUTES python/JS blocks; a non-zero exit blocks the green path, so make them real.
+      - Put expected output in a SEPARATE fenced block tagged `output` (never inside the runnable block)
       - If a step could fail, explain what to do if it does
       - Build complexity gradually -- each tutorial step builds on the previous
       - Use realistic data and scenarios, not foo/bar/baz
@@ -435,220 +512,211 @@ workflow doc_writer
       ## Output
       Write to docs/tutorials.md
 
-  tool CollectExamples
-    label: "Collect Code Examples"
-    timeout: 30s
+  tool VerifyDocs
+    label: "Verify Documentation Artifacts"
+    marker_grep: '^(docs-verified|docs-draft)$'
+    timeout: 10m
     command:
       #!/bin/sh
-      mkdir -p docs/doc-writer
-      # Extract all fenced code blocks from generated docs
-      for f in README.md docs/api-reference.md docs/architecture.md docs/tutorials.md; do
-        if [ -f "$f" ]; then
-          printf '\n=== %s ===\n' "$f"
-          # Count fenced code blocks
-          blocks=$(grep -c '^```' "$f" || true)
-          half=$((blocks / 2))
-          printf 'Found %s code blocks\n' "$half"
-        else
-          printf '\n=== %s === MISSING\n' "$f"
-        fi
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # THE DOC ORACLE. A documentation pipeline has no failing-test oracle, so the honest
+      # deterministic verdict is over the ARTIFACTS themselves, checked by a tool — never an
+      # agent's self-scored 1-5 or self-counted "0 failures". Two deterministic facts:
+      #   (1) the promised deliverables EXIST and are NON-TRIVIAL (a missing/stub file is a
+      #       delivery hole, not a pass), and
+      #   (2) every runnable code example that CAN be executed exits 0. We EXECUTE the
+      #       python/JS examples with the project's OWN interpreter; output/text/diagram
+      #       blocks are not runnable and are never counted. Shell blocks are NOT executed
+      #       (network + destructive side effects in the sandbox), so a doc whose only
+      #       examples are shell stays UNKNOWN.
+      # DENY BY DEFAULT (the anti-SKIP rule): an empty/unrunnable example set is UNKNOWN and
+      # routes to an honest DRAFT — it never SKIP-passes the way the old self-count did
+      # (empty docs -> 0 fails -> "pass"). `docs-verified` requires files-ok AND at least one
+      # example actually executed AND zero executed examples failed. Everything else DRAFTS.
+      # The marker is routed via the typed ctx.tool_marker channel (marker_grep); all detail
+      # goes to the log, so an extra stdout line can no longer flip routing.
+      set -u
+      mkdir -p .tracker
+      log=.tracker/doc-verification.log
+      : > "$log"
+
+      # Vendored-tree exclusion (item #4): never treat a doc or example living inside a
+      # vendored dependency tree as a promised artifact or a runnable example of ours.
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+
+      # (1) Promised artifacts must EXIST and be NON-TRIVIAL.
+      promised='README.md docs/api-reference.md docs/architecture.md docs/tutorials.md'
+      missing=''
+      trivial=''
+      for f in $promised; do
+        printf '%s\n' "$f" | grep -qE "$vendor_re" && continue
+        if [ ! -f "$f" ]; then missing="$missing $f"; continue; fi
+        # grep -c prints "0" AND exits 1 on zero matches, so never `|| echo 0` here
+        # (that would append a SECOND 0 and break the integer test). Default an empty
+        # capture instead.
+        nb=$(grep -cvE '^[[:space:]]*$' "$f" 2>/dev/null); nb=${nb:-0}
+        [ "$nb" -lt 15 ] && trivial="$trivial $f"
       done
-      printf '\ncollected'
+      echo "promised files : $promised"       >> "$log"
+      echo "missing        :${missing:- none}" >> "$log"
+      echo "trivial (<15 nb):${trivial:- none}" >> "$log"
 
-  agent VerifyExamples
-    label: "Verify Code Examples"
-    fidelity: full
-    goal_gate: true
+      # (2) Project-env interpreter (item #5): CONVENTION, never a version literal.
+      PY=''
+      if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+      elif [ -x venv/bin/python ]; then PY=venv/bin/python
+      elif command -v python3 >/dev/null 2>&1; then PY=python3
+      elif command -v python >/dev/null 2>&1; then PY=python
+      elif command -v uv >/dev/null 2>&1; then PY='uv run $UV_FROZEN --quiet python'
+      fi
+      NODE=''
+      command -v node >/dev/null 2>&1 && NODE=node
+      echo "python runner  : ${PY:-none}"   >> "$log"
+      echo "node runner    : ${NODE:-none}" >> "$log"
+
+      # Harvest runnable fenced blocks (python/JS only) into a scratch dir, one file each,
+      # indexed in index.tsv as "<path>\t<lang>". Output/text/json/yaml/diagram/shell blocks
+      # carry no runnable extension and are skipped by construction.
+      scratch=.tracker/doc-examples
+      rm -rf "$scratch"; mkdir -p "$scratch"
+      : > "$scratch/index.tsv"
+      harvest() {
+        f="$1"; pfx="$2"
+        [ -f "$f" ] || return 0
+        printf '%s\n' "$f" | grep -qE "$vendor_re" && return 0
+        awk -v dir="$scratch" -v pfx="$pfx" '
+          function ext(l){
+            if (l=="python"||l=="py") return "py";
+            if (l=="js"||l=="javascript"||l=="node") return "js";
+            return "";
+          }
+          /^[ \t]*```/{
+            if (inblk){ inblk=0; e=""; next }
+            lang=$0; sub(/^[ \t]*```+[ \t]*/,"",lang); sub(/[ \t`].*$/,"",lang); lang=tolower(lang);
+            e=ext(lang); inblk=1;
+            if (e!=""){ n++; out=dir "/" pfx "_" n "." e; printf "%s","" > out; print out "\t" lang >> (dir "/index.tsv"); }
+            next
+          }
+          inblk && e!="" { print > out }
+        ' "$f"
+      }
+      harvest README.md readme
+      harvest docs/api-reference.md apiref
+      harvest docs/architecture.md arch
+      harvest docs/tutorials.md tut
+
+      ran=0; failed=0; harvested=0
+      if [ -s "$scratch/index.tsv" ]; then
+        harvested=$(grep -cvE '^[[:space:]]*$' "$scratch/index.tsv")
+        tab=$(printf '\t')
+        while IFS="$tab" read -r file lang; do
+          [ -n "$file" ] || continue
+          [ -f "$file" ] || continue
+          grep -qE '[^[:space:]]' "$file" || continue   # skip an empty example body
+          echo "=== [$lang] $file ===" >> "$log"
+          rc=0
+          case "$lang" in
+            python|py)
+              if [ -z "$PY" ]; then echo "  no python runner -> not executed" >> "$log"; continue; fi
+              $PY "$file" >> "$log" 2>&1; rc=$? ;;
+            js|javascript|node)
+              if [ -z "$NODE" ]; then echo "  no node runner -> not executed" >> "$log"; continue; fi
+              $NODE "$file" >> "$log" 2>&1; rc=$? ;;
+            *) continue ;;
+          esac
+          ran=$((ran + 1))
+          if [ "$rc" -ne 0 ]; then
+            failed=$((failed + 1)); echo "  RESULT: FAILED (exit $rc)" >> "$log"
+          else
+            echo "  RESULT: passed" >> "$log"
+          fi
+        done < "$scratch/index.tsv"
+      fi
+      echo "runnable blocks harvested: $harvested; executed: $ran; failed: $failed" >> "$log"
+
+      files_ok=1
+      [ -n "$missing" ] && files_ok=0
+      [ -n "$trivial" ] && files_ok=0
+
+      marker=docs-draft
+      if [ "$files_ok" -eq 1 ] && [ "$ran" -gt 0 ] && [ "$failed" -eq 0 ]; then
+        marker=docs-verified
+      fi
+
+      # DELIVERY NOTE — written HERE, by the gate, from the gate's own result. The delivery
+      # agent may not write a verification claim; it can only copy this one. Deny by default:
+      # the DRAFT text is authored first and only a green artifact oracle replaces it.
+      cat "$log" >&2
+      if [ "$marker" = docs-verified ]; then
+        {
+          echo 'VERIFIED — documentation artifacts checked by the pipeline'
+          echo
+          echo 'All four promised documents exist and are non-trivial:'
+          for f in $promised; do echo "  - $f"; done
+          echo
+          echo "Runnable code examples EXECUTED against the project's own interpreter: $ran"
+          echo 'All executed examples exited 0.'
+          echo
+          echo 'Scope of this claim: only python/JS example blocks were executed; shell,'
+          echo 'output, and diagram blocks were not run and are not part of this verdict.'
+          echo 'This is an artifact check, not a claim that the prose is correct or complete.'
+          echo
+          echo 'Full verifier output: .tracker/doc-verification.log'
+        } > .tracker/DELIVERY-NOTE.md
+      else
+        {
+          echo 'DRAFT — NOT VERIFIED'
+          echo
+          echo 'The documentation verifier did not return a green result. Reasons:'
+          [ -n "$missing" ] && echo "  - MISSING promised file(s):$missing"
+          [ -n "$trivial" ] && echo "  - TRIVIAL (fewer than 15 non-blank lines):$trivial"
+          if [ "$files_ok" -eq 1 ] && [ "$ran" -eq 0 ]; then
+            echo '  - NO runnable example could be executed (deny by default): the docs carry'
+            echo '    no python/JS example that runs standalone, or no interpreter was available.'
+            echo '    An empty/unrunnable example set is UNKNOWN, never an automatic pass.'
+          fi
+          [ "$failed" -gt 0 ] && echo "  - $failed of $ran executed example(s) FAILED (non-zero exit)."
+          echo
+          echo 'Treat this as an unverified draft for human review.'
+          echo 'Full verifier output: .tracker/doc-verification.log'
+        } > .tracker/DELIVERY-NOTE.md
+      fi
+      printf '%s' "$marker"
+
+  agent Deliver
+    label: "Deliver"
     max_retries: 3
-    retry_target: VerifyExamples
+    retry_target: Deliver
     prompt:
       You are working in `run.working_dir`.
 
-      ## Role
-      You are a QA engineer verifying that every code example in the documentation actually works.
+      `.tracker/DELIVERY-NOTE.md` holds the verification verdict. A gate wrote it, not you.
+      You may not edit it, soften it, summarize it, or contradict it. Leave it in place —
+      the host reads it to decide whether the PR opens as a DRAFT or ready for review.
 
-      ## Task
-      Extract and test every runnable code example from the generated documentation.
+      Your job is only to COMMIT the work and push it to the run's own remote. You have
+      `git` and `curl` and nothing else: there is no `gh`, and this sandbox holds no GitHub
+      credentials by design. The HOST opens the pull request, off the branch you push.
 
-      ## Process
-      1. Read each documentation file: README.md, docs/api-reference.md, docs/architecture.md, docs/tutorials.md
-      2. For each fenced code block that contains runnable code (not output blocks, not config snippets, not ASCII diagrams):
-         a. Identify the language and what the code does
-         b. Determine if it can be run standalone or needs the project to be set up first
-         c. Create a temporary test script that runs the example
-         d. Execute it and capture the output
-         e. Compare the output to any documented expected output
+      1. Get the work onto a branch. The planning step already created
+         `docs/comprehensive-documentation`; if you are still on main/master, run
+         `git checkout -b docs/comprehensive-documentation 2>/dev/null || git checkout docs/comprehensive-documentation`.
+         Stage and commit everything still uncommitted: `git add README.md docs/` then commit.
+      2. If `git remote` is empty: print the branch name, `git log --oneline`, the diffstat,
+         and the note. That is the delivery.
+      3. Otherwise: `git push -u origin HEAD`. Do NOT try to open a PR yourself and do NOT
+         run `gh` — the host opens the PR from the pushed branch, and the DELIVERY-NOTE you
+         left drives whether it is a DRAFT.
 
-      3. Categorize results:
-         - PASS: Code runs and produces expected output
-         - PASS_NO_OUTPUT: Code runs without error but has no documented expected output to compare
-         - FAIL: Code produces an error or wrong output
-         - SKIP: Code cannot be run in isolation (e.g., requires a running server, external API)
-         - For SKIP items, note WHY and whether the code at least looks syntactically correct
-
-      4. For any FAIL results:
-         - Record the exact error message
-         - Identify what is wrong (typo, wrong import, missing dependency, stale API)
-         - Fix the code example in the documentation file
-         - Re-run to verify the fix works
-
-      ## Rules
-      - Do NOT modify project source code -- only fix documentation examples
-      - If an example requires project setup, ensure the project is properly installed first (check if there is a virtual environment, node_modules, etc.)
-      - If too many examples fail (more than 50%), flag this as a documentation quality issue rather than fixing each one -- the doc writing phase likely had incorrect information
-      - Create a verification report even if all examples pass
-
-      ## Output
-      Write verification results to docs/doc-writer/example-verification.md with:
-      - **Summary:** X passed, Y failed, Z skipped out of N total
-      - **Details:** Each example with file, line number, language, result, and any fixes applied
-      - **Fixed Files:** List of documentation files that were modified to fix examples
-
-      outcome=success if no more than 2 examples FAIL after fixes
-      outcome=fail if more than 2 examples still FAIL after attempted fixes
-
-  agent ReviewDocs
-    label: "Review Documentation"
-    fidelity: full
-    goal_gate: true
-    max_retries: 3
-    retry_target: ReviewDocs
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a senior technical editor performing a final review of all generated documentation.
-
-      ## Task
-      Review every documentation file for accuracy, completeness, consistency, and quality.
-
-      ## Process
-      1. Read docs/doc-writer/codebase-analysis.md to ground your review in the actual codebase
-      2. Read docs/doc-writer/example-verification.md for the verification results
-      3. Review each documentation file against these criteria:
-
-      ### Accuracy
-      - Do all code examples match the current API? (cross-reference with source files)
-      - Are file paths, function names, class names correct?
-      - Are version numbers and dependency names accurate?
-      - Do installation instructions actually work?
-
-      ### Completeness
-      - Is every public API documented?
-      - Are common use cases covered in tutorials?
-      - Are error conditions and edge cases documented?
-      - Is the getting started guide sufficient for a new user?
-
-      ### Consistency
-      - Are terms used consistently across all docs? (same name for same concept)
-      - Is formatting consistent? (code style, heading levels, list formats)
-      - Do cross-references between docs work? (links to other doc files)
-      - Is the tone consistent? (formal/informal, second person/third person)
-
-      ### Quality
-      - Is the writing clear and concise?
-      - Are explanations at the right level of detail?
-      - Is the information organized logically?
-      - Are there any walls of text that need breaking up?
-
-      4. Make fixes directly in the documentation files for:
-         - Factual errors
-         - Inconsistent terminology
-         - Broken cross-references
-         - Formatting issues
-         - Unclear explanations
-
-      5. For larger issues (missing sections, wrong architecture description), note them but do not attempt major rewrites -- flag them for a future iteration.
-
-      ## Output
-      Write your review summary to docs/doc-writer/review-notes.md with:
-      - **Overall Assessment:** (1-2 sentence quality judgment)
-      - **Fixes Applied:** List of changes made during review
-      - **Outstanding Issues:** Problems too large to fix in review (if any)
-      - **Documentation Quality Score:** Rate each doc 1-5 on accuracy, completeness, clarity
-
-      outcome=success if all docs score 3 or higher on all dimensions
-      outcome=fail if any doc scores below 3 on any dimension
-
-  agent CommitDocs
-    label: "Commit Documentation"
-    goal_gate: true
-    max_retries: 3
-    retry_target: CommitDocs
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Task
-      Stage and commit all documentation files.
-
-      ## Process
-      1. Stage all documentation changes:
-         git add README.md docs/
-
-      2. Check what is being committed:
-         git diff --cached --stat
-
-      3. Commit with a descriptive message:
-         git commit -m 'docs: add comprehensive project documentation
-
-         - README with installation, usage, and quick start
-         - API reference for all public interfaces
-         - Architecture guide with component deep dives
-         - Tutorials with runnable code examples
-         - All code examples verified working'
-
-      4. Verify the commit:
-         git log --oneline -1
-         git diff --stat HEAD~1
-
-      5. Push the branch:
-         git push -u origin docs/comprehensive-documentation
-
-  agent CreatePR
-    label: "Create PR"
-    goal_gate: true
-    max_retries: 3
-    retry_target: CreatePR
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Task
-      Create a pull request for the documentation changes.
-
-      ## Process
-      1. Read docs/doc-writer/review-notes.md for the quality summary
-      2. Read docs/doc-writer/example-verification.md for verification results
-
-      3. Create the PR using the GitHub CLI:
-         gh pr create \
-           --title 'docs: add comprehensive project documentation' \
-           --body '## Documentation Added
-
-         This PR adds comprehensive documentation generated by the doc-writer pipeline.
-
-         ### Files
-         - **README.md** -- Project overview, installation, quick start, usage examples
-         - **docs/api-reference.md** -- Complete API reference for all public interfaces
-         - **docs/architecture.md** -- System architecture, components, design decisions
-         - **docs/tutorials.md** -- Step-by-step tutorials with verified code examples
-
-         ### Verification
-         All code examples in the documentation have been extracted and tested.
-         See docs/doc-writer/example-verification.md for full results.
-
-         ### Review Notes
-         See docs/doc-writer/review-notes.md for the documentation quality assessment.
-
-         ---
-         *Generated by doc-writer pipeline*'
-
-      4. If gh is not available, output the PR details so they can be created manually:
-         - Title, body, branch name, base branch
-
-      5. Verify: gh pr view --json number,title,url 2>/dev/null || echo 'PR details printed above for manual creation'
+      Write no verification claim of your own anywhere. The note is the only one.
 
   edges
-    Start -> ExploreCodebase  weight: 2
+    Start -> EnsureEnv
+    EnsureEnv -> ExploreCodebase  when ctx.tool_marker = env-ready  label: "env ready"
+    EnsureEnv -> Deliver  label: "env bootstrap failed -> honest draft"
     ExploreCodebase -> AuditExistingDocs  when ctx.outcome = success  weight: 2
     ExploreCodebase -> ExploreCodebase  label: "retry explore"  restart: true
     AuditExistingDocs -> PlanDocStructure  when ctx.outcome = success  weight: 2
@@ -663,15 +731,8 @@ workflow doc_writer
     WriteAPIReference -> WriteAPIReference  label: "retry API ref"  restart: true
     WriteArchGuide -> WriteTutorials  when ctx.outcome = success  weight: 2
     WriteArchGuide -> WriteArchGuide  label: "retry arch guide"  restart: true
-    WriteTutorials -> CollectExamples  when ctx.outcome = success  weight: 2
+    WriteTutorials -> VerifyDocs  when ctx.outcome = success  weight: 2
     WriteTutorials -> WriteTutorials  label: "retry tutorials"  restart: true
-    CollectExamples -> VerifyExamples  when ctx.tool_stdout = collected  weight: 2
-    CollectExamples -> CollectExamples  label: "retry collect"  restart: true
-    VerifyExamples -> ReviewDocs  when ctx.outcome = success  weight: 2
-    VerifyExamples -> VerifyExamples  label: "retry verification"  restart: true
-    ReviewDocs -> CommitDocs  when ctx.outcome = success  weight: 2
-    ReviewDocs -> ReviewDocs  label: "retry review"  restart: true
-    CommitDocs -> CreatePR  when ctx.outcome = success  weight: 2
-    CommitDocs -> CommitDocs  label: "retry commit"  restart: true
-    CreatePR -> Exit  weight: 2
-    CreatePR -> CreatePR  label: "retry PR"  restart: true
+    VerifyDocs -> Deliver  when ctx.tool_marker = docs-verified  label: "artifacts verified"  weight: 2
+    VerifyDocs -> Deliver  label: "no green oracle -> honest draft"
+    Deliver -> Exit

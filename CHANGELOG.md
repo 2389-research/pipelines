@@ -16,6 +16,16 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `build-and-ship/idea-to-pr.dip`: turns a free-text idea into a shipped change.
+  It writes a reviewable `spec.md`, `plan.md` and `tasks.md` (P1/P2/P3 slices)
+  before any code, then builds the P1 slice, validates it deny-by-default (an
+  unknown or Rust build with no real check does not pass), and quality-reviews
+  it. It declares a required `idea` text input. It does not commit or branch
+  itself: tracker-runner commits the result to the run's branch and opens the
+  PR, and a standalone run leaves the change in the working tree for you. It
+  was previously maintained only inside tracker-runner; this repo is now
+  canonical.
+
 - `roborev/roborev_issue_fixer.dip`: a headless loop over open roborev reviews
   on the current branch. It re-checks each finding against the code, repairs the
   valid ones, runs the project's tests, audits the patch, commits, waits for
@@ -126,6 +136,35 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   [#38](https://github.com/2389-research/pipelines/issues/38)).
 
 ### Changed
+
+- **BREAKING — `build-and-ship/` client pipelines now track the hardened
+  versions tracker-runner runs in production** (`bug-hunter`, `doc-writer`,
+  `refactor-express`, `speedrun`; this repo is now the canonical source and
+  tracker-runner consumes it instead of keeping its own copies):
+  - **They no longer open the pull request themselves.** `bug-hunter`,
+    `doc-writer` and `refactor-express` used to run `gh pr create` in-pipeline.
+    They now commit their change on the run's branch and stop. Whoever runs the
+    pipeline (tracker-runner's host, or you) opens the PR, so a run never holds
+    a GitHub write token. Standalone users: open the PR yourself from the
+    branch the run leaves behind.
+  - Tool gates route on the typed `ctx.tool_marker` channel instead of matching
+    stdout byte-for-byte, and marker nodes no longer route by edge weight
+    (tracker-runner #826, #840). Node graphs and routing changed throughout,
+    which is part of why this is MAJOR.
+  - Verification is deny-by-default: a suite that ran zero tests, a refactor
+    that changed nothing, or an unknown language is not a pass. That covers Go,
+    JS and Rust as well as Python (tracker-runner #857, #861, #870, #873, #878,
+    #887). A verify step never rewrites the lockfile it is verifying.
+  - A failed environment or toolchain bootstrap fails loudly up front instead of
+    surfacing later as a test failure (tracker-runner #846). `bug-hunter` derives
+    its diff baseline from the recorded run baseline (#857) and keeps
+    parametrized pytest node ids intact (#844).
+  - Each file declares a `# category:` header comment, plus `# ship-verdict:
+    self-report` and `# needs-seed` on `speedrun` and `# opens-pr: true` on
+    `idea-to-pr`. tracker ignores them, and tracker-runner uses them to group
+    and label its pipeline picker.
+  - No tracker pin change: every file passes `dippin check` at this repo's
+    pinned dippin v0.72.0, and tracker-runner runs them on tracker v0.80.1.
 
 - Kata now records the checked-out local branch as trunk and lands each
   SHA-bound, two-model-approved task there during closure. The close step

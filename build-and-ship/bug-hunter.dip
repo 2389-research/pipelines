@@ -1,12 +1,13 @@
 workflow bug_hunter
-  goal: "Given a bug report (issue URL, description, or error log), autonomously reproduce the bug, diagnose root cause, fix it with TDD, verify the fix, and create a pull request — running fully headless with no human intervention."
+  goal: "Given a bug report, reproduce it with a failing test, fix the root cause, run the GIVEN oracle (that test plus the tests that already passed), and deliver — READY only when the oracle is green, otherwise an honest DRAFT."
+  # category: Fix a bug
   start: Start
   exit: Exit
 
   defaults
     max_retries: 2
     fidelity: summary:high
-    max_restarts: 20
+    max_restarts: 5
 
   tool Start
     label: Start
@@ -20,649 +21,515 @@ workflow bug_hunter
     command:
       echo "exit"
 
-  agent ReadBugReport
-    label: "Read Bug Report"
-    fidelity: full
-    goal_gate: true
-    max_retries: 3
-    retry_target: ReadBugReport
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a senior software engineer triaging a bug report.
-
-      ## Task
-      Read and understand the bug report. The report may come from multiple sources:
-      - An issue URL (GitHub, GitLab, Jira, etc.) referenced in files
-      - A description file (bug.md, issue.md, ISSUE, BUG_REPORT, etc.)
-      - Error logs in the working directory
-      - The pipeline goal or context from prior nodes
-
-      ## Process
-      1. List all files in the working directory: ls -la
-      2. Look for bug report files: any *.md, *.txt, ISSUE*, BUG*, ERROR*, or log files
-      3. Read every file that could describe the bug
-      4. If a GitHub issue URL is found, use gh issue view to fetch the full issue
-      5. Read the project README if it exists for context on the project
-
-      ## Output
-      Write a structured bug report summary to docs/bug-hunt/bug-report.md:
-      - **Bug ID:** (issue number or generated ID)
-      - **Summary:** one-sentence description
-      - **Reported Symptoms:** what the reporter observed
-      - **Expected Behavior:** what should happen instead
-      - **Reproduction Steps:** how to trigger the bug (if provided)
-      - **Error Messages:** exact error text, stack traces, log lines
-      - **Affected Components:** which files/modules are likely involved (best guess)
-      - **Severity Assessment:** critical / high / medium / low
-      - **Missing Information:** what we still need to figure out
-
-      Create the docs/bug-hunt/ directory if it does not exist.
-
-  agent ExploreCodebase
-    label: "Explore Codebase"
-    fidelity: full
-    goal_gate: true
-    max_retries: 3
-    retry_target: ExploreCodebase
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a senior software engineer exploring an unfamiliar codebase to understand its architecture before hunting a bug.
-
-      ## Context
-      Read docs/bug-hunt/bug-report.md for the bug being investigated.
-
-      ## Task
-      Build a mental model of the codebase architecture, focusing on areas relevant to the bug.
-
-      ## Process
-      1. Examine the project structure:
-         - ls -la (top level)
-         - find . -type f -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.go' -o -name '*.rs' | head -100
-         - Read build files: pyproject.toml, package.json, go.mod, Cargo.toml, Makefile, etc.
-      2. Understand the architecture:
-         - Read main entry points
-         - Identify module boundaries and key abstractions
-         - Trace the data flow through the components mentioned in the bug report
-      3. Find the code most likely related to the bug:
-         - Search for functions, classes, or variables mentioned in error messages
-         - grep -r for keywords from the bug report
-         - Read the files identified as affected components
-      4. Understand the test infrastructure:
-         - What test framework is used?
-         - Where are tests located?
-         - How are tests run? (exact command)
-         - Are there existing tests for the affected code?
-      5. Check git history for the affected area:
-         - git log --oneline -20 -- <affected files>
-         - Look for recent changes that may have introduced the bug
-
-      ## Output
-      Write your findings to docs/bug-hunt/codebase-analysis.md:
-      - **Project Type:** language, framework, build system
-      - **Test Command:** exact command to run tests
-      - **Architecture Overview:** key modules and their responsibilities (3-5 sentences)
-      - **Affected Code Paths:** specific files and functions related to the bug
-      - **Existing Test Coverage:** what tests exist for the affected code
-      - **Recent Changes:** any suspicious recent commits in the affected area
-      - **Reproduction Strategy:** how you plan to reproduce the bug based on what you've learned
-
-  agent ReproduceBug
-    label: "Reproduce Bug (Write Failing Test)"
-    fidelity: full
-    goal_gate: true
-    max_retries: 3
-    retry_target: ReproduceBug
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a senior software engineer writing a failing test that proves the bug exists.
-
-      ## Context
-      1. Read docs/bug-hunt/bug-report.md for the bug description
-      2. Read docs/bug-hunt/codebase-analysis.md for codebase understanding
-
-      ## IRON LAW: THE BUG MUST BE PROVEN BY A FAILING TEST
-      If you cannot write a test that fails because of the bug, you have not reproduced it.
-
-      ## Process
-      1. Identify the correct test file to add your reproduction test to:
-         - If tests exist for the affected module, add to that file
-         - If no tests exist, create ONE new test file following the project's conventions
-      2. Write a focused test that:
-         - Exercises the exact code path that triggers the bug
-         - Asserts the EXPECTED (correct) behavior
-         - Will FAIL because the bug causes different behavior
-         - Has a clear, descriptive name like test_<module>_<bug_description>
-      3. Run the test and confirm it FAILS:
-         - The failure message should clearly relate to the bug
-         - If it fails for a different reason (import error, syntax error), fix the test
-         - If it passes, your test does not capture the bug — rewrite it
-      4. Run the FULL test suite to establish a baseline:
-         - Note how many tests pass/fail BEFORE your fix
-         - Your reproduction test should be the only new failure
-      5. Commit the failing test:
-         - git add <test file>
-         - git commit -m 'test(bug): add failing test reproducing <bug description>'
-
-      ## If You Cannot Reproduce
-      If after genuine effort you cannot write a failing test:
-      - Document exactly what you tried and why it didn't work
-      - Check if the bug is environment-specific, timing-dependent, or requires specific data
-      - Write what you know to docs/bug-hunt/reproduction-notes.md
-      - outcome=fail to trigger additional context gathering
-
-      ## VERIFICATION GATE
-      You MUST see the test fail with output that relates to the reported bug symptoms.
-      Do NOT claim reproduction without running the test and reading the output.
-
-      ## Output
-      outcome=success if you have a committed failing test that reproduces the bug
-      outcome=fail if you cannot reproduce the bug
-
-  tool CheckReproduced
-    label: "Check Reproduction Status"
-    timeout: 10s
+  tool EnsureEnv
+    label: "Bootstrap Environment"
+    marker_grep: '^(env-ready|env-failed)$'
+    timeout: 8m
     command:
       #!/bin/sh
-      set -eu
+      # GENERAL, seed-driven environment bootstrap. If the seed ships an executable
+      # bootstrap hook, run it ONCE up front so a pinned, project-local toolchain
+      # (e.g. ./.venv for Python, node_modules for JS, a toolchain pin for Go/Rust)
+      # exists before any agent or gate runs a test. The pipeline stays language- and
+      # repo-agnostic: it knows nothing about the project; it only runs the seed's hook
+      # if one is present. No hook -> clean no-op (the common case; most repos ship none).
+      #
+      # FAIL LOUD (#846): a hook that is PRESENT and EXITS NON-ZERO means the pinned
+      # dependency/toolchain setup did not complete. Swallowing that (the old
+      # `|| echo continuing`) let the agent improvise its own deps and burn the whole run
+      # on a doomed env (E1: 38m/$2.13 building numpy from source because the pinned wheel
+      # was missing). So we RECORD the outcome to .tracker/env-bootstrap.status (+ .log,
+      # read by the capability preflight) and emit a DISTINCT marker: `env-ready` on
+      # success/no-hook (advance), `env-failed` on a failed hook (routes OUT of the work
+      # loop to an honest DRAFT). The marker_grep regex lifts the marker into the typed
+      # ctx.tool_marker routing channel (last matching line wins), so a stray diagnostic on
+      # stdout can no longer flip routing; hook output still goes to the log/stderr.
+      #
+      # DENY BY DEFAULT: this node also STAMPS the delivery note as an unverified DRAFT
+      # before any work starts. Nothing in this branch is backed by a passing test until
+      # the Verify oracle overwrites this note with evidence. Every later node may only
+      # replace it with its OWN result; the delivery agent may never author a verdict.
+      set -u
       mkdir -p .tracker
-      if [ -f docs/bug-hunt/reproduction-notes.md ]; then
-        printf 'cannot_reproduce'
-      elif git log --oneline -1 | grep -q 'test(bug)'; then
-        printf 'reproduced'
+      status_file=.tracker/env-bootstrap.status
+      log_file=.tracker/env-bootstrap.log
+      : > "$log_file"
+      cat > .tracker/DELIVERY-NOTE.md <<'NOTE'
+      DRAFT — NOT VERIFIED
+
+      The verification gate has not run, so nothing here is backed by a passing test.
+      Treat every claim in this branch as unverified until a human runs the tests.
+      NOTE
+      found=''
+      for hook in bughunt-setup.sh .bughunt/setup.sh scripts/bughunt-setup.sh; do
+        if [ -f "$hook" ]; then found="$hook"; break; fi
+      done
+      if [ -z "$found" ]; then
+        printf 'status=ok\nhook=\nexit=0\n' > "$status_file"
+        printf 'env-ready'
+        exit 0
+      fi
+      echo "[EnsureEnv] running seed bootstrap hook: $found" >&2
+      sh "$found" > "$log_file" 2>&1
+      rc=$?
+      cat "$log_file" >&2
+      if [ "$rc" -eq 0 ]; then
+        printf 'status=ok\nhook=%s\nexit=0\n' "$found" > "$status_file"
+        printf 'env-ready'
       else
-        printf 'no_test_committed'
+        printf 'status=failed\nhook=%s\nexit=%s\n' "$found" "$rc" > "$status_file"
+        echo "[EnsureEnv] seed bootstrap hook '$found' FAILED (exit $rc) — aborting; a partial/failed env would waste the whole run (#846)" >&2
+        printf 'env-failed'
       fi
 
-  agent AskForMoreContext
-    label: "Gather Additional Context"
-    goal_gate: true
-    max_retries: 3
-    retry_target: AskForMoreContext
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a senior engineer who could not reproduce a bug and needs more information.
-
-      ## Context
-      1. Read docs/bug-hunt/bug-report.md for the original bug report
-      2. Read docs/bug-hunt/reproduction-notes.md for what was already tried
-      3. Read docs/bug-hunt/codebase-analysis.md for codebase understanding
-
-      ## Task
-      Dig deeper to find what is needed to reproduce the bug.
-
-      ## Process
-      1. Re-read the error messages and stack traces very carefully
-         - Are there version-specific clues?
-         - Are there environment-specific clues (OS, config, data)?
-      2. Search git history more broadly:
-         - git log --all --oneline -50
-         - git log --all --oneline --diff-filter=M -- <affected files>
-         - Look for reverts, fixes, or related changes
-      3. Look for configuration files that might affect behavior:
-         - .env, .env.example, config/, settings files
-         - Different behavior in test vs production configs?
-      4. Check for data-dependent behavior:
-         - Are there fixtures, seeds, or sample data?
-         - Could the bug only trigger with specific input?
-      5. Try alternative reproduction approaches:
-         - Integration test instead of unit test
-         - Different entry point to the same code
-         - Edge case inputs (empty, null, very large, unicode, etc.)
-      6. Update docs/bug-hunt/bug-report.md with new findings
-      7. Update docs/bug-hunt/reproduction-notes.md with what you tried
-
-      ## Output
-      outcome=success if you found new information that could help reproduce the bug
-      outcome=fail if you are truly stuck and cannot find more context
-
-  agent DiagnoseRootCause
-    label: "Diagnose Root Cause"
+  agent Understand
+    label: "Understand the Bug"
     fidelity: full
-    goal_gate: true
     max_retries: 3
-    retry_target: DiagnoseRootCause
+    retry_target: Understand
     prompt:
       You are working in `run.working_dir`.
 
-      ## Role
-      You are a senior debugger performing root cause analysis on a confirmed bug.
+      Read BUG.md and anything else here that describes the bug (issue text, error logs,
+      README). Then read the source until you can say what the bug is and where it lives.
 
-      ## Context
-      1. Read docs/bug-hunt/bug-report.md for the bug description
-      2. Read docs/bug-hunt/codebase-analysis.md for architecture understanding
-      3. The reproduction test exists and fails — check git log for the test commit
-      4. Run the reproduction test to see the exact failure output
+      The environment is already pinned. Follow the setup rules BUG.md gives you and use
+      the interpreter it names. Do not build or install the project.
 
-      ## IRON LAW: FIND THE ROOT CAUSE, NOT JUST THE SYMPTOM
-      'It crashes here' is not a root cause. 'The null check is missing because X returns None when Y' is a root cause.
+      Write a short docs/bug-hunt/understanding.md: the bug in one sentence, the exact
+      command that runs this project's tests, and your best guess at the responsible
+      code path (file + function). Short is fine — you are orienting, not writing a report.
 
-      ## Process
-      ### Phase 1: Observe
-      1. Run the failing reproduction test with maximum verbosity
-      2. Read the FULL error output — stack traces, error codes, assertion messages
-      3. Identify the exact line where behavior diverges from expectation
-
-      ### Phase 2: Hypothesize
-      1. Form 2-3 hypotheses about what could cause this behavior
-      2. For each hypothesis, identify what evidence would confirm or deny it
-      3. Rank hypotheses by likelihood
-
-      ### Phase 3: Test Hypotheses
-      1. For the most likely hypothesis:
-         - Read the relevant source code carefully
-         - Trace the data flow from input to the point of failure
-         - Check edge cases, boundary conditions, type mismatches
-         - Look for off-by-one errors, null handling, race conditions
-      2. If hypothesis is wrong, move to the next one
-      3. If all hypotheses fail, widen the search:
-         - Check dependencies and their versions
-         - Look for implicit assumptions in the code
-         - Check for state mutation or side effects
-
-      ### Phase 4: Confirm
-      1. You MUST be able to explain:
-         - What the code does (the bug)
-         - What the code should do (the fix)
-         - Why the code does the wrong thing (the root cause)
-         - How long the bug has existed (git blame on the faulty line)
-      2. Predict what the fix should look like (without writing it yet)
-
-      ## Output
-      Write your diagnosis to docs/bug-hunt/diagnosis.md:
-      - **Root Cause:** clear explanation of why the bug occurs
-      - **Faulty Code:** exact file:line reference and the problematic code
-      - **How It Was Introduced:** git blame context
-      - **Proposed Fix:** what needs to change (conceptual, not code yet)
-      - **Risk Assessment:** what else might break when we fix this
-      - **Fix Complexity:** trivial / moderate / complex
-
-      Commit: git add docs/bug-hunt/diagnosis.md && git commit -m 'docs(bug): document root cause diagnosis'
-
-  agent FixBug
-    label: "Fix Bug (TDD)"
+  agent Reproduce
+    label: "Reproduce (Failing Test)"
     fidelity: full
-    goal_gate: true
     max_retries: 3
-    retry_target: FixBug
+    retry_target: Reproduce
     prompt:
       You are working in `run.working_dir`.
 
-      ## Role
-      You are a disciplined software engineer fixing a confirmed bug using strict TDD.
+      Write a test that FAILS because of this bug and would pass once it is fixed. Put it
+      where this project already keeps its tests, in the style this project already uses.
 
-      ## Context
-      1. Read docs/bug-hunt/diagnosis.md for the root cause and proposed fix
-      2. Read docs/bug-hunt/codebase-analysis.md for architecture context
-      3. The reproduction test already exists and fails — find it in the test files
+      Run it with the project's own test command and confirm it fails for the BUG's reason
+      — not for a typo, a missing import, or a bad fixture. If it fails for some other
+      reason, the reproduction is wrong: fix the test, not the product code.
 
-      ## IRON LAW: MAKE THE FAILING TEST PASS WITH THE SMALLEST CORRECT FIX
-      Do NOT refactor unrelated code. Do NOT add features. Fix the bug and nothing else.
+      Then commit the test. Do NOT fix the bug in this step — the failing test is the
+      deliverable. If you truly cannot reproduce it, write a line starting with
+      `GIVE_UP:` into docs/bug-hunt/reproduction-notes.md and stop.
 
-      ## Process
-
-      ### GREEN — Write Minimal Fix
-      1. Read the reproduction test to understand what it expects
-      2. Read the faulty code identified in the diagnosis
-      3. Write the SMALLEST code change that fixes the root cause
-      4. The fix should address the root cause, not paper over the symptom
-      5. Run the reproduction test: confirm it PASSES
-      6. Run the FULL test suite: confirm nothing else broke
-
-      ### REFACTOR (only after green)
-      1. If the fix reveals a pattern that should be applied elsewhere, note it but do NOT apply it now
-      2. Clean up only the code you touched — rename if unclear, add a comment if the fix is non-obvious
-      3. Keep all tests green
-
-      ### COMMIT
-      1. Stage only the files you modified:
-         - git add <fixed source files>
-         - git commit -m 'fix(<scope>): <description of what was fixed>'
-      2. The commit message should reference the bug if there is an issue number
-
-      ## Edge Cases to Consider
-      - Does the fix handle null/None/nil inputs?
-      - Does the fix work with empty collections?
-      - Does the fix work with boundary values?
-      - Could the fix introduce a performance regression?
-
-      ## When Re-entered After Review Failure
-      If context shows a previous review failed:
-      1. Read the review feedback CAREFULLY
-      2. Verify each finding against the actual code
-      3. Fix valid findings, document why invalid findings are wrong
-      4. Re-run full test suite after fixes
-
-      ## VERIFICATION GATE
-      Before claiming success, you MUST:
-      - Run the reproduction test — see it PASS
-      - Run the full test suite — see ALL tests PASS
-      - Read the output — no errors, no warnings, no skipped tests
-      Do NOT say 'should work' or 'probably passes'.
-
-      ## Output
-      outcome=success if the bug is fixed and all tests pass
-      outcome=fail if the fix does not work or breaks other tests
-
-  agent VerifyFix
-    label: "Verify Fix (Review)"
-    goal_gate: true
-    max_retries: 3
-    retry_target: FixBug
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a meticulous code reviewer verifying a bug fix.
-
-      ## CRITICAL FRAMING
-      The implementer may have fixed the symptom but not the root cause, or introduced a regression. Trust nothing — verify everything.
-
-      ## Context
-      1. Read docs/bug-hunt/diagnosis.md for the diagnosed root cause
-      2. Review the fix: git diff HEAD~1 (or git log --oneline -5 and diff the fix commit)
-      3. Read docs/bug-hunt/bug-report.md for the original symptoms
-
-      ## Verification Process
-      1. **Root Cause Match:** Does the fix address the root cause identified in the diagnosis, or does it just suppress the symptom?
-      2. **Completeness:** Does the fix handle all edge cases? Are there other code paths with the same bug pattern?
-      3. **Regression Risk:** Could this fix break anything else? Check callers of the modified code.
-      4. **Test Quality:** Is the reproduction test sufficient? Does it test the actual behavior, not a hardcoded value?
-      5. **Code Quality:** Is the fix clean, readable, and consistent with the codebase style?
-      6. **Minimal Change:** Did the implementer ONLY fix the bug, or did they sneak in unrelated changes?
-
-      ## Run Tests
-      Run the full test suite yourself. Read the output. Count passing and failing tests.
-
-      ## VERIFICATION GATE
-      You MUST run the tests in THIS session and read the output before making claims.
-
-      ## Output
-      If the fix is correct and complete: PASS
-      If issues found: FAIL with exact file:line references
-
-      outcome=success if PASS
-      outcome=fail if FAIL (routes back to FixBug)
-
-  tool CheckFixValid
-    label: "Check Fix Budget"
-    timeout: 10s
+  tool Baseline
+    label: "Capture Oracle Baseline (pre-fix)"
+    marker_grep: '^(reproduced|retry_repro|no_repro)$'
+    timeout: 6m
     command:
       #!/bin/sh
-      set -eu
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # THE ORACLE, HALF ONE (logic reused verbatim from the deployed bug-hunter's
+      # CheckReproduced, #838/#843): run the committed reproduction with the project's OWN
+      # runner BEFORE any fix exists. A reproduction is a test that FAILS here. The same
+      # run records the node-ids that PASS here — the previously-passing neighbours the
+      # post-fix gate must protect (PASS_TO_PASS). The reproduction is failing now, so it
+      # is excluded from that baseline by construction, and pre-existing fix-independent
+      # failures never enter it. The marker is routed via the typed ctx.tool_marker channel
+      # (marker_grep), so a stray diagnostic line on stdout can no longer flip routing.
+      set -u
       mkdir -p .tracker
-      COUNTER='.tracker/fix_attempt_count'
-      count=0
-      [ -f "$COUNTER" ] && count=$(cat "$COUNTER")
-      count=$((count + 1))
-      printf '%s' "$count" > "$COUNTER"
-      if [ "$count" -gt 5 ]; then
-        printf 'budget_exhausted'
+      : > .tracker/pass_to_pass.txt
+      n=$(cat .tracker/repro-attempts 2>/dev/null || echo 0); n=$((n + 1)); printf '%s' "$n" > .tracker/repro-attempts
+      # Budgeted give-up: one more shot at the reproduction, then deliver an honest draft.
+      # Never invent a reproduction and never spin: the caller has no other exit.
+      give_up() {
+        cat > .tracker/DELIVERY-NOTE.md <<'NOTE'
+      DRAFT — NOT VERIFIED (no reproduction)
+
+      No committed test failed on the unfixed code, so there is no oracle for this bug and
+      no evidence that anything in this branch fixes it. A human must reproduce it first.
+      NOTE
+        if [ "$n" -ge 2 ]; then printf 'no_repro'; else printf 'retry_repro'; fi
+        exit 0
+      }
+      if [ -f docs/bug-hunt/reproduction-notes.md ] && \
+         grep -qiE '^[[:space:]]*GIVE[_-]?UP:' docs/bug-hunt/reproduction-notes.md; then
+        n=2; give_up
+      fi
+      # Accept a reproducer left staged/uncommitted, under any commit message. Git chatter
+      # is silenced so ONLY the marker reaches stdout.
+      # #849: a bare `git commit` dies exit 128 "Author identity unknown" wherever the
+      # sandbox image ships no git identity (the host-side delivery/reposeed `-c user.*`
+      # flags do NOT reach the container, and backends differ — the docker image now bakes
+      # one in, a Fly/sprite image may not). Swallowing that (`|| true`) left the test
+      # STAGED BUT UNCOMMITTED, so the root..HEAD diff below saw nothing and this gate
+      # misreported "no test committed" — a silent false negative. So: retry once with an
+      # explicit identity, and do NOT hide a commit that still fails.
+      if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        git add -A >/dev/null 2>&1 || true
+        msg='test(bug): reproduce bug (pipeline-normalized commit)'
+        if ! git commit -q -m "$msg" >/dev/null 2>&1; then
+          git -c user.name=tracker-runner -c user.email=runner@tracker.invalid \
+              commit -q -m "$msg" >/dev/null 2>&1 \
+            || echo "[Baseline] WARNING: git commit failed; reproducer may be uncommitted" >&2
+        fi
+      fi
+      # Baseline (#855/Slice B): mirror internal/runbaseline.Resolve. The runner preflight
+      # records the workspace HEAD right after seeding into .tracker/base-commit — the clone
+      # tip for a repo-seeded run, the initial commit for greenfield — so "what this run
+      # changed" is base..HEAD, not the whole repo history. On a real clone the root commit
+      # is hundreds of commits back, so a root baseline matched EVERY historically-touched
+      # test file and the TARGET set came out garbage. Prefer the recorded commit when it
+      # resolves in THIS repo; else fall back to the root commit (pre-#855 behavior: correct
+      # for greenfield, and the safe degrade for an older run / missing file / garbage
+      # content / a SHA from another repo). Never errors, never blocks.
+      root=$(tr -d '[:space:]' < .tracker/base-commit 2>/dev/null || true)
+      if [ -z "$root" ] || ! git cat-file -e "${root}^{commit}" 2>/dev/null; then
+        root=$(git rev-list --max-parents=0 HEAD 2>/dev/null | tail -1)
+      fi
+      test_re='(_test\.[a-z0-9]+|test_[^/]*\.[a-z0-9]+|\.test\.[a-z0-9]+|\.spec\.[a-z0-9]+|_spec\.[a-z0-9]+|(^|/)test[^/]*\.(go|py|js|ts|rs|java|rb|php|kt|swift)|(^|/)tests?/)'
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+      changed_tests=$(git diff --name-only "$root" HEAD 2>/dev/null | grep -iE "$test_re" | grep -iE '\.(py|go|js|jsx|ts|tsx|rs|java|rb|php|kt|swift)$' | grep -vE "$vendor_re" || true)
+      [ -z "$changed_tests" ] && give_up
+      py_tests=$(echo "$changed_tests" | grep -iE '\.py$' || true)
+      go_tests=$(echo "$changed_tests" | grep -iE '_test\.go$' || true)
+      js_tests=$(echo "$changed_tests" | grep -iE '\.(test|spec)\.[jt]sx?$' || true)
+      # Rust unit tests are often INLINE in src/*.rs (#[cfg(test)]), so a changed-PATH
+      # scan misses them — detect an ADDED #[test]/#[tokio::test]/#[rstest] in the diff too.
+      rust_tests=$(echo "$changed_tests" | grep -iE '\.rs$' || true)
+      if [ -z "$rust_tests" ] && git diff "$root" HEAD -- '*.rs' 2>/dev/null | grep -qE '^\+[[:space:]]*#\[(test|tokio::test|rstest)'; then
+        rust_tests='(inline)'
+      fi
+      # Interpreter selection is a CONVENTION, never a version literal.
+      PY=""
+      if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+      elif [ -x venv/bin/python ]; then PY=venv/bin/python
+      fi
+      rc=127
+      if [ -n "$py_tests" ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; }; then
+        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -v $py_tests 2>&1); rc=$?
+        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -v $py_tests 2>&1); rc=$?
+        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -v $py_tests 2>&1); rc=$?
+        else out=""; rc=127; fi
+        printf '%s\n' "$out" >&2
+        printf '%s\n' "$out" | grep -E ' PASSED' | awk '{print $1}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+      elif [ -n "$go_tests" ] && [ -f go.mod ]; then
+        rc=0
+        for f in $go_tests; do
+          d=$(dirname "$f")
+          out=$(go test "./$d" -v -run . 2>&1) || rc=1
+          printf '%s\n' "$out" >&2
+          printf '%s\n' "$out" | awk -v d="$d" '/^--- PASS: /{print d"::"$3}' >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        done
+      elif [ -n "$js_tests" ] && [ -f package.json ]; then
+        out=$(npm test 2>&1); rc=$?
+        printf '%s\n' "$out" >&2
+        # Best-effort PASS_TO_PASS: record spec FILES the runner reported passing PRE-fix
+        # (jest/mocha "PASS <path>" lines) so Verify re-runs them post-fix (#861/D6). Unknown
+        # runners emit nothing here -> degrade safe (no p2p, still deny-by-default in Verify).
+        printf '%s\n' "$out" | grep -oE 'PASS[[:space:]]+[^[:space:]]+\.(test|spec)\.[jt]sx?' \
+          | awk '{print "js::"$2}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+      elif [ -n "$rust_tests" ] && [ -f Cargo.toml ]; then
+        rc=0
+        rust_targets=$(git diff "$root" HEAD -- '*.rs' 2>/dev/null \
+          | grep -A3 -E '^\+[[:space:]]*#\[(test|tokio::test|rstest)' \
+          | grep -E '^\+[[:space:]]*(async[[:space:]]+)?fn[[:space:]]+' \
+          | sed -E 's/^\+[[:space:]]*(async[[:space:]]+)?fn[[:space:]]+([A-Za-z0-9_]+).*/\2/' | sort -u)
+        if [ -n "$rust_targets" ]; then
+          for t in $rust_targets; do out=$(cargo test "$t" 2>&1) || rc=1; printf '%s\n' "$out" >&2; done
+        else
+          rc=127
+        fi
+      fi
+      if [ "$rc" -eq 127 ]; then
+        printf 'reproduced'          # could not run the test -> accept liberally, the post-fix gate still denies
+      elif [ "$rc" -ne 0 ]; then
+        printf 'reproduced'          # test FAILS on unfixed code -> genuine reproduction
       else
-        printf 'budget_ok'
+        give_up                      # test PASSES on unfixed code -> not a reproduction
       fi
 
-  tool RegressionTest
-    label: "Run Full Regression Suite"
-    timeout: 2m
+  agent Fix
+    label: "Fix the Root Cause"
+    fidelity: full
+    max_retries: 3
+    retry_target: Fix
+    prompt:
+      You are working in `run.working_dir`.
+
+      Make the failing test from the previous step pass by fixing the ROOT CAUSE. Change
+      as little as possible and match the style of the code around it.
+
+      Run the test with the project's own test command to check your work, then commit the
+      fix. Do not weaken, delete, or rewrite the reproduction test to make it green, and do
+      not touch unrelated tests.
+
+      If a previous attempt was rejected, read .tracker/regression-evidence.txt first —
+      that is the actual test output that rejected it.
+
+  tool Verify
+    label: "Run the Given Oracle"
+    marker_grep: '^(regression-pass|regression-fail|regression-stop|regression-unknown)$'
+    timeout: 8m
     command:
       #!/bin/sh
-      set -eu
-      echo '=== Full regression test suite ==='
-      if [ -f pyproject.toml ]; then
-        echo '--- pytest ---'
-        uv run pytest -v 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
-        echo '--- ruff ---'
-        uv run ruff check . 2>&1 || { echo 'LINT_FAIL'; exit 1; }
-        printf 'regression-pass'
-      elif [ -f package.json ]; then
-        echo '--- npm test ---'
-        npm test 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
-        echo '--- lint ---'
-        npx eslint . 2>&1 || npx biome check . 2>&1 || echo 'lint-skipped'
-        printf 'regression-pass'
-      elif [ -f go.mod ]; then
-        echo '--- go test ---'
-        go test ./... -v 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
-        echo '--- go vet ---'
-        go vet ./... 2>&1 || echo 'vet-skipped'
-        printf 'regression-pass'
-      elif [ -f Cargo.toml ]; then
-        echo '--- cargo test ---'
-        cargo test 2>&1 || { echo 'REGRESSION_FAIL'; exit 1; }
-        echo '--- cargo clippy ---'
-        cargo clippy 2>&1 || echo 'clippy-skipped'
-        printf 'regression-pass'
-      else
-        echo 'Unknown build system'
-        printf 'regression-unknown'
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # THE ORACLE, HALF TWO — logic reused verbatim from the deployed bug-hunter's
+      # RegressionTest (#843 per-test semantics, #844 node-id resolution). Gate on exactly
+      # two things, per specific test:
+      #   (1) every TARGET test — the test function(s) ADDED in the changed test file(s)
+      #       vs the root commit — now PASSES, AND
+      #   (2) every node-id in .tracker/pass_to_pass.txt (captured PRE-fix) STILL passes.
+      # Pre-existing, fix-independent failures are IGNORED. We run ONLY those node-ids with
+      # the project's OWN interpreter. regression-unknown when there is no TARGET to run:
+      # deny by default, never a bare PASS_TO_PASS pass. The marker is routed via the typed
+      # ctx.tool_marker channel (marker_grep), robust to any extra stdout line.
+      set -u
+      mkdir -p .tracker
+      : > .tracker/regression-evidence.txt
+      marker=regression-unknown
+      targets=""
+      nodeids=""
+      {
+        if [ ! -x .venv/bin/python ] && [ ! -x venv/bin/python ]; then
+          for hook in bughunt-setup.sh .bughunt/setup.sh scripts/bughunt-setup.sh; do
+            [ -f "$hook" ] && { echo "[verify] bootstrapping env via $hook"; sh "$hook" 2>&1 || true; break; }
+          done
+        fi
+        # Baseline (#855/Slice B): mirror internal/runbaseline.Resolve — identical resolution
+        # to the Baseline node above. Prefer the recorded .tracker/base-commit when it names a
+        # commit in THIS repo (base..HEAD is what this run changed, not the whole repo
+        # history); else fall back to the root commit (greenfield-correct, and the safe
+        # degrade for missing/garbage/foreign content). Never errors, never blocks.
+        root=$(tr -d '[:space:]' < .tracker/base-commit 2>/dev/null || true)
+        if [ -z "$root" ] || ! git cat-file -e "${root}^{commit}" 2>/dev/null; then
+          root=$(git rev-list --max-parents=0 HEAD 2>/dev/null | tail -1)
+        fi
+        test_re='(_test\.[a-z0-9]+|test_[^/]*\.[a-z0-9]+|\.test\.[a-z0-9]+|\.spec\.[a-z0-9]+|_spec\.[a-z0-9]+|(^|/)test[^/]*\.(go|py|js|ts|rs|java|rb|php|kt|swift)|(^|/)tests?/)'
+        vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+        changed=$(git diff --name-only "$root" HEAD 2>/dev/null | grep -iE "$test_re" | grep -vE "$vendor_re" || true)
+        py_tests=$(echo "$changed" | grep -iE '\.py$' || true)
+        go_tests=$(echo "$changed" | grep -iE '_test\.go$' || true)
+        js_tests=$(echo "$changed" | grep -iE '\.(test|spec)\.[jt]sx?$' || true)
+        # Rust unit tests are often INLINE in src/*.rs (#[cfg(test)]), so a changed-PATH
+        # scan misses them — detect an ADDED #[test]/#[tokio::test]/#[rstest] in the diff too.
+        rust_tests=$(echo "$changed" | grep -iE '\.rs$' || true)
+        if [ -z "$rust_tests" ] && git diff "$root" HEAD -- '*.rs' 2>/dev/null | grep -qE '^\+[[:space:]]*#\[(test|tokio::test|rstest)'; then
+          rust_tests='(inline)'
+        fi
+        p2p=$(grep -vE '^[[:space:]]*$' .tracker/pass_to_pass.txt 2>/dev/null | grep -vE "$vendor_re" || true)
+
+        if { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; } && [ -n "$py_tests" ]; then
+          PY=""
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+          elif [ -x venv/bin/python ]; then PY=venv/bin/python; fi
+          # A test NAME is not a pytest node-id: a class method collects as
+          # file::TestX::test_y and a parametrized test fans out to file::test_y[case].
+          # Resolve each ADDED name to its REAL node-id(s) via --collect-only (#844);
+          # fall back to file::name so the resolver never introduces a NEW false block.
+          py_collect() {
+            if [ -n "$PY" ]; then "$PY" -m pytest "$1" --collect-only -q 2>/dev/null
+            elif command -v pytest >/dev/null 2>&1; then pytest "$1" --collect-only -q 2>/dev/null
+            elif command -v uv >/dev/null 2>&1; then uv run $UV_FROZEN --quiet python -m pytest "$1" --collect-only -q 2>/dev/null
+            fi
+          }
+          for f in $py_tests; do
+            names=$(git diff "$root" HEAD -- "$f" 2>/dev/null | grep -E '^\+' | grep -oE 'def[[:space:]]+test_[A-Za-z0-9_]+' | sed -E 's/^def[[:space:]]+//' | sort -u)
+            [ -z "$names" ] && continue
+            collected=$(py_collect "$f")
+            for n in $names; do
+              matched=$(printf '%s\n' "$collected" | awk -F'::' -v n="$n" 'NF>=2{seg=$NF; if (seg==n || index(seg, n"[")==1) print}')
+              # Keep node-ids NEWLINE-delimited: a parametrized id may contain a space or
+              # a quote and must survive as ONE argument (#844).
+              if [ -n "$matched" ]; then
+                targets=$(printf '%s\n%s' "$targets" "$matched")
+              else
+                targets=$(printf '%s\n%s' "$targets" "$f::$n")
+              fi
+            done
+          done
+          p2p_py=$(printf '%s\n' "$p2p" | grep -E '\.py::' || true)
+          nodeids=$(printf '%s\n%s\n' "$targets" "$p2p_py" | grep -vE '^[[:space:]]*$' | sort -u)
+          echo "TARGET (F2P): $targets"
+          echo "PASS_TO_PASS (py): $p2p_py"
+          echo "node-ids to run: $(printf '%s' "$nodeids" | tr '\n' ' ')"
+          if [ -z "$targets" ]; then
+            echo 'no ADDED-test TARGET detected -> regression-unknown (deny by default; never a bare PASS_TO_PASS pass)'
+            marker=regression-unknown
+          else
+            printf '%s\n' "$nodeids" > .tracker/py-nodeids.txt
+            set --
+            while IFS= read -r _id; do
+              [ -n "$_id" ] && set -- "$@" "$_id"
+            done < .tracker/py-nodeids.txt
+            if [ "$#" -eq 0 ]; then
+              echo 'no resolved python node-ids -> regression-unknown (never run the whole suite)'
+              marker=regression-unknown
+            elif [ -n "$PY" ]; then
+              "$PY" -m pytest -p no:cacheprovider -q "$@" && marker=regression-pass || marker=regression-fail
+            elif command -v pytest >/dev/null 2>&1; then
+              pytest -p no:cacheprovider -q "$@" && marker=regression-pass || marker=regression-fail
+            elif command -v uv >/dev/null 2>&1; then
+              uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -q "$@" && marker=regression-pass || marker=regression-fail
+            else
+              echo 'no python runner available'; marker=regression-unknown
+            fi
+          fi
+        elif [ -f go.mod ] && [ -n "$go_tests" ]; then
+          marker=regression-pass
+          ran_target=0
+          pkgs=$(for f in $go_tests; do dirname "$f"; done | sort -u)
+          for d in $pkgs; do
+            add=""
+            for f in $go_tests; do
+              [ "$(dirname "$f")" = "$d" ] || continue
+              a=$(git diff "$root" HEAD -- "$f" 2>/dev/null | grep -E '^\+func[[:space:]]+Test[A-Za-z0-9_]+' | sed -E 's/^\+func[[:space:]]+(Test[A-Za-z0-9_]+).*/\1/' | sort -u)
+              add="$add $a"
+            done
+            p2p_names=$(printf '%s\n' "$p2p" | awk -F:: -v d="$d" '$1==d{print $2}' | sort -u)
+            allnames=$(printf '%s %s' "$add" "$p2p_names" | tr ' ' '\n' | grep -vE '^[[:space:]]*$' | sort -u)
+            [ -z "$allnames" ] && continue
+            printf '%s' "$add" | grep -q 'Test' && { ran_target=1; targets="$targets $add"; }
+            pat=$(printf '%s\n' "$allnames" | paste -sd'|' -)
+            echo "--- go test ./$d -run ^(${pat})\$ (TARGET + PASS_TO_PASS) ---"
+            go test "./$d" -run "^(${pat})\$" -v 2>&1 || marker=regression-fail
+          done
+          if [ "$marker" != regression-fail ] && [ "$ran_target" -eq 0 ]; then
+            echo 'no ADDED-test TARGET detected -> regression-unknown (deny by default)'
+            marker=regression-unknown
+          fi
+        elif [ -f package.json ] && [ -n "$js_tests" ]; then
+          echo '--- npm test (targeted spec files + PASS_TO_PASS neighbours) ---'
+          marker=regression-pass
+          ran_target=0
+          # An ADDED test CASE (it(...)/test(...)) in a changed spec is the TARGET; a bare
+          # spec-file path change admits NOTHING (mirrors the go/rust ADDED-test guard, §1.8).
+          for f in $js_tests; do
+            git diff "$root" HEAD -- "$f" 2>/dev/null | grep -qE '^\+.*\b(it|test)[[:space:]]*\(' \
+              && { ran_target=1; targets="$targets $f"; }
+          done
+          # PASS_TO_PASS: spec files the baseline reported green PRE-fix (captured file-granular),
+          # re-run alongside the target so a fix that breaks a sibling spec is caught.
+          p2p_js=$(printf '%s\n' "$p2p" | grep -E '^js::' | sed 's/^js:://' || true)
+          run_specs=$(printf '%s\n%s\n' "$js_tests" "$p2p_js" | grep -vE '^[[:space:]]*$' | sort -u)
+          if [ "$ran_target" -eq 1 ]; then
+            echo "TARGET (F2P): $targets"
+            echo "PASS_TO_PASS (js): $p2p_js"
+            npm test -- $run_specs 2>&1 || marker=regression-fail
+          fi
+          if [ "$marker" != regression-fail ] && [ "$ran_target" -eq 0 ]; then
+            echo 'no ADDED-test TARGET detected -> regression-unknown (deny by default)'
+            marker=regression-unknown
+          fi
+        elif [ -f Cargo.toml ] && [ -n "$rust_tests" ]; then
+          marker=regression-pass
+          ran_target=0
+          rust_targets=$(git diff "$root" HEAD -- '*.rs' 2>/dev/null \
+            | grep -A3 -E '^\+[[:space:]]*#\[(test|tokio::test|rstest)' \
+            | grep -E '^\+[[:space:]]*(async[[:space:]]+)?fn[[:space:]]+' \
+            | sed -E 's/^\+[[:space:]]*(async[[:space:]]+)?fn[[:space:]]+([A-Za-z0-9_]+).*/\2/' | sort -u)
+          if [ -n "$rust_targets" ]; then
+            ran_target=1
+            for t in $rust_targets; do
+              targets="$targets $t"
+              echo "--- cargo test $t (TARGET) ---"
+              cargo test "$t" 2>&1 || marker=regression-fail
+            done
+          fi
+          if [ "$marker" != regression-fail ] && [ "$ran_target" -eq 0 ]; then
+            echo 'no ADDED #[test] TARGET detected -> regression-unknown (deny by default)'
+            marker=regression-unknown
+          fi
+        else
+          echo 'no committed target test / unknown build system -> not gating'
+          marker=regression-unknown
+        fi
+      } >>.tracker/regression-evidence.txt 2>&1
+      cat .tracker/regression-evidence.txt >&2
+
+      # DELIVERY NOTE — written HERE, by the gate, from the gate's own result. The
+      # delivery agent may not write a verification claim; it can only copy this one.
+      # Deny by default: the DRAFT text is written first and only a green oracle
+      # replaces it.
+      {
+        echo 'DRAFT — NOT VERIFIED'
+        echo
+        echo "The verification gate ran and did NOT return a green result (marker: $marker)."
+        if [ "$marker" = regression-unknown ]; then
+          echo "It could not identify a specific added test to run, so nothing here is"
+          echo "backed by a passing reproduction. Do not treat this change as verified."
+        else
+          echo "The reproduction test and/or a previously-passing neighbour is still failing."
+        fi
+        echo
+        echo 'Full test output: .tracker/regression-evidence.txt'
+      } > .tracker/DELIVERY-NOTE.md
+      if [ "$marker" = regression-pass ]; then
+        n_p2p=$(printf '%s\n' "$nodeids" | grep -cvE '^[[:space:]]*$')
+        {
+          echo 'VERIFIED — by the project'"'"'s own tests, run by the pipeline'
+          echo
+          echo 'Reproduction target(s) — these FAILED on the unfixed code and PASS with this change:'
+          printf '%s\n' "$targets" | grep -vE '^[[:space:]]*$' | sed 's/^/  - /'
+          echo
+          echo "Also re-run: every test that passed alongside them before the fix ($n_p2p node-ids"
+          echo 'in total, listed in .tracker/py-nodeids.txt). All still pass.'
+          echo
+          echo 'Scope of this claim: ONLY those node-ids were run. This is a targeted check, not a'
+          echo 'full-suite green, and pre-existing failures elsewhere were neither fixed nor masked.'
+          echo
+          echo 'Full test output: .tracker/regression-evidence.txt'
+        } > .tracker/DELIVERY-NOTE.md
       fi
 
-  agent FinalVerification
-    label: "Final Verification (Opus)"
-    fidelity: summary:high
-    goal_gate: true
+      # Fix budget: one retry on a red oracle, then stop and deliver an honest draft.
+      out="$marker"
+      if [ "$marker" = regression-fail ]; then
+        a=$(cat .tracker/fix-attempts 2>/dev/null || echo 0); a=$((a + 1)); printf '%s' "$a" > .tracker/fix-attempts
+        [ "$a" -ge 2 ] && out=regression-stop
+      fi
+      printf '%s' "$out"
+
+  agent Deliver
+    label: "Deliver"
     max_retries: 3
-    retry_target: FixBug
+    retry_target: Deliver
     prompt:
       You are working in `run.working_dir`.
 
-      ## Role
-      You are performing the final quality check before shipping a bug fix.
+      `.tracker/DELIVERY-NOTE.md` holds the verification verdict. A gate wrote it, not you.
+      You may not edit it, soften it, summarize it, or contradict it. Leave it in place —
+      the host reads it to decide whether the PR opens as a DRAFT or ready for review.
 
-      ## IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
-      Run commands. Read output. Check exit codes. THEN make claims.
+      Your job is only to COMMIT the work and push it to the run's own remote. You have
+      `git` and `curl` and nothing else: there is no `gh`, and this sandbox holds no GitHub
+      credentials by design. The HOST opens the pull request, off the branch you push.
 
-      ## Context
-      1. Read docs/bug-hunt/bug-report.md — original bug description
-      2. Read docs/bug-hunt/diagnosis.md — root cause analysis
-      3. Run: git log --oneline to see all commits in this bug fix
-      4. Run: git diff main...HEAD (or from first commit) to see all changes
+      1. Get the work onto a branch: `git checkout -b fix/<short-slug>` (skip if you are
+         already off main/master). Commit anything still uncommitted.
+      2. If `git remote` is empty: print the branch name, `git log --oneline`, the diffstat,
+         and the note. That is the delivery.
+      3. Otherwise: `git push -u origin HEAD`. Do NOT try to open a PR yourself and do NOT
+         run `gh` — the host opens the PR from the pushed branch, and the DELIVERY-NOTE you
+         left drives whether it is a DRAFT.
 
-      ## Verification Checklist
-      1. **Bug is fixed:** The reproduction test passes
-      2. **No regressions:** All pre-existing tests still pass
-      3. **Root cause addressed:** The fix targets the root cause, not just the symptom
-      4. **Minimal change:** Only the necessary code was modified
-      5. **Test quality:** The reproduction test would catch this bug if it were reintroduced
-      6. **Code quality:** The fix is clean, readable, follows codebase conventions
-      7. **Documentation:** If the bug revealed a non-obvious design constraint, is it documented in a code comment?
-
-      ## Run Tests
-      Run the full test suite one final time. Read every line of output.
-
-      ## Output
-      outcome=success — PASS, ready to ship
-      outcome=retry — needs minor fixes (list them with exact file:line references)
-      outcome=fail — fundamental problems with the fix
-
-  agent CreatePR
-    label: "Create Pull Request"
-    goal_gate: true
-    max_retries: 3
-    retry_target: CreatePR
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Task
-      Create a pull request for the bug fix.
-
-      ## Process
-      1. Ensure we are on a feature branch:
-         - If on main/master, create a branch:
-           branch_name="fix/$(cat docs/bug-hunt/bug-report.md | grep 'Bug ID' | head -1 | sed 's/.*: *//' | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | head -c 50)"
-           git checkout -b "$branch_name" 2>/dev/null || echo "Already on branch"
-      2. Stage and commit any remaining docs:
-         - git add docs/bug-hunt/
-         - git diff --cached --quiet || git commit -m 'docs(bug): add bug hunt documentation'
-      3. If no remote is configured (git remote | head -1 is empty):
-         - Log: 'No remote configured — skipping PR creation'
-         - Report: branch name, commit count, and summary of the fix
-         - outcome=success (fix is complete, just no remote to push to)
-      4. If remote exists:
-         a. git push -u origin HEAD
-         b. Generate PR title and body:
-            - Title: 'fix(<scope>): <one-line bug description>' (under 70 chars)
-            - Body should include:
-              * Bug description (from bug-report.md)
-              * Root cause (from diagnosis.md)
-              * What was changed
-              * How it was tested
-              * Link to original issue if available
-         c. Create PR: gh pr create --title '<title>' --body '<body>'
-         d. Report the PR URL
-
-      ## Output
-      outcome=success if PR created or no remote (fix is done)
-      outcome=fail if push or PR creation fails
-
-  agent DebugInvestigate
-    label: "Debug Investigation"
-    fidelity: full
-    goal_gate: true
-    max_retries: 2
-    retry_target: ReplanFix
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Role
-      You are a senior debugger. The fix attempt has failed multiple times. Perform deep root cause analysis.
-
-      ## IRON LAW: NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
-
-      ## Context
-      The bug fix for the issue described in docs/bug-hunt/diagnosis.md has failed after multiple attempts.
-
-      ## Phase 1: What Went Wrong
-      1. Read error messages carefully — full stack traces, line numbers
-      2. Run the failing tests with maximum verbosity
-      3. Check git log --oneline -10 to see what was tried
-      4. Diff current state against the pre-fix state
-
-      ## Phase 2: Pattern Analysis
-      1. Is the fix addressing the right root cause?
-      2. Are there additional contributing factors not identified in the diagnosis?
-      3. Is the bug in a different layer than expected (e.g., database vs application)?
-      4. Check for hidden state, race conditions, or order-dependent behavior
-
-      ## Phase 3: Course Correction
-      1. If the diagnosis was wrong: update docs/bug-hunt/diagnosis.md with the correct root cause
-      2. If the fix approach was wrong: document why and propose an alternative
-      3. Write a NEW failing test if the original reproduction test was insufficient
-      4. Attempt the fix with the corrected understanding
-
-      ## CRITICAL: >= 3 failed attempts means WRONG DIAGNOSIS
-      If multiple fix attempts fail, the original diagnosis is likely wrong.
-      Go back to first principles — the bug may not be where you think it is.
-
-      ## VERIFICATION GATE
-      Run tests. Read output. Check exit codes. THEN make claims.
-
-      ## Output
-      outcome=success if root cause re-identified and fix applied
-      outcome=fail if unable to resolve — needs replanning
-
-  agent ReplanFix
-    label: "Replan Fix Strategy"
-    goal_gate: true
-    max_retries: 1
-    retry_target: FailureSummary
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Task
-      The bug fix has failed both implementation and debugging. Rethink the approach entirely.
-
-      ## Context
-      1. Read docs/bug-hunt/bug-report.md for the original bug
-      2. Read docs/bug-hunt/diagnosis.md for the (possibly wrong) diagnosis
-      3. Read git log --oneline -10 to see what was tried
-
-      ## Process
-      1. Revert all failed fix attempts:
-         - Find the commit before fix attempts began
-         - git revert or git reset as appropriate
-         - Keep the reproduction test (it should still fail)
-      2. Reconsider the diagnosis:
-         - Is the bug where we think it is?
-         - Could it be a configuration issue, not a code issue?
-         - Could it be in a dependency, not our code?
-      3. Try a completely different fix strategy:
-         - If previous fix was surgical, try a broader refactor
-         - If previous fix was broad, try a more targeted change
-         - If previous fix was in module A, investigate module B
-      4. Document the new strategy in docs/bug-hunt/diagnosis.md
-      5. Reset the .tracker/fix_attempt_count to allow new attempts
-
-      ## Output
-      outcome=success if new strategy identified and ready to retry
-      outcome=fail if the problem is genuinely beyond automated fixing
-
-  agent FailureSummary
-    label: "Failure Summary"
-    goal_gate: true
-    max_retries: 3
-    retry_target: FailureSummary
-    prompt:
-      You are working in `run.working_dir`.
-
-      ## Task
-      The bug hunt pipeline could not fix this bug autonomously. Write a comprehensive failure report.
-
-      ## Process
-      1. Read all docs/bug-hunt/ files for context
-      2. Read git log to see what was attempted
-      3. Summarize:
-         - What the bug is
-         - What was tried and why it failed
-         - What the most likely root cause is (even if unconfirmed)
-         - What a human engineer should try next
-         - Whether the reproduction test is still useful
-
-      ## Output
-      Write to docs/bug-hunt/failure-summary.md with sections:
-      - **Bug:** one-sentence summary
-      - **Attempts:** what was tried (with commit hashes)
-      - **Best Hypothesis:** most likely root cause
-      - **Recommended Next Steps:** concrete actions for a human
-      - **Reproduction Test:** location and whether it still captures the bug
-
-      Commit: git add docs/bug-hunt/ && git commit -m 'docs(bug): add failure summary for manual follow-up'
+      Write no verification claim of your own anywhere. The note is the only one.
 
   edges
-    Start -> ReadBugReport
-    ReadBugReport -> ExploreCodebase
-    ExploreCodebase -> ReproduceBug
-    ReproduceBug -> CheckReproduced
-    CheckReproduced -> ReproduceBug  when ctx.tool_stdout = no_test_committed  label: "no test committed"  restart: true
-    CheckReproduced -> AskForMoreContext  label: "cannot reproduce"
-    CheckReproduced -> DiagnoseRootCause  label: "bug reproduced"  weight: 2
-    AskForMoreContext -> ReproduceBug  when ctx.outcome = success  label: "retry with more context"  weight: 2  restart: true
-    AskForMoreContext -> FailureSummary  label: "truly stuck"
-    DiagnoseRootCause -> FixBug
-    FixBug -> VerifyFix
-    VerifyFix -> CheckFixValid  label: "fix rejected"
-    VerifyFix -> RegressionTest  label: "fix verified"  weight: 2
-    CheckFixValid -> FixBug  when ctx.tool_stdout = budget_ok  label: "retry fix"  weight: 2  restart: true
-    CheckFixValid -> DebugInvestigate  label: "too many attempts"
-    RegressionTest -> FixBug  when ctx.tool_stdout != regression-pass and ctx.tool_stdout != regression-unknown  label: "regression fail"  restart: true
-    RegressionTest -> FinalVerification  when ctx.tool_stdout = regression-unknown  label: "unknown build system"
-    RegressionTest -> FinalVerification  label: "regression pass"  weight: 2
-    FinalVerification -> FixBug  when ctx.outcome = retry  label: "needs minor fixes"  restart: true
-    FinalVerification -> FailureSummary  when ctx.outcome = fail  label: "fundamental problems"
-    FinalVerification -> CreatePR  label: approved  weight: 2
-    CreatePR -> FailureSummary  when ctx.outcome != success  label: "PR failed"
-    CreatePR -> Exit  label: shipped  weight: 2
-    FixBug -> DebugInvestigate  when ctx.outcome = fail  label: "retries exhausted"
-    DebugInvestigate -> FixBug  when ctx.outcome = success  label: re-diagnosed  weight: 2  restart: true
-    DebugInvestigate -> ReplanFix  label: "cannot fix"
-    ReplanFix -> FixBug  when ctx.outcome = success  label: "new strategy"  weight: 2  restart: true
-    ReplanFix -> FailureSummary  label: stuck
-    FailureSummary -> Exit
+    Start -> EnsureEnv
+    EnsureEnv -> Understand  when ctx.tool_marker = env-ready  label: "env ready"
+    EnsureEnv -> Deliver  label: "env bootstrap failed -> honest draft"
+    Understand -> Reproduce
+    Reproduce -> Baseline
+    Baseline -> Fix  when ctx.tool_marker = reproduced  label: "reproduction confirmed"
+    Baseline -> Reproduce  when ctx.tool_marker = retry_repro  label: "no failing test yet"  restart: true
+    Baseline -> Deliver  label: "no reproduction -> honest draft"
+    Fix -> Verify
+    Verify -> Deliver  when ctx.tool_marker = regression-pass  label: "oracle green"  weight: 2
+    Verify -> Fix  when ctx.tool_marker = regression-fail  label: "oracle red, budget left"  restart: true
+    Verify -> Deliver  label: "no green oracle -> honest draft"
+    Deliver -> Exit

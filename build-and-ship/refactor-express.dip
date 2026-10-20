@@ -1,5 +1,6 @@
 workflow refactor_express
   goal: "Given a refactoring spec (extract module, migrate API, replace dependency, restructure), analyze the existing codebase, create an incremental refactoring plan where tests pass at every step, execute each step with TDD discipline, verify green after each step, and create a PR."
+  # category: Change existing code
   requires: git
   start: Start
   exit: Exit
@@ -7,7 +8,7 @@ workflow refactor_express
   defaults
     max_retries: 2
     fidelity: summary:high
-    max_restarts: 30
+    max_restarts: 5
 
   tool Start
     label: Start
@@ -123,33 +124,83 @@ workflow refactor_express
   tool SnapshotTests
     label: "Snapshot Test Baseline"
     marker_grep: '^(baseline_green|baseline_red)$'
-    timeout: 2m
+    timeout: 6m
     command:
       #!/bin/sh
-      set -eu
-      mkdir -p docs/plans
-      echo '=== Capturing test baseline ===' > docs/plans/test-baseline.txt
-      if [ -f pyproject.toml ]; then
-        echo 'build_system=python' >> docs/plans/test-baseline.txt
-        uv run pytest -v 2>&1 | tee -a docs/plans/test-baseline.txt
-        RESULT=$?
-      elif [ -f package.json ]; then
-        echo 'build_system=node' >> docs/plans/test-baseline.txt
-        npm test 2>&1 | tee -a docs/plans/test-baseline.txt
-        RESULT=$?
-      elif [ -f go.mod ]; then
-        echo 'build_system=go' >> docs/plans/test-baseline.txt
-        go test -v ./... 2>&1 | tee -a docs/plans/test-baseline.txt
-        RESULT=$?
-      elif [ -f Cargo.toml ]; then
-        echo 'build_system=rust' >> docs/plans/test-baseline.txt
-        cargo test 2>&1 | tee -a docs/plans/test-baseline.txt
-        RESULT=$?
-      else
-        echo 'build_system=unknown' >> docs/plans/test-baseline.txt
-        RESULT=1
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # BASELINE CAPTURE — the refactor oracle's first half. A refactor's invariant is
+      # "no behavior change", so the correct oracle is the set of tests that ALREADY PASS
+      # on the pre-refactor code (PASS_TO_PASS, #838/#843/#844). This is the ONLY node
+      # that runs the whole suite, and only to OBSERVE which node-ids pass — it records
+      # them to .tracker/pass_to_pass.txt. Pre-existing failures are never recorded, so
+      # every later gate ignores them by construction; no whole-suite green/red is ever a
+      # GATE verdict downstream. Interpreter is project-local (.venv -> venv -> PATH
+      # pytest -> uv), never a version literal; vendored paths are excluded from capture.
+      #
+      # The old body piped `uv run $UV_FROZEN pytest -v | tee` under `set -eu` WITHOUT pipefail, so
+      # RESULT captured tee's exit (always 0) and the marker was ALWAYS baseline_green —
+      # the characterization safety net silently never ran. Capturing per-test PASS
+      # node-ids from command substitution (no pipe to a downstream tee) removes that
+      # failure mode entirely: $? is the runner's own exit. Only the marker hits stdout.
+      set -u
+      mkdir -p docs/plans .tracker
+      : > .tracker/pass_to_pass.txt
+      printf 'red' > .tracker/baseline-suite
+      BL=docs/plans/test-baseline.txt
+      echo '=== Capturing PASS_TO_PASS baseline (pre-refactor green set) ===' > "$BL"
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+      PY=""
+      if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+      elif [ -x venv/bin/python ]; then PY=venv/bin/python
       fi
-      if [ "$RESULT" -eq 0 ]; then
+      if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; then
+        echo 'build_system=python' >> "$BL"
+        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -v 2>&1); rc=$?
+        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -v 2>&1); rc=$?
+        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -v 2>&1); rc=$?
+        else out=''; rc=127; fi
+        printf '%s\n' "$out" >> "$BL"
+        printf '%s\n' "$out" | grep -E ' PASSED' | awk '{print $1}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
+      elif [ -f go.mod ]; then
+        echo 'build_system=go' >> "$BL"
+        rc=0
+        pkgs=$(go list ./... 2>>"$BL" || true)
+        for p in $pkgs; do
+          d=$(go list -f '{{.Dir}}' "$p" 2>/dev/null)
+          rel=${d#"$PWD/"}; [ "$rel" = "$d" ] && rel="$p"
+          o=$(go test "$p" -v -run . 2>&1); prc=$?
+          printf '%s\n' "$o" >> "$BL"
+          [ "$prc" -ne 0 ] && rc=1
+          printf '%s\n' "$o" | awk -v d="$rel" '/^--- PASS: /{print d"::"$3}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        done
+        [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
+      elif [ -f Cargo.toml ]; then
+        echo 'build_system=rust' >> "$BL"
+        out=$(cargo test 2>&1); rc=$?
+        printf '%s\n' "$out" >> "$BL"
+        printf '%s\n' "$out" | sed -nE 's/^test ([A-Za-z0-9_:]+) \.\.\. ok$/\1/p' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
+      elif [ -f package.json ]; then
+        echo 'build_system=node' >> "$BL"
+        # JS per-test node-id capture is not reliable across runners, so record only the
+        # whole-suite green flag. With no captured node-ids the downstream oracle denies
+        # by default (an honest "cannot verify per-test") rather than gating a ship on a
+        # forbidden whole-suite `npm test` verdict.
+        if npm test >>"$BL" 2>&1; then printf 'green' > .tracker/baseline-suite; fi
+      else
+        echo 'build_system=unknown' >> "$BL"
+      fi
+      captured=$(grep -cvE '^[[:space:]]*$' .tracker/pass_to_pass.txt 2>/dev/null || echo 0)
+      suite=$(cat .tracker/baseline-suite 2>/dev/null || echo red)
+      echo "captured PASS_TO_PASS node-ids: $captured; whole-suite baseline: $suite" >> "$BL"
+      # baseline_green when there is a safety net to protect: a non-empty PASS_TO_PASS set
+      # OR a fully-green suite. Otherwise baseline_red -> write characterization tests to
+      # CREATE that net before touching the code.
+      if [ "$captured" -gt 0 ] || [ "$suite" = green ]; then
         printf 'baseline_green'
       else
         printf 'baseline_red'
@@ -207,26 +258,62 @@ workflow refactor_express
   tool VerifyCharacterization
     label: "Verify Characterization Tests"
     marker_grep: '^(tests_green|tests_red)$'
-    timeout: 2m
+    timeout: 6m
     command:
       #!/bin/sh
-      set -eu
-      if [ -f pyproject.toml ]; then
-        uv run pytest -v 2>&1
-        RESULT=$?
-      elif [ -f package.json ]; then
-        npm test 2>&1
-        RESULT=$?
-      elif [ -f go.mod ]; then
-        go test -v ./... 2>&1
-        RESULT=$?
-      elif [ -f Cargo.toml ]; then
-        cargo test 2>&1
-        RESULT=$?
-      else
-        RESULT=1
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # The characterization tests just written ARE the new PASS_TO_PASS baseline, so
+      # this RE-CAPTURES the passing set (identical logic to SnapshotTests) rather than
+      # demanding a whole-suite green. The old body ran `uv run $UV_FROZEN pytest -v` over the WHOLE
+      # suite and looped unboundedly whenever ANY pre-existing, refactor-independent test
+      # was red — a red the characterization step can never fix. Now: capture the now-
+      # passing node-ids (ignoring pre-existing failures) and advance the moment we have a
+      # non-empty net. Project-local interpreter; vendored excluded; marker-only stdout.
+      set -u
+      mkdir -p docs/plans .tracker
+      : > .tracker/pass_to_pass.txt
+      printf 'red' > .tracker/baseline-suite
+      BL=docs/plans/test-baseline.txt
+      echo '=== Re-capturing PASS_TO_PASS after characterization tests ===' >> "$BL"
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+      PY=""
+      if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+      elif [ -x venv/bin/python ]; then PY=venv/bin/python
       fi
-      if [ "$RESULT" -eq 0 ]; then
+      if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f tox.ini ]; then
+        if [ -n "$PY" ]; then out=$("$PY" -m pytest -p no:cacheprovider -v 2>&1); rc=$?
+        elif command -v pytest >/dev/null 2>&1; then out=$(pytest -p no:cacheprovider -v 2>&1); rc=$?
+        elif command -v uv >/dev/null 2>&1; then out=$(uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -v 2>&1); rc=$?
+        else out=''; rc=127; fi
+        printf '%s\n' "$out" >> "$BL"
+        printf '%s\n' "$out" | grep -E ' PASSED' | awk '{print $1}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
+      elif [ -f go.mod ]; then
+        rc=0
+        pkgs=$(go list ./... 2>>"$BL" || true)
+        for p in $pkgs; do
+          d=$(go list -f '{{.Dir}}' "$p" 2>/dev/null)
+          rel=${d#"$PWD/"}; [ "$rel" = "$d" ] && rel="$p"
+          o=$(go test "$p" -v -run . 2>&1); prc=$?
+          printf '%s\n' "$o" >> "$BL"
+          [ "$prc" -ne 0 ] && rc=1
+          printf '%s\n' "$o" | awk -v d="$rel" '/^--- PASS: /{print d"::"$3}' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        done
+        [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
+      elif [ -f Cargo.toml ]; then
+        out=$(cargo test 2>&1); rc=$?
+        printf '%s\n' "$out" >> "$BL"
+        printf '%s\n' "$out" | sed -nE 's/^test ([A-Za-z0-9_:]+) \.\.\. ok$/\1/p' | grep -vE "$vendor_re" >> .tracker/pass_to_pass.txt 2>/dev/null || true
+        [ "$rc" -eq 0 ] && printf 'green' > .tracker/baseline-suite
+      elif [ -f package.json ]; then
+        if npm test >>"$BL" 2>&1; then printf 'green' > .tracker/baseline-suite; fi
+      fi
+      captured=$(grep -cvE '^[[:space:]]*$' .tracker/pass_to_pass.txt 2>/dev/null || echo 0)
+      suite=$(cat .tracker/baseline-suite 2>/dev/null || echo red)
+      if [ "$captured" -gt 0 ] || [ "$suite" = green ]; then
         printf 'tests_green'
       else
         printf 'tests_red'
@@ -358,6 +445,7 @@ workflow refactor_express
 
   tool ValidatePlanFormat
     label: "Validate Plan Format"
+    marker_grep: '^(format_ok|fail_retries_exhausted|fail_no_plan|fail_no_steps|fail_too_few_steps)$'
     timeout: 10s
     command:
       #!/bin/sh
@@ -390,6 +478,7 @@ workflow refactor_express
 
   tool PickNextStep
     label: "Pick Next Step"
+    marker_grep: '^(next_step-.*|all_complete|no_steps_found)$'
     timeout: 10s
     command:
       #!/bin/sh
@@ -492,33 +581,83 @@ workflow refactor_express
 
   tool VerifyGreen
     label: "Verify Tests Green"
-    timeout: 2m
+    timeout: 4m
     command:
       #!/bin/sh
-      set -eu
-      STEP=$(cat docs/plans/current_step_id.txt 2>/dev/null || echo 'unknown')
-      echo "=== Verifying tests green after $STEP ==="
-      if [ -f pyproject.toml ]; then
-        uv run pytest -v 2>&1
-        RESULT=$?
-      elif [ -f package.json ]; then
-        npm test 2>&1
-        RESULT=$?
-      elif [ -f go.mod ]; then
-        go test -v ./... 2>&1
-        RESULT=$?
-      elif [ -f Cargo.toml ]; then
-        cargo test 2>&1
-        RESULT=$?
-      else
-        echo 'Unknown build system'
-        RESULT=1
-      fi
-      if [ "$RESULT" -eq 0 ]; then
-        printf 'green'
-      else
-        printf 'red'
-      fi
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # PER-STEP REFACTOR ORACLE — re-run ONLY the PASS_TO_PASS node-ids captured before
+      # the refactor (.tracker/pass_to_pass.txt). Behavior preservation means every one
+      # still passes; pre-existing failures were never captured, so they are ignored by
+      # construction (#838/#843). The whole suite (`pytest -v` / `go test ./...` /
+      # `cargo test` / `npm test`) is never the gate. Project-local interpreter; vendored
+      # excluded. Only the marker reaches stdout; all test output goes to stderr.
+      set -u
+      mkdir -p .tracker
+      EV=.tracker/verify-evidence.txt
+      : > "$EV"
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+      result=pass
+      ran=0
+      {
+        STEP=$(cat docs/plans/current_step_id.txt 2>/dev/null || echo 'unknown')
+        echo "=== Verifying PASS_TO_PASS still green after $STEP ==="
+        p2p=$(grep -vE '^[[:space:]]*$' .tracker/pass_to_pass.txt 2>/dev/null | grep -vE "$vendor_re" | sort -u || true)
+        if [ -z "$p2p" ]; then
+          echo 'no PASS_TO_PASS baseline captured -> unknown (step not blocked; the ship gate denies by default)'
+          result=unknown
+        else
+          PY=""
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+          elif [ -x venv/bin/python ]; then PY=venv/bin/python; fi
+          py=$(printf '%s\n' "$p2p" | grep -E '\.py::' || true)
+          rest=$(printf '%s\n' "$p2p" | grep -vE '\.py::' | grep -E '::' || true)
+          if [ -n "$py" ]; then
+            ran=1
+            printf '%s\n' "$py" > .tracker/py-nodeids.txt
+            set --
+            while IFS= read -r _id; do [ -n "$_id" ] && set -- "$@" "$_id"; done < .tracker/py-nodeids.txt
+            echo "--- pytest PASS_TO_PASS ($# node-ids) ---"
+            if [ "$#" -eq 0 ]; then :
+            elif [ -n "$PY" ]; then "$PY" -m pytest -p no:cacheprovider -q "$@" || result=fail
+            elif command -v pytest >/dev/null 2>&1; then pytest -p no:cacheprovider -q "$@" || result=fail
+            elif command -v uv >/dev/null 2>&1; then uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -q "$@" || result=fail
+            else echo 'no python runner available'; [ "$result" = pass ] && result=unknown; fi
+          fi
+          if [ -n "$rest" ] && [ -f go.mod ]; then
+            ran=1
+            for d in $(printf '%s\n' "$rest" | awk -F:: '{print $1}' | sort -u); do
+              names=$(printf '%s\n' "$rest" | awk -F:: -v d="$d" '$1==d{print $2}' | sort -u)
+              [ -z "$names" ] && continue
+              pat=$(printf '%s\n' "$names" | paste -sd'|' -)
+              if [ -d "$d" ]; then tgt="./$d"; else tgt="$d"; fi
+              echo "--- go test $tgt -run ^(${pat})\$ (PASS_TO_PASS) ---"
+              go test "$tgt" -run "^(${pat})\$" -v 2>&1 || result=fail
+            done
+          elif [ -n "$rest" ] && [ -f Cargo.toml ]; then
+            ran=1
+            set --
+            for n in $rest; do set -- "$@" "$n"; done
+            echo "--- cargo test --exact ($# node-ids) ---"
+            cargo test -- --exact "$@" 2>&1 || result=fail
+          fi
+          if [ "$ran" -eq 0 ] && [ "$result" = pass ]; then
+            echo 'baseline present but no runnable py/go/rust node-ids -> unknown'
+            result=unknown
+          fi
+        fi
+      } >>"$EV" 2>&1
+      cat "$EV" >&2
+      # A per-step gate, NOT the ship gate: on `unknown` (no per-test net, e.g. a JS
+      # project) it does not block the step — VerifyTestsFinal denies by default before
+      # any PR. A real regression (`fail`) routes to rollback.
+      case "$result" in
+        pass) printf 'green' ;;
+        fail) printf 'red' ;;
+        *)    printf 'green' ;;
+      esac
 
   tool RollbackStep
     label: "Rollback to Savepoint"
@@ -539,6 +678,7 @@ workflow refactor_express
 
   tool CheckRollbackBudget
     label: "Check Rollback Budget"
+    marker_grep: '^(budget_ok|budget_exhausted)$'
     timeout: 10s
     command:
       #!/bin/sh
@@ -700,42 +840,89 @@ workflow refactor_express
 
   tool ValidateFinalBuild
     label: "Validate Final Build"
-    timeout: 2m
+    timeout: 6m
     command:
       #!/bin/sh
-      set -eu
-      echo '=== Final build validation ==='
-      if [ -f pyproject.toml ]; then
-        echo '--- pytest ---'
-        uv run pytest -v 2>&1 || { echo 'PYTEST_FAIL'; exit 1; }
-        echo '--- ruff ---'
-        uv run ruff check . 2>&1 || { echo 'RUFF_FAIL'; exit 1; }
-        printf 'validation_pass'
-      elif [ -f package.json ]; then
-        echo '--- npm test ---'
-        npm test 2>&1 || { echo 'TEST_FAIL'; exit 1; }
-        echo '--- lint ---'
-        npx eslint . 2>&1 || npx biome check . 2>&1 || echo 'lint-skipped'
-        printf 'validation_pass'
-      elif [ -f go.mod ]; then
-        echo '--- go build ---'
-        go build ./... 2>&1 || { echo 'BUILD_FAIL'; exit 1; }
-        echo '--- go test ---'
-        go test -v ./... 2>&1 || { echo 'TEST_FAIL'; exit 1; }
-        echo '--- go vet ---'
-        go vet ./... 2>&1 || echo 'vet-skipped'
-        printf 'validation_pass'
-      elif [ -f Cargo.toml ]; then
-        echo '--- cargo build ---'
-        cargo build 2>&1 || { echo 'BUILD_FAIL'; exit 1; }
-        echo '--- cargo test ---'
-        cargo test 2>&1 || { echo 'TEST_FAIL'; exit 1; }
-        echo '--- cargo clippy ---'
-        cargo clippy 2>&1 || echo 'clippy-skipped'
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # FINAL BUILD GATE — same PASS_TO_PASS oracle over real world-state (behavior
+      # preservation), never the whole suite. Lint is ADVISORY and SYMMETRIC: ruff, vet,
+      # clippy and eslint findings all go to stderr and NEVER block. The old body treated
+      # `ruff` as FATAL for Python (`|| exit 1`) while vet/clippy were non-fatal — an
+      # asymmetry that let a style nit veto a behavior-preserving refactor. Only the tool
+      # test verdict gates. Deny by default: unknown (no per-test net) is NOT a pass.
+      set -u
+      mkdir -p .tracker
+      EV=.tracker/verify-evidence.txt
+      : > "$EV"
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+      result=pass
+      ran=0
+      {
+        echo '=== Final validation: PASS_TO_PASS oracle ==='
+        p2p=$(grep -vE '^[[:space:]]*$' .tracker/pass_to_pass.txt 2>/dev/null | grep -vE "$vendor_re" | sort -u || true)
+        if [ -z "$p2p" ]; then
+          echo 'no PASS_TO_PASS baseline captured -> unknown (deny by default; never a bare pass)'
+          result=unknown
+        else
+          PY=""
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+          elif [ -x venv/bin/python ]; then PY=venv/bin/python; fi
+          py=$(printf '%s\n' "$p2p" | grep -E '\.py::' || true)
+          rest=$(printf '%s\n' "$p2p" | grep -vE '\.py::' | grep -E '::' || true)
+          if [ -n "$py" ]; then
+            ran=1
+            printf '%s\n' "$py" > .tracker/py-nodeids.txt
+            set --
+            while IFS= read -r _id; do [ -n "$_id" ] && set -- "$@" "$_id"; done < .tracker/py-nodeids.txt
+            echo "--- pytest PASS_TO_PASS ($# node-ids) ---"
+            if [ "$#" -eq 0 ]; then :
+            elif [ -n "$PY" ]; then "$PY" -m pytest -p no:cacheprovider -q "$@" || result=fail
+            elif command -v pytest >/dev/null 2>&1; then pytest -p no:cacheprovider -q "$@" || result=fail
+            elif command -v uv >/dev/null 2>&1; then uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -q "$@" || result=fail
+            else echo 'no python runner available'; [ "$result" = pass ] && result=unknown; fi
+          fi
+          if [ -n "$rest" ] && [ -f go.mod ]; then
+            ran=1
+            echo '--- go build ./... (compile check) ---'
+            go build ./... 2>&1 || result=fail
+            for d in $(printf '%s\n' "$rest" | awk -F:: '{print $1}' | sort -u); do
+              names=$(printf '%s\n' "$rest" | awk -F:: -v d="$d" '$1==d{print $2}' | sort -u)
+              [ -z "$names" ] && continue
+              pat=$(printf '%s\n' "$names" | paste -sd'|' -)
+              if [ -d "$d" ]; then tgt="./$d"; else tgt="$d"; fi
+              echo "--- go test $tgt -run ^(${pat})\$ (PASS_TO_PASS) ---"
+              go test "$tgt" -run "^(${pat})\$" -v 2>&1 || result=fail
+            done
+          elif [ -n "$rest" ] && [ -f Cargo.toml ]; then
+            ran=1
+            echo '--- cargo build (compile check) ---'
+            cargo build 2>&1 || result=fail
+            set --
+            for n in $rest; do set -- "$@" "$n"; done
+            echo "--- cargo test --exact ($# node-ids) ---"
+            cargo test -- --exact "$@" 2>&1 || result=fail
+          fi
+          if [ "$ran" -eq 0 ] && [ "$result" = pass ]; then
+            echo 'baseline present but no runnable py/go/rust node-ids -> unknown'
+            result=unknown
+          fi
+        fi
+        if [ "$result" = pass ]; then
+          echo '--- lint (ADVISORY — never blocks delivery) ---'
+          if [ -f pyproject.toml ] && command -v uv >/dev/null 2>&1; then uv run $UV_FROZEN ruff check . 2>&1 || echo 'ruff: advisory findings (non-blocking)'; fi
+          if [ -f go.mod ]; then go vet ./... 2>&1 || echo 'vet: advisory findings (non-blocking)'; fi
+          if [ -f Cargo.toml ]; then cargo clippy 2>&1 || echo 'clippy: advisory findings (non-blocking)'; fi
+          if [ -f package.json ]; then npx --no-install eslint . 2>&1 || echo 'eslint: advisory/absent (non-blocking)'; fi
+        fi
+      } >>"$EV" 2>&1
+      cat "$EV" >&2
+      if [ "$result" = pass ]; then
         printf 'validation_pass'
       else
-        echo 'Unknown build system'
-        printf 'validation_unknown'
+        printf 'validation_fail'
       fi
 
   agent FinalReview
@@ -788,6 +975,7 @@ workflow refactor_express
 
   tool CheckReworkBudget
     label: "Check Rework Budget"
+    marker_grep: '^(budget_ok|budget_exhausted)$'
     timeout: 10s
     command:
       #!/bin/sh
@@ -872,21 +1060,119 @@ workflow refactor_express
 
   tool VerifyTestsFinal
     label: "Final Test Verification"
-    timeout: 2m
+    timeout: 6m
     command:
       #!/bin/sh
-      set -eu
-      echo '=== Final verification before PR ==='
-      if [ -f pyproject.toml ]; then
-        uv run pytest -v 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
-      elif [ -f package.json ]; then
-        npm test 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
-      elif [ -f go.mod ]; then
-        go test -v ./... 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
-      elif [ -f Cargo.toml ]; then
-        cargo test 2>&1 || { echo 'FINAL_TEST_FAIL'; exit 1; }
+      # A verification step must not MUTATE the thing it verifies: plain `uv run`
+      # re-resolves and rewrites uv.lock, which then lands in the client PR as churn.
+      # --frozen forbids that, but errors when no lockfile exists (greenfield) — so gate it.
+      UV_FROZEN=""; [ -f uv.lock ] && UV_FROZEN="--frozen"
+      # SHIP GATE — the last tool verdict before CreatePR opens a PR. It is a determin-
+      # istic re-run of the PASS_TO_PASS node-ids captured before the refactor, NEVER a
+      # whole-suite `pytest -v` / `go test ./...`. Pre-existing failures are ignored;
+      # every previously-green test must still be green. DENY BY DEFAULT: an empty
+      # baseline (e.g. a JS project with no per-test net) yields `final_verification_fail`
+      # so the pipeline routes to rework/failure rather than opening a PR on an unverified
+      # refactor. Only the marker reaches stdout.
+      set -u
+      mkdir -p .tracker
+      EV=.tracker/verify-evidence.txt
+      : > "$EV"
+      vendor_re='(^|/)(\.venv|venv|node_modules|site-packages|__pycache__|\.tox|\.eggs|\.mypy_cache|\.pytest_cache|\.git|\.cache|\.hypothesis|vendor)/'
+      result=pass
+      ran=0
+      {
+        echo '=== Final verification before PR: PASS_TO_PASS oracle ==='
+        p2p=$(grep -vE '^[[:space:]]*$' .tracker/pass_to_pass.txt 2>/dev/null | grep -vE "$vendor_re" | sort -u || true)
+        if [ -z "$p2p" ]; then
+          echo 'no PASS_TO_PASS baseline captured -> unknown (deny by default; never ship an unverified refactor)'
+          result=unknown
+        else
+          PY=""
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+          elif [ -x venv/bin/python ]; then PY=venv/bin/python; fi
+          py=$(printf '%s\n' "$p2p" | grep -E '\.py::' || true)
+          rest=$(printf '%s\n' "$p2p" | grep -vE '\.py::' | grep -E '::' || true)
+          if [ -n "$py" ]; then
+            ran=1
+            printf '%s\n' "$py" > .tracker/py-nodeids.txt
+            set --
+            while IFS= read -r _id; do [ -n "$_id" ] && set -- "$@" "$_id"; done < .tracker/py-nodeids.txt
+            echo "--- pytest PASS_TO_PASS ($# node-ids) ---"
+            if [ "$#" -eq 0 ]; then :
+            elif [ -n "$PY" ]; then "$PY" -m pytest -p no:cacheprovider -q "$@" || result=fail
+            elif command -v pytest >/dev/null 2>&1; then pytest -p no:cacheprovider -q "$@" || result=fail
+            elif command -v uv >/dev/null 2>&1; then uv run $UV_FROZEN --quiet python -m pytest -p no:cacheprovider -q "$@" || result=fail
+            else echo 'no python runner available'; [ "$result" = pass ] && result=unknown; fi
+          fi
+          if [ -n "$rest" ] && [ -f go.mod ]; then
+            ran=1
+            for d in $(printf '%s\n' "$rest" | awk -F:: '{print $1}' | sort -u); do
+              names=$(printf '%s\n' "$rest" | awk -F:: -v d="$d" '$1==d{print $2}' | sort -u)
+              [ -z "$names" ] && continue
+              pat=$(printf '%s\n' "$names" | paste -sd'|' -)
+              if [ -d "$d" ]; then tgt="./$d"; else tgt="$d"; fi
+              echo "--- go test $tgt -run ^(${pat})\$ (PASS_TO_PASS) ---"
+              go test "$tgt" -run "^(${pat})\$" -v 2>&1 || result=fail
+            done
+          elif [ -n "$rest" ] && [ -f Cargo.toml ]; then
+            ran=1
+            set --
+            for n in $rest; do set -- "$@" "$n"; done
+            echo "--- cargo test --exact ($# node-ids) ---"
+            cargo test -- --exact "$@" 2>&1 || result=fail
+          fi
+          if [ "$ran" -eq 0 ] && [ "$result" = pass ]; then
+            echo 'baseline present but no runnable py/go/rust node-ids -> unknown'
+            result=unknown
+          fi
+        fi
+      } >>"$EV" 2>&1
+      # REFACTOR-REALITY GATE (#878) — deny-by-default: a behaviour-preserving refactor
+      # that ships MUST have changed real PRODUCTION code. "The tests still pass" is
+      # trivially satisfied by doing nothing (or editing only docs): run_a2b461d7 greened
+      # here with its only substantive commit being docs/plans/refactor-*.md while the
+      # production module was never touched — a verified delivery of a no-op. So on TOP of
+      # the PASS_TO_PASS re-run above, require a positive diffstat over base..HEAD on a
+      # non-docs, non-test, non-vendor path. No production diff -> final_verification_fail
+      # (routes to rework, never CreatePR). Never weaken the test check; this only adds.
+      {
+        echo '=== Refactor-reality gate: did the refactor change real production code? (#878) ==='
+        # Baseline (#855/Slice B): mirror internal/runbaseline.Resolve — prefer the run's
+        # recorded start commit (.tracker/base-commit), else fall back to the root commit.
+        # On a real clone the root is hundreds of commits back, so the recorded baseline is
+        # what makes base..HEAD "what THIS run changed" rather than the whole repo history.
+        base=$(tr -d '[:space:]' < .tracker/base-commit 2>/dev/null || true)
+        if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+          base=$(git rev-list --max-parents=0 HEAD 2>/dev/null | tail -1)
+        fi
+        # Same test_re the sibling pipeline (bug-hunter) uses; docs = docs/**, *.md, .tracker/**.
+        test_re='(_test\.[a-z0-9]+|test_[^/]*\.[a-z0-9]+|\.test\.[a-z0-9]+|\.spec\.[a-z0-9]+|_spec\.[a-z0-9]+|(^|/)test[^/]*\.(go|py|js|ts|rs|java|rb|php|kt|swift)|(^|/)tests?/)'
+        doc_re='(^|/)docs/|\.md$|(^|/)\.tracker/'
+        prod_delta=0
+        if [ -n "$base" ]; then
+          # Sum added+deleted lines on production paths only. numstat prints '-' for binary
+          # (non-numeric -> awk skips it, so a lone binary change reads as 0 -> deny: fail closed).
+          prod_delta=$(git diff --numstat "$base" HEAD 2>/dev/null \
+            | grep -vE "$vendor_re" \
+            | grep -viE "$doc_re" \
+            | grep -viE "$test_re" \
+            | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { s += $1 + $2 } END { printf "%d", s+0 }')
+          echo "base=$base  production line-delta (excl docs/tests/vendor)=${prod_delta:-0}"
+        else
+          echo 'no diff base resolvable -> treat as no production change (deny by default)'
+        fi
+        if [ "${prod_delta:-0}" -eq 0 ]; then
+          echo 'refactor produced NO production-code diff (docs/tests/vendor only) -> a no-op is NOT a verified refactor; deny'
+          [ "$result" = pass ] && result=noprod
+        fi
+      } >>"$EV" 2>&1
+      cat "$EV" >&2
+      if [ "$result" = pass ]; then
+        printf 'final_verification_pass'
+      else
+        printf 'final_verification_fail'
       fi
-      printf 'final_verification_pass'
 
   agent CreatePR
     label: "Create Pull Request"
@@ -898,7 +1184,8 @@ workflow refactor_express
       You are working in `run.working_dir`.
 
       ## Task
-      Finalize the refactoring and create a PR.
+      Finalize the refactoring: commit it on a feature branch and push, so the HOST
+      can open the PR. You do NOT open the PR yourself (no `gh`, no credentials here).
 
       ## Process
       1. Ensure we're on a feature branch:
@@ -920,16 +1207,15 @@ workflow refactor_express
 
       6. If remote exists:
          a. git push -u origin HEAD
-         b. Generate PR title: 'refactor: <concise description>' (under 70 chars)
-         c. Generate PR body from:
-            - Refactoring goal (from understanding doc)
-            - Steps completed (from plan)
-            - Test results
-            - Key decisions made during the refactoring
-         d. Create PR: gh pr create --title '<title>' --body '<body>'
-         e. Report the PR URL
+         b. Do NOT try to open a PR yourself and do NOT run `gh` — you have only `git`
+            and `curl`, this sandbox holds no GitHub credentials by design, and the HOST
+            opens the pull request from the branch you push.
+         c. Report the branch name and `git log --oneline main..HEAD` (or master..HEAD)
+            so the host has the change to open.
 
-      ## PR Body Template
+      ## Summary for the host (write to docs/plans/refactor-summary.md, commit it)
+      The host composes the PR body; give it substance to include by committing this
+      summary alongside the change:
       ### Refactoring Summary
       <goal from understanding doc>
 
@@ -944,7 +1230,7 @@ workflow refactor_express
 
   edges
     Start -> ReadRefactorSpec
-    ReadRefactorSpec -> AnalyzeCodebase  label: "spec understood"  weight: 2
+    ReadRefactorSpec -> AnalyzeCodebase  when ctx.outcome = success  label: "spec understood"
     ReadRefactorSpec -> FailureSummary  label: "no spec found"
     AnalyzeCodebase -> SnapshotTests
     SnapshotTests -> PlanRefactor  when ctx.tool_marker = baseline_green  label: "tests green  --  baseline captured"  weight: 2
@@ -953,20 +1239,20 @@ workflow refactor_express
     VerifyCharacterization -> PlanRefactor  when ctx.tool_marker = tests_green  label: "characterization tests green"  weight: 2
     VerifyCharacterization -> WriteCharacterizationTests  label: "still red  --  fix tests"  restart: true
     PlanRefactor -> ValidatePlanFormat
-    ValidatePlanFormat -> ValidatePlan  label: "format ok"  weight: 2
-    ValidatePlanFormat -> AutoRecover  when ctx.tool_stdout = fail_retries_exhausted  label: "plan loop exhausted"
+    ValidatePlanFormat -> ValidatePlan  when ctx.tool_marker = format_ok  label: "format ok"
+    ValidatePlanFormat -> AutoRecover  when ctx.tool_marker = fail_retries_exhausted  label: "plan loop exhausted"
     ValidatePlanFormat -> PlanRefactor  label: "format fail"  restart: true
     ValidatePlan -> PickNextStep  when ctx.outcome = success  label: "plan approved"  weight: 2
     ValidatePlan -> PlanRefactor  label: "issues found  --  revise plan"  restart: true
-    PickNextStep -> CreateSavepoint  label: "has step"  weight: 2
-    PickNextStep -> ValidateFinalBuild  label: "all steps done"
+    PickNextStep -> CreateSavepoint  when ctx.tool_marker startswith next_step-  label: "has step"
+    PickNextStep -> ValidateFinalBuild  when ctx.tool_marker = all_complete  label: "all steps done"
     PickNextStep -> AutoRecover  label: "no steps in plan"
     CreateSavepoint -> ExecuteStep
     ExecuteStep -> VerifyGreen
-    VerifyGreen -> MarkStepDone  label: "tests green"  weight: 2
+    VerifyGreen -> MarkStepDone  when ctx.tool_stdout endswith green  label: "tests green"
     VerifyGreen -> RollbackStep  label: "tests red  --  rollback"
     RollbackStep -> CheckRollbackBudget
-    CheckRollbackBudget -> ExecuteStep  when ctx.tool_stdout = budget_ok  label: "retry step"  weight: 2  restart: true
+    CheckRollbackBudget -> ExecuteStep  when ctx.tool_marker = budget_ok  label: "retry step"  weight: 2  restart: true
     CheckRollbackBudget -> DebugRefactorFailure  label: "too many rollbacks"
     MarkStepDone -> PickNextStep  restart: true
     ExecuteStep -> DebugRefactorFailure  when ctx.outcome = fail  label: "retries exhausted"
@@ -976,17 +1262,17 @@ workflow refactor_express
     ReplanStep -> AutoRecover  label: stuck
     AutoRecover -> PickNextStep  when ctx.outcome = success  label: recovered  weight: 2  restart: true
     AutoRecover -> FailureSummary  label: unrecoverable
-    ValidateFinalBuild -> FinalReview  label: "build pass"  weight: 2
+    ValidateFinalBuild -> FinalReview  when ctx.tool_stdout endswith validation_pass  label: "build pass"
     ValidateFinalBuild -> CheckReworkBudget  label: "build fail"
-    FinalReview -> VerifyTestsFinal  label: "review pass"  weight: 2
-    FinalReview -> FixReviewFindings  label: "needs fixes"
+    FinalReview -> VerifyTestsFinal  when ctx.outcome = success  label: "review pass"
+    FinalReview -> FixReviewFindings  when ctx.outcome = retry  label: "needs fixes"
     FinalReview -> FailureSummary  label: "fundamental problems"
     FixReviewFindings -> FinalReview  when ctx.outcome = success  label: "fixes applied"  weight: 2  restart: true
     FixReviewFindings -> CheckReworkBudget  label: "fix failed"
-    CheckReworkBudget -> FixReviewFindings  label: "rework ok"  weight: 2  restart: true
+    CheckReworkBudget -> FixReviewFindings  when ctx.tool_marker = budget_ok  label: "rework ok"  restart: true
     CheckReworkBudget -> FailureSummary  label: "rework budget exhausted"
     FailureSummary -> Exit
-    VerifyTestsFinal -> CreatePR  label: "tests pass"  weight: 2
+    VerifyTestsFinal -> CreatePR  when ctx.tool_stdout endswith final_verification_pass  label: "tests pass"
     VerifyTestsFinal -> CheckReworkBudget  label: "tests fail"
-    CreatePR -> Exit  label: shipped  weight: 2
+    CreatePR -> Exit  when ctx.outcome = success  label: shipped
     CreatePR -> FailureSummary  label: "PR failed"
