@@ -1,6 +1,9 @@
 workflow bug_hunter
   goal: "Given a bug report, reproduce it with a failing test, fix the root cause, run the GIVEN oracle (that test plus the tests that already passed), and deliver — READY only when the oracle is green, otherwise an honest DRAFT."
   # category: Fix a bug
+  # requires-input: BUG.md | bug.md | ISSUE.md | issue.md
+  # (input contract, tracker-runner#821: a run seeded with none of these fails in ~1s, before any
+  # model call, with "attach a bug report" — instead of the Understand node flailing on nothing.)
   start: Start
   exit: Exit
 
@@ -90,11 +93,12 @@ workflow bug_hunter
     prompt:
       You are working in `run.working_dir`.
 
-      Read BUG.md and anything else here that describes the bug (issue text, error logs,
-      README). Then read the source until you can say what the bug is and where it lives.
+      Read the bug report (BUG.md, bug.md, ISSUE.md or issue.md: whichever exists here)
+      and anything else that describes the bug (error logs, README). Then read the source
+      until you can say what the bug is and where it lives.
 
-      The environment is already pinned. Follow the setup rules BUG.md gives you and use
-      the interpreter it names. Do not build or install the project.
+      The environment is already pinned. Follow the setup rules the bug report gives you
+      and use the interpreter it names. Do not build or install the project.
 
       Write a short docs/bug-hunt/understanding.md: the bug in one sentence, the exact
       command that runs this project's tests, and your best guess at the responsible

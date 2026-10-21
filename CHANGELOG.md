@@ -16,6 +16,13 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `build-and-ship/bug-hunter.dip`: declares an input contract,
+  `# requires-input: BUG.md | bug.md | ISSUE.md | issue.md`. Once tracker-runner
+  ships #821 and bumps its pipelines pin to include this change, it checks the
+  contract before the engine starts: a run seeded without a bug report fails in
+  about a second with "attach a bug report", instead of the Understand node
+  working from nothing. Engines without that support ignore the header, since it
+  is a comment. The Understand prompt reads whichever accepted filename exists.
 - `build-and-ship/idea-to-pr.dip`: turns a free-text idea into a shipped change.
   It writes a reviewable `spec.md`, `plan.md` and `tasks.md` (P1/P2/P3 slices)
   before any code, then builds the P1 slice, validates it deny-by-default (an
