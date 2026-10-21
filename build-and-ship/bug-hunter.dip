@@ -1,6 +1,9 @@
 workflow bug_hunter
   goal: "Given a bug report, reproduce it with a failing test, fix the root cause, run the GIVEN oracle (that test plus the tests that already passed), and deliver — READY only when the oracle is green, otherwise an honest DRAFT."
   # category: Fix a bug
+  # requires-input: BUG.md | bug.md | ISSUE.md | issue.md
+  # (input contract, tracker-runner#821: a run seeded with none of these fails in ~1s, before any
+  # model call, with "attach a bug report" — instead of the Understand node flailing on nothing.)
   start: Start
   exit: Exit
 
