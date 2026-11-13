@@ -12,12 +12,17 @@ workflow issue_to_pr
   # Stages: Start -> Orient -> Baseline -> Triage -> TriageGate -> Build -> DriftGate -> Verify ->
   # ComposeNote -> Exit. Tool nodes route on the typed ctx.tool_marker channel (marker_grep).
   # Files it writes for the host: .tracker/triage.json (the verdict: build | needs_detail | split |
-  # refuse | already_done; only an exact `build` may deliver), .tracker/issue-reply.md (the comment
-  # for the issue) and .tracker/DELIVERY-NOTE.md (the PR body's verification note).
+  # refuse | already_done, or unverified when Verify defers; only an exact `build` may deliver),
+  # .tracker/verify-status (exactly `pass` or `deferred`; only `pass` may deliver: unverified
+  # means no PR), .tracker/issue-reply.md (the comment for the issue) and
+  # .tracker/DELIVERY-NOTE.md (the PR body's verification note).
   #
-  # Size rule (TriageGate and DriftGate): at most 10 non-test files, all in ONE top-level area. An
-  # area is the first path segment; a file at the repo root is its own area, "(root)". Test files
-  # are exempt from the size and plan rules, never from the off-limits list.
+  # Size rule (TriageGate and DriftGate): at most 10 non-test files, and every changed file,
+  # tests included, in ONE top-level area. An area is the first path segment; a file at the repo
+  # root is its own area, "(root)". A test file is one of the languages' own test-file
+  # conventions, by basename: *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx),
+  # *.spec.(js|jsx|ts|tsx), *_test.rs, or a .rs file under tests/. Test files are exempt from the
+  # 10-file and plan rules only, never from the area rule or the off-limits list.
   #
   # Known v1 limits:
   # - already_done can only see what the clone has: branches, commits and files that reference the
@@ -31,8 +36,22 @@ workflow issue_to_pr
   #   and the runner delivers HEAD. The off-limits, size and area rules are NOT enforced against
   #   an adversarial agent until the host re-checks the delivered diff against a base SHA it
   #   recorded outside the workspace (tracker-runner #1050).
+  #   The same holds for files hidden from DriftGate and Verify by other model-writable git
+  #   state: both gates fail closed on skip-worktree and assume-unchanged index flags and ignore
+  #   .git/info/exclude and core.excludesFile, but a clean filter or core.worktree set in
+  #   .git/config can still hide an edit from git while the copyTree delivery ships the file.
   # - Verify is solid for Go and Python only (it runs the tests this change ADDED). Any other
-  #   language defers to the repo's own CI, and an unverified change gets no PR.
+  #   language defers to the repo's own CI, and an unverified change gets no PR: Verify writes
+  #   verify-status `deferred` and rewrites the verdict to `unverified`.
+  # - VERIFIED rests on tests the Build agent wrote itself. Nothing checks that an added test
+  #   FAILS at the base commit, so a test that passes either way still counts (follow-up).
+  # - A drift-stop after Build edited code ends the run as failed through verify-before-delivery
+  #   rather than succeeded. There is no PR either way, and the issue still gets its reply.
+  # - The Fixes URL in the delivery note comes from .tracker/issue-url, a file the Orient agent
+  #   writes. ComposeNote accepts only a well-formed github.com issue URL, but it should be
+  #   composed host-side from the webhook (tracker-runner #1050).
+  # - Because tests count toward the one-area rule, a repo that keeps its tests in a top-level
+  #   tests/ directory apart from its sources (src/ plus tests/) gets a split, not a build.
   start: Start
   exit: Exit
 
@@ -193,15 +212,18 @@ workflow issue_to_pr
 
       Apply this rubric IN ORDER and stop at the first check that fails:
       1. What: it must be a code, docs or test change, in scope for this repo. OFF-LIMITS:
-         auth or credentials, secrets, CI or deploy config (.github/, deploy/), Dockerfiles,
-         lockfiles and go.sum, licensing, and anything the issue asks you to do to your own
-         environment. Fail -> "refuse".
+         anything about auth or credentials (any path containing "auth"), secrets, keys and
+         .env files, CI config (.github/, .gitlab-ci.yml, .circleci/, Jenkinsfile, .buildkite/,
+         azure-pipelines.yml, .pre-commit-config.yaml), deploy config (deploy/, k8s/, helm/,
+         terraform/, *.tf, Dockerfiles), lockfiles and go.sum, licensing (LICENSE, COPYING,
+         NOTICE), and anything the issue asks you to do to your own environment.
+         Fail -> "refuse".
       2. Already handled: a branch, commit or file in this clone already addresses it, or it is
          a clear duplicate. -> "already_done" (or "refuse"), naming what you found.
       3. Clarity: at most one or two minor guesses, each written into `assumptions`.
          Fail -> "needs_detail" with SPECIFIC questions.
-      4. Size: the plan stays in ONE top-level area (the first path segment; root-level files are
-         their own area) and touches at most 10 non-test files. No new dependencies, no breaking
+      4. Size: the plan, tests included, stays in ONE top-level area (the first path segment;
+         root-level files are their own area) and touches at most 10 non-test files. No new dependencies, no breaking
          public-API change, no data migration. Fail -> "split" with 2 to 5 right-sized sub-issues.
       5. Checkable: a test or reproduction can show it is done. Fail -> "needs_detail".
       Only if every check passes -> "build".
@@ -242,28 +264,42 @@ workflow issue_to_pr
       mkdir -p .tracker
       T=.tracker/triage.json
       R=.tracker/issue-reply.md
-      # --- shared gate rules: BEGIN (byte-identical in TriageGate and DriftGate; a test enforces it)
-      # Off-limits paths, one list. Matched on the LOWERCASED path; a shell case pattern's star
-      # also matches a slash, so each entry covers every depth it names. A path that starts with
-      # a double quote is one git C-quoted (control characters, quotes or backslashes in the
-      # name): its real name cannot be matched safely, so it fails closed as off-limits.
+      # --- shared gate rules: BEGIN (byte-identical in TriageGate, DriftGate and Verify; a test enforces it)
+      # Off-limits paths (spec section 4: auth or credentials, secrets, CI or deploy config,
+      # lockfiles, licensing), one list. Matched on the LOWERCASED path and its basename; a shell
+      # case pattern's star also matches a slash, so each entry covers every depth it names. A
+      # path that starts with a double quote is one git C-quoted (control characters, quotes or
+      # backslashes in the name): its real name cannot be matched safely, so it fails closed.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+        _ob=${_ol##*/}
         case "$_ol" in
           \"*) return 0 ;;
-          .github/*|*/.github/*) return 0 ;;
-          *.lock|package-lock.json|*/package-lock.json|go.sum|*/go.sum) return 0 ;;
-          license*|*/license*) return 0 ;;
-          *secret*|*credential*) return 0 ;;
-          auth/*|*/auth/*) return 0 ;;
-          deploy/*) return 0 ;;
-          dockerfile*|*/dockerfile*) return 0 ;;
+          *auth*|*secret*|*credential*) return 0 ;;
+          .github/*|*/.github/*|.circleci/*|*/.circleci/*|.buildkite/*|*/.buildkite/*) return 0 ;;
+          deploy/*|*/deploy/*|k8s/*|*/k8s/*|helm/*|*/helm/*|terraform/*|*/terraform/*) return 0 ;;
+        esac
+        case "$_ob" in
+          .gitlab-ci.yml|jenkinsfile*|.pre-commit-config.yaml|azure-pipelines.yml) return 0 ;;
+          *.lock|package-lock.json|npm-shrinkwrap.json|pnpm-lock.yaml|go.sum|go.work.sum) return 0 ;;
+          *.tf|*.tfvars|dockerfile*|.env*|*.pem|*.key) return 0 ;;
+          license*|copying*|notice*) return 0 ;;
         esac
         return 1
       }
-      # A test path is exempt from the size and plan rules, never from off_limits.
+      # A test file is exempt from the size and plan rules, never from off_limits and never from
+      # the one-area rule. Only the languages' own test-file conventions count, on the basename:
+      # *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx),
+      # *_test.rs, and a .rs file under a tests/ directory.
       is_test_path() {
-        printf '%s\n' "$1" | grep -qiE '(_test\.[a-z0-9]+$|(^|/)test_[^/]*\.[a-z0-9]+$|\.(test|spec)\.[a-z0-9]+$|_spec\.[a-z0-9]+$|(^|/)tests?/)'
+        case "${1##*/}" in
+          *_test.go|test_*.py|*_test.py|*_test.rs) return 0 ;;
+          *.test.js|*.test.jsx|*.test.ts|*.test.tsx|*.spec.js|*.spec.jsx|*.spec.ts|*.spec.tsx) return 0 ;;
+        esac
+        case "$1" in
+          tests/*.rs|*/tests/*.rs) return 0 ;;
+        esac
+        return 1
       }
       # An area is the first path segment; a file at the repo root is the area (root).
       area_of() {
@@ -273,10 +309,12 @@ workflow issue_to_pr
         esac
       }
       # set_verdict rewrites the verdict: with jq when the file is a sane JSON object, else as a
-      # constant object. Its arguments are this gate's own constants, never model text.
+      # constant object. Its arguments are this gate's own constants, never model text. Every key
+      # that is "verdict" in any letter case is dropped first, so no reader (jq matches keys
+      # exactly, a Go decoder case-insensitively) can see a different verdict than this one.
       set_verdict() {
         if command -v jq >/dev/null 2>&1 && [ -f "$T" ] && [ ! -L "$T" ] && jq -e 'type == "object"' "$T" >/dev/null 2>&1; then
-          jq --arg v "$1" --arg r "$2" '.verdict = $v | .reason = $r' "$T" > "$T.tmp" && mv -f "$T.tmp" "$T" && return 0
+          jq --arg v "$1" --arg r "$2" 'with_entries(select((.key | ascii_downcase) != "verdict")) | .verdict = $v | .reason = $r' "$T" > "$T.tmp" && mv -f "$T.tmp" "$T" && return 0
         fi
         rm -rf "$T"
         printf '{"verdict":"%s","reason":"%s","kind":"other","plan_files":[]}\n' "$1" "$2" > "$T"
@@ -285,6 +323,23 @@ workflow issue_to_pr
       set_reply() {
         rm -rf "$R"
         printf '%s\n' "$1" > "$R"
+      }
+      # list_changed BASE OUT writes every path the change touches to OUT: tracked edits against
+      # BASE (committed or not) plus every new file a `git add -A` could stage. New files honor
+      # only the repo's own .gitignore files, never .git/info/exclude or core.excludesFile (both
+      # agent-writable and both ignored by the copyTree delivery). quotePath=false keeps non-ASCII
+      # names unquoted; fsmonitor and the untracked cache are off so nothing model-written answers
+      # for git. .tracker/ and the root Go caches (pruned by delivery) are dropped. Returns 2 when
+      # an index flag hides worktree edits (S = skip-worktree, lowercase = assume-unchanged), 1
+      # when git cannot list the change.
+      list_changed() {
+        _g="git -c core.quotePath=false -c core.fsmonitor=false -c core.untrackedCache=false -c core.excludesFile=/dev/null"
+        _fl=$($_g ls-files -v 2>/dev/null) || return 1
+        if printf '%s\n' "$_fl" | grep -q '^[a-zS] '; then return 2; fi
+        _tr=$($_g diff --name-only --no-renames "$1" -- 2>/dev/null) || return 1
+        _un=$($_g ls-files --others --exclude-per-directory=.gitignore 2>/dev/null) || return 1
+        printf '%s\n%s\n' "$_tr" "$_un" | grep -vE '^(\.tracker|\.gocache|\.gopath|\.gomodcache)/' \
+          | grep -v '^[[:space:]]*$' | sort -u > "$2"
       }
       # --- shared gate rules: END
       refuse_invalid() {
@@ -300,6 +355,7 @@ workflow issue_to_pr
         def strs: type == "array" and all(.[]; type == "string");
         def optstrs: . == null or strs;
         type == "object"
+        and (keys | all(. == "verdict" or (ascii_downcase != "verdict")))
         and (.verdict | type) == "string"
         and (.verdict | IN("build", "needs_detail", "split", "refuse", "already_done"))
         and (.reason | type) == "string" and (.reason | length) > 0
@@ -334,16 +390,16 @@ workflow issue_to_pr
       while IFS= read -r p; do
         [ -n "$p" ] || continue
         if off_limits "$p"; then offl="$offl $p"; continue; fi
+        area_of "$p" >> .tracker/plan-areas.txt
         is_test_path "$p" && continue
         n=$((n + 1))
-        area_of "$p" >> .tracker/plan-areas.txt
       done < .tracker/plan-files.txt
       n_areas=$(sort -u .tracker/plan-areas.txt | grep -c . || true)
       if [ -n "$offl" ]; then
         shown=$(printf '%s' "$offl" | tr -cd 'A-Za-z0-9._/ -' | cut -c1-300)
         echo "[TriageGate] off-limits plan paths:$shown" >&2
         set_verdict refuse "triage-gate: the plan touches off-limits paths"
-        set_reply "Tracker doesn't change CI or deploy configuration, auth, secrets or credentials, lockfiles, licensing or Dockerfiles on its own, and this issue would need changes to:$shown. A maintainer will take a look."
+        set_reply "Tracker doesn't change CI or deploy configuration, auth, secrets, keys or credentials, lockfiles, licensing or Dockerfiles on its own, and this issue would need changes to:$shown. A maintainer will take a look."
         printf 'triage-stop\n'
         exit 0
       fi
@@ -351,7 +407,7 @@ workflow issue_to_pr
         shown=$(sort -u .tracker/plan-areas.txt | tr '\n' ' ' | tr -cd 'A-Za-z0-9._/() -' | cut -c1-200)
         echo "[TriageGate] plan too big: $n non-test files in $n_areas areas" >&2
         set_verdict split "triage-gate: the plan exceeds one focused pull request"
-        set_reply "This looks bigger than one focused pull request: the plan touches $n non-test files across $n_areas top-level areas ($shown). Tracker only opens pull requests that change at most 10 non-test files in one area. Splitting this into smaller issues, one per area, would let each one land on its own."
+        set_reply "This looks bigger than one focused pull request: the plan touches $n non-test files across $n_areas top-level areas ($shown). Tracker only opens pull requests that change at most 10 non-test files, all in one area (tests included). Splitting this into smaller issues, one per area, would let each one land on its own."
         printf 'triage-stop\n'
         exit 0
       fi
@@ -384,11 +440,15 @@ workflow issue_to_pr
       `.tracker/baseline.txt` (tests that already failed before you started: not yours to fix).
 
       Rules:
-      - Change only the files in `plan_files`, plus tests. A gate after you compares your diff
-        with the plan: touching any other non-test file, more than 10 non-test files, or more than
-        one top-level area stops the run with no PR.
-      - Never touch .github/, deploy/, Dockerfiles, lockfiles or go.sum, licensing, or anything
-        about auth, secrets or credentials. Add no dependencies.
+      - Change only the files in `plan_files`, plus test files. A test file is one named by its
+        language's convention: *_test.go, test_*.py or *_test.py, *.test.ts or *.spec.ts (and
+        js, jsx, tsx), *_test.rs or a .rs file under tests/. Any other file counts as a non-test
+        file. A gate after you compares your diff with the plan: touching any other non-test
+        file, more than 10 non-test files, or more than one top-level area (tests included)
+        stops the run with no PR. Keep new tests in the same top-level area as the code.
+      - Never touch CI or deploy config (.github/, deploy/, k8s/, helm/, terraform/, Dockerfiles),
+        lockfiles or go.sum, licensing, .env or key files, or anything about auth, secrets or
+        credentials. Add no dependencies. Do not change git settings or index flags.
       - If `kind` is "bug": FIRST write a test that fails because of the bug, where this project
         keeps its tests and in its style. Run it and confirm it fails for the bug's reason, not a
         typo or a bad fixture. Only then fix the root cause, and run the test again.
@@ -410,7 +470,8 @@ workflow issue_to_pr
     command:
       #!/bin/sh
       # Compares what Build ACTUALLY changed (tracked edits against the base commit, committed or
-      # not, plus new untracked files) with the triaged plan. Any off-limits path (test-shaped or
+      # not, plus new files; see list_changed) with the triaged plan. Index flags that hide an
+      # edit (skip-worktree, assume-unchanged) stop the run. Any off-limits path (test-shaped or
       # not), a non-test file outside plan_files, more than 10 non-test files, or more than one
       # top-level area rewrites the verdict to split, explains on the issue, and prints
       # drift-stop: no PR. A change that cannot be measured, or an empty one, also stops.
@@ -418,28 +479,42 @@ workflow issue_to_pr
       mkdir -p .tracker
       T=.tracker/triage.json
       R=.tracker/issue-reply.md
-      # --- shared gate rules: BEGIN (byte-identical in TriageGate and DriftGate; a test enforces it)
-      # Off-limits paths, one list. Matched on the LOWERCASED path; a shell case pattern's star
-      # also matches a slash, so each entry covers every depth it names. A path that starts with
-      # a double quote is one git C-quoted (control characters, quotes or backslashes in the
-      # name): its real name cannot be matched safely, so it fails closed as off-limits.
+      # --- shared gate rules: BEGIN (byte-identical in TriageGate, DriftGate and Verify; a test enforces it)
+      # Off-limits paths (spec section 4: auth or credentials, secrets, CI or deploy config,
+      # lockfiles, licensing), one list. Matched on the LOWERCASED path and its basename; a shell
+      # case pattern's star also matches a slash, so each entry covers every depth it names. A
+      # path that starts with a double quote is one git C-quoted (control characters, quotes or
+      # backslashes in the name): its real name cannot be matched safely, so it fails closed.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+        _ob=${_ol##*/}
         case "$_ol" in
           \"*) return 0 ;;
-          .github/*|*/.github/*) return 0 ;;
-          *.lock|package-lock.json|*/package-lock.json|go.sum|*/go.sum) return 0 ;;
-          license*|*/license*) return 0 ;;
-          *secret*|*credential*) return 0 ;;
-          auth/*|*/auth/*) return 0 ;;
-          deploy/*) return 0 ;;
-          dockerfile*|*/dockerfile*) return 0 ;;
+          *auth*|*secret*|*credential*) return 0 ;;
+          .github/*|*/.github/*|.circleci/*|*/.circleci/*|.buildkite/*|*/.buildkite/*) return 0 ;;
+          deploy/*|*/deploy/*|k8s/*|*/k8s/*|helm/*|*/helm/*|terraform/*|*/terraform/*) return 0 ;;
+        esac
+        case "$_ob" in
+          .gitlab-ci.yml|jenkinsfile*|.pre-commit-config.yaml|azure-pipelines.yml) return 0 ;;
+          *.lock|package-lock.json|npm-shrinkwrap.json|pnpm-lock.yaml|go.sum|go.work.sum) return 0 ;;
+          *.tf|*.tfvars|dockerfile*|.env*|*.pem|*.key) return 0 ;;
+          license*|copying*|notice*) return 0 ;;
         esac
         return 1
       }
-      # A test path is exempt from the size and plan rules, never from off_limits.
+      # A test file is exempt from the size and plan rules, never from off_limits and never from
+      # the one-area rule. Only the languages' own test-file conventions count, on the basename:
+      # *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx),
+      # *_test.rs, and a .rs file under a tests/ directory.
       is_test_path() {
-        printf '%s\n' "$1" | grep -qiE '(_test\.[a-z0-9]+$|(^|/)test_[^/]*\.[a-z0-9]+$|\.(test|spec)\.[a-z0-9]+$|_spec\.[a-z0-9]+$|(^|/)tests?/)'
+        case "${1##*/}" in
+          *_test.go|test_*.py|*_test.py|*_test.rs) return 0 ;;
+          *.test.js|*.test.jsx|*.test.ts|*.test.tsx|*.spec.js|*.spec.jsx|*.spec.ts|*.spec.tsx) return 0 ;;
+        esac
+        case "$1" in
+          tests/*.rs|*/tests/*.rs) return 0 ;;
+        esac
+        return 1
       }
       # An area is the first path segment; a file at the repo root is the area (root).
       area_of() {
@@ -449,10 +524,12 @@ workflow issue_to_pr
         esac
       }
       # set_verdict rewrites the verdict: with jq when the file is a sane JSON object, else as a
-      # constant object. Its arguments are this gate's own constants, never model text.
+      # constant object. Its arguments are this gate's own constants, never model text. Every key
+      # that is "verdict" in any letter case is dropped first, so no reader (jq matches keys
+      # exactly, a Go decoder case-insensitively) can see a different verdict than this one.
       set_verdict() {
         if command -v jq >/dev/null 2>&1 && [ -f "$T" ] && [ ! -L "$T" ] && jq -e 'type == "object"' "$T" >/dev/null 2>&1; then
-          jq --arg v "$1" --arg r "$2" '.verdict = $v | .reason = $r' "$T" > "$T.tmp" && mv -f "$T.tmp" "$T" && return 0
+          jq --arg v "$1" --arg r "$2" 'with_entries(select((.key | ascii_downcase) != "verdict")) | .verdict = $v | .reason = $r' "$T" > "$T.tmp" && mv -f "$T.tmp" "$T" && return 0
         fi
         rm -rf "$T"
         printf '{"verdict":"%s","reason":"%s","kind":"other","plan_files":[]}\n' "$1" "$2" > "$T"
@@ -461,6 +538,23 @@ workflow issue_to_pr
       set_reply() {
         rm -rf "$R"
         printf '%s\n' "$1" > "$R"
+      }
+      # list_changed BASE OUT writes every path the change touches to OUT: tracked edits against
+      # BASE (committed or not) plus every new file a `git add -A` could stage. New files honor
+      # only the repo's own .gitignore files, never .git/info/exclude or core.excludesFile (both
+      # agent-writable and both ignored by the copyTree delivery). quotePath=false keeps non-ASCII
+      # names unquoted; fsmonitor and the untracked cache are off so nothing model-written answers
+      # for git. .tracker/ and the root Go caches (pruned by delivery) are dropped. Returns 2 when
+      # an index flag hides worktree edits (S = skip-worktree, lowercase = assume-unchanged), 1
+      # when git cannot list the change.
+      list_changed() {
+        _g="git -c core.quotePath=false -c core.fsmonitor=false -c core.untrackedCache=false -c core.excludesFile=/dev/null"
+        _fl=$($_g ls-files -v 2>/dev/null) || return 1
+        if printf '%s\n' "$_fl" | grep -q '^[a-zS] '; then return 2; fi
+        _tr=$($_g diff --name-only --no-renames "$1" -- 2>/dev/null) || return 1
+        _un=$($_g ls-files --others --exclude-per-directory=.gitignore 2>/dev/null) || return 1
+        printf '%s\n%s\n' "$_tr" "$_un" | grep -vE '^(\.tracker|\.gocache|\.gopath|\.gomodcache)/' \
+          | grep -v '^[[:space:]]*$' | sort -u > "$2"
       }
       # --- shared gate rules: END
       stop() {
@@ -478,12 +572,14 @@ workflow issue_to_pr
       fi
       unmeasured="Tracker made a change for this issue but couldn't measure it against the commit it started from, so it won't open a pull request. A maintainer will take a look."
       [ -n "$root" ] || stop refuse "drift-gate: no base commit to measure the change against" "$unmeasured"
-      # core.quotePath=false: git's default C-quotes any non-ASCII path ("deploy/tests/\303\251.sh"),
-      # and the leading quote would slip past every anchored off-limits pattern. With it off, only
-      # control characters, quotes and backslashes are still quoted, and off_limits refuses those.
-      tracked=$(git -c core.quotePath=false diff --name-only --no-renames "$root" -- 2>/dev/null) || stop refuse "drift-gate: git could not diff the change" "$unmeasured"
-      untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null) || stop refuse "drift-gate: git could not list new files" "$unmeasured"
-      printf '%s\n%s\n' "$tracked" "$untracked" | grep -v '^\.tracker/' | grep -v '^[[:space:]]*$' | sort -u > .tracker/changed-files.txt
+      # core.quotePath=false (inside list_changed): git's default C-quotes any non-ASCII path
+      # ("deploy/tests/\303\251.sh"), and the leading quote would slip past every anchored
+      # off-limits pattern. With it off, only control characters, quotes and backslashes are still
+      # quoted, and off_limits refuses those.
+      list_changed "$root" .tracker/changed-files.txt
+      lc=$?
+      [ "$lc" != 2 ] || stop refuse "drift-gate: skip-worktree or assume-unchanged flags hide part of the change" "Tracker made a change for this issue, but git index flags (skip-worktree or assume-unchanged) hid part of the working tree from its change check, so it won't open a pull request. A maintainer will take a look."
+      [ "$lc" = 0 ] || stop refuse "drift-gate: git could not list the change" "$unmeasured"
       [ -s .tracker/changed-files.txt ] || stop refuse "drift-gate: the build step changed nothing" "Tracker triaged this issue as something it could fix, but its attempt didn't change any files, so there is no pull request. A maintainer will take a look."
       jq -r '.plan_files[]? | strings | ltrimstr("./")' "$T" 2>/dev/null | sort -u > .tracker/plan-files.txt
       : > .tracker/drift-areas.txt
@@ -492,9 +588,9 @@ workflow issue_to_pr
       unplanned=""
       while IFS= read -r p; do
         if off_limits "$p"; then offl="$offl $p"; continue; fi
+        area_of "$p" >> .tracker/drift-areas.txt
         is_test_path "$p" && continue
         n=$((n + 1))
-        area_of "$p" >> .tracker/drift-areas.txt
         grep -qxF -- "$p" .tracker/plan-files.txt || unplanned="$unplanned $p"
       done < .tracker/changed-files.txt
       n_areas=$(sort -u .tracker/drift-areas.txt | grep -c . || true)
@@ -515,18 +611,104 @@ workflow issue_to_pr
       # sibling never blocks a correct change and a no-op never passes. validation-pass is the
       # LAST stdout line only when at least one added test ran and passed, each added test is
       # seen passing, and the language that ran covers every changed source file. Anything else
-      # prints validation-deferred and writes an honest reply for the issue. Always exits 0.
+      # prints validation-deferred. Always exits 0.
+      # It writes .tracker/verify-status: exactly `pass` or `deferred`. Unverified means no PR:
+      # on `deferred` it also rewrites the triage verdict to `unverified` (the host delivers only
+      # verify-status pass AND verdict build) and writes an honest reply for the issue.
       set -u
       mkdir -p .tracker/tmp
+      T=.tracker/triage.json
+      R=.tracker/issue-reply.md
+      # --- shared gate rules: BEGIN (byte-identical in TriageGate, DriftGate and Verify; a test enforces it)
+      # Off-limits paths (spec section 4: auth or credentials, secrets, CI or deploy config,
+      # lockfiles, licensing), one list. Matched on the LOWERCASED path and its basename; a shell
+      # case pattern's star also matches a slash, so each entry covers every depth it names. A
+      # path that starts with a double quote is one git C-quoted (control characters, quotes or
+      # backslashes in the name): its real name cannot be matched safely, so it fails closed.
+      off_limits() {
+        _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+        _ob=${_ol##*/}
+        case "$_ol" in
+          \"*) return 0 ;;
+          *auth*|*secret*|*credential*) return 0 ;;
+          .github/*|*/.github/*|.circleci/*|*/.circleci/*|.buildkite/*|*/.buildkite/*) return 0 ;;
+          deploy/*|*/deploy/*|k8s/*|*/k8s/*|helm/*|*/helm/*|terraform/*|*/terraform/*) return 0 ;;
+        esac
+        case "$_ob" in
+          .gitlab-ci.yml|jenkinsfile*|.pre-commit-config.yaml|azure-pipelines.yml) return 0 ;;
+          *.lock|package-lock.json|npm-shrinkwrap.json|pnpm-lock.yaml|go.sum|go.work.sum) return 0 ;;
+          *.tf|*.tfvars|dockerfile*|.env*|*.pem|*.key) return 0 ;;
+          license*|copying*|notice*) return 0 ;;
+        esac
+        return 1
+      }
+      # A test file is exempt from the size and plan rules, never from off_limits and never from
+      # the one-area rule. Only the languages' own test-file conventions count, on the basename:
+      # *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx),
+      # *_test.rs, and a .rs file under a tests/ directory.
+      is_test_path() {
+        case "${1##*/}" in
+          *_test.go|test_*.py|*_test.py|*_test.rs) return 0 ;;
+          *.test.js|*.test.jsx|*.test.ts|*.test.tsx|*.spec.js|*.spec.jsx|*.spec.ts|*.spec.tsx) return 0 ;;
+        esac
+        case "$1" in
+          tests/*.rs|*/tests/*.rs) return 0 ;;
+        esac
+        return 1
+      }
+      # An area is the first path segment; a file at the repo root is the area (root).
+      area_of() {
+        case "$1" in
+          */*) printf '%s\n' "${1%%/*}" ;;
+          *) printf '(root)\n' ;;
+        esac
+      }
+      # set_verdict rewrites the verdict: with jq when the file is a sane JSON object, else as a
+      # constant object. Its arguments are this gate's own constants, never model text. Every key
+      # that is "verdict" in any letter case is dropped first, so no reader (jq matches keys
+      # exactly, a Go decoder case-insensitively) can see a different verdict than this one.
+      set_verdict() {
+        if command -v jq >/dev/null 2>&1 && [ -f "$T" ] && [ ! -L "$T" ] && jq -e 'type == "object"' "$T" >/dev/null 2>&1; then
+          jq --arg v "$1" --arg r "$2" 'with_entries(select((.key | ascii_downcase) != "verdict")) | .verdict = $v | .reason = $r' "$T" > "$T.tmp" && mv -f "$T.tmp" "$T" && return 0
+        fi
+        rm -rf "$T"
+        printf '{"verdict":"%s","reason":"%s","kind":"other","plan_files":[]}\n' "$1" "$2" > "$T"
+      }
+      # set_reply replaces the issue reply; removing first means a planted symlink is never followed.
+      set_reply() {
+        rm -rf "$R"
+        printf '%s\n' "$1" > "$R"
+      }
+      # list_changed BASE OUT writes every path the change touches to OUT: tracked edits against
+      # BASE (committed or not) plus every new file a `git add -A` could stage. New files honor
+      # only the repo's own .gitignore files, never .git/info/exclude or core.excludesFile (both
+      # agent-writable and both ignored by the copyTree delivery). quotePath=false keeps non-ASCII
+      # names unquoted; fsmonitor and the untracked cache are off so nothing model-written answers
+      # for git. .tracker/ and the root Go caches (pruned by delivery) are dropped. Returns 2 when
+      # an index flag hides worktree edits (S = skip-worktree, lowercase = assume-unchanged), 1
+      # when git cannot list the change.
+      list_changed() {
+        _g="git -c core.quotePath=false -c core.fsmonitor=false -c core.untrackedCache=false -c core.excludesFile=/dev/null"
+        _fl=$($_g ls-files -v 2>/dev/null) || return 1
+        if printf '%s\n' "$_fl" | grep -q '^[a-zS] '; then return 2; fi
+        _tr=$($_g diff --name-only --no-renames "$1" -- 2>/dev/null) || return 1
+        _un=$($_g ls-files --others --exclude-per-directory=.gitignore 2>/dev/null) || return 1
+        printf '%s\n%s\n' "$_tr" "$_un" | grep -vE '^(\.tracker|\.gocache|\.gopath|\.gomodcache)/' \
+          | grep -v '^[[:space:]]*$' | sort -u > "$2"
+      }
+      # --- shared gate rules: END
       rm -rf .tracker/verify-status .tracker/verify-why .tracker/verify-targets.txt
       : > .tracker/verify-report.txt
       : > .tracker/verify-targets.txt
       : > .tracker/verify-changed.txt
       export TMPDIR="$(pwd)/.tracker/tmp" PYTHONDONTWRITEBYTECODE=1
-      # Bound every test run well inside this node's own timeout: a node that times out FAILS, and
-      # a failing node with no failure edge halts the run before the issue gets its reply.
-      to=""
-      if command -v timeout >/dev/null 2>&1; then to="timeout 240"; fi
+      # Time budget: the node times out at 12m, and a node that times out FAILS (no reply, no
+      # verdict rewrite). Verify stops starting tests once its own budget runs low, bounds each
+      # test run by what is left (at most 240s), and defers when the budget is spent.
+      verify_budget=600
+      t0=$(date +%s)
+      left() { echo $((verify_budget - ($(date +%s) - t0))); }
+      out_of_time="the tests did not finish within the time budget Verify allows itself"
       status=deferred
       why="no test added by this change could be run in the sandbox"
       finish() {
@@ -537,21 +719,33 @@ workflow issue_to_pr
         if [ "$status" = pass ]; then
           printf 'validation-pass\n'
         else
+          set_verdict unverified "verify: the change could not be verified, so it gets no pull request"
           nc=$(grep -c . .tracker/verify-changed.txt 2>/dev/null || true)
-          rm -rf .tracker/issue-reply.md
-          printf '%s\n' "Tracker made a change for this issue ($nc files) but could not verify it in its sandbox: $why. Tracker does not open a pull request for a change it could not verify; the full diff is on the run page so a maintainer can take it over." > .tracker/issue-reply.md
+          set_reply "Tracker made a change for this issue ($nc files) but could not verify it in its sandbox: $why. Tracker does not open a pull request for a change it could not verify; the full diff is on the run page so a maintainer can take it over."
           printf 'validation-deferred\n'
         fi
         exit 0
+      }
+      # slot sets n to the bound for the next test run, or defers when too little budget is left.
+      # It is called on its own line, never under a redirect, so finish's marker reaches stdout.
+      slot() {
+        n=$(left)
+        [ "$n" -ge 5 ] || { why="$out_of_time"; finish; }
+        [ "$n" -le 240 ] || n=240
+      }
+      # spent defers once a run has used up the budget (its timeout fired at the budget's edge).
+      spent() {
+        [ "$(left)" -ge 5 ] || { why="$out_of_time"; finish; }
       }
       root=$(tr -d '[:space:]' < .tracker/base-commit 2>/dev/null || true)
       if [ -z "$root" ] || ! git cat-file -e "${root}^{commit}" 2>/dev/null; then
         root=$(git rev-list --max-parents=0 HEAD 2>/dev/null | tail -n 1)
       fi
       [ -n "$root" ] || { why="there is no base commit to compare the change against"; finish; }
-      tracked=$(git diff --name-only --no-renames "$root" -- 2>/dev/null) || { why="git could not diff the change"; finish; }
-      untracked=$(git ls-files --others --exclude-standard 2>/dev/null) || { why="git could not list new files"; finish; }
-      printf '%s\n%s\n' "$tracked" "$untracked" | grep -v '^\.tracker/' | grep -v '^[[:space:]]*$' | sort -u > .tracker/verify-changed.txt
+      list_changed "$root" .tracker/verify-changed.txt
+      lc=$?
+      [ "$lc" != 2 ] || { why="git index flags (skip-worktree or assume-unchanged) hide part of the change"; finish; }
+      [ "$lc" = 0 ] || { why="git could not list the change"; finish; }
       [ -s .tracker/verify-changed.txt ] || { why="the change is empty"; finish; }
       eco_of() {
         case "$1" in
@@ -567,6 +761,7 @@ workflow issue_to_pr
         case "$(eco_of "$p")" in doc|meta) ;; *) code=1 ;; esac
       done < .tracker/verify-changed.txt
       [ "$code" = 1 ] || { why="the change is documentation only, so there is nothing to run"; finish; }
+      command -v timeout >/dev/null 2>&1 || { why="the sandbox has no timeout command to bound a test run"; finish; }
       # added_names FILE DECL_RE NAME_RE: test names declared in FILE now but not in the base
       # commit's version of it.
       added_names() {
@@ -580,7 +775,8 @@ workflow issue_to_pr
       failed=0
       if [ -n "$go_tests" ] && [ -f go.mod ] && command -v go >/dev/null 2>&1; then
         ran=go
-        export GOCACHE="$(pwd)/.tracker/cache/go-build"
+        # .gocache at the root, as idea-to-pr does: delivery prunes it and list_changed drops it.
+        export GOCACHE="$(pwd)/.gocache"
         mkdir -p "$GOCACHE"
         pkgs=$(for f in $go_tests; do dirname "$f"; done | sort -u)
         for d in $pkgs; do
@@ -593,8 +789,10 @@ workflow issue_to_pr
           [ -n "$names" ] || continue
           pat=$(printf '%s\n' "$names" | paste -sd'|' -)
           echo "--- go test ./$d -run ^($pat)\$ (tests this change added) ---" >> .tracker/verify-report.txt
-          go test "./$d" -run "^($pat)\$" -count=1 -timeout 4m -v > .tracker/tmp/go-out.txt 2>&1 || failed=1
+          slot
+          timeout "$n" go test "./$d" -run "^($pat)\$" -count=1 -timeout "${n}s" -v > .tracker/tmp/go-out.txt 2>&1 || failed=1
           cat .tracker/tmp/go-out.txt >> .tracker/verify-report.txt
+          spent
           for nm in $names; do
             if grep -qE "^[[:space:]]*--- PASS: $nm( |$)" .tracker/tmp/go-out.txt; then
               echo "go: $d $nm" >> .tracker/verify-targets.txt
@@ -616,8 +814,10 @@ workflow issue_to_pr
             names=$(added_names "$f" '^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+test_[A-Za-z0-9_]*' 'test_[A-Za-z0-9_]*')
             [ -n "$names" ] || continue
             echo "--- pytest $f (tests this change added) ---" >> .tracker/verify-report.txt
-            $to "$PY" -m pytest -p no:cacheprovider -q -rA "$f" > .tracker/tmp/py-out.txt 2>&1 || failed=1
+            slot
+            timeout "$n" "$PY" -m pytest -p no:cacheprovider -q -rA "$f" > .tracker/tmp/py-out.txt 2>&1 || failed=1
             cat .tracker/tmp/py-out.txt >> .tracker/verify-report.txt
+            spent
             for nm in $names; do
               if grep -qE "^PASSED [^ ]*::($nm|[A-Za-z0-9_]+::$nm)(\[| |$)" .tracker/tmp/py-out.txt; then
                 echo "pytest: $f $nm" >> .tracker/verify-targets.txt
