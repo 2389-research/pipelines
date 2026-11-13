@@ -17,12 +17,12 @@ workflow issue_to_pr
   # means no PR), .tracker/issue-reply.md (the comment for the issue) and
   # .tracker/DELIVERY-NOTE.md (the PR body's verification note).
   #
-  # Size rule (TriageGate and DriftGate): at most 10 non-test files, and every changed file,
-  # tests included, in ONE top-level area. An area is the first path segment; a file at the repo
-  # root is its own area, "(root)". A test file is one of the languages' own test-file
-  # conventions, by basename: *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx),
-  # *.spec.(js|jsx|ts|tsx), *_test.rs, or a .rs file under tests/. Test files are exempt from the
-  # 10-file and plan rules only, never from the area rule or the off-limits list.
+  # Size rule (TriageGate and DriftGate): at most 10 non-test files, all in ONE top-level area.
+  # An area is the first path segment; a file at the repo root is its own area, "(root)". A test
+  # file is one of the languages' own test-file conventions, by basename: *_test.go, test_*.py,
+  # *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx), *_test.rs, or a .rs file under
+  # tests/. Test files are exempt from the 10-file, plan and one-area rules (so src/ plus tests/
+  # builds), never from the off-limits list. Any other file under a tests/ directory counts.
   #
   # Known v1 limits:
   # - already_done can only see what the clone has: branches, commits and files that reference the
@@ -50,8 +50,6 @@ workflow issue_to_pr
   # - The Fixes URL in the delivery note comes from .tracker/issue-url, a file the Orient agent
   #   writes. ComposeNote accepts only a well-formed github.com issue URL, but it should be
   #   composed host-side from the webhook (tracker-runner #1050).
-  # - Because tests count toward the one-area rule, a repo that keeps its tests in a top-level
-  #   tests/ directory apart from its sources (src/ plus tests/) gets a split, not a build.
   start: Start
   exit: Exit
 
@@ -212,7 +210,7 @@ workflow issue_to_pr
 
       Apply this rubric IN ORDER and stop at the first check that fails:
       1. What: it must be a code, docs or test change, in scope for this repo. OFF-LIMITS:
-         anything about auth or credentials (any path containing "auth"), secrets, keys and
+         anything about auth or credentials (auth, authz, authn, oauth, authorization paths), secrets, keys and
          .env files, CI config (.github/, .gitlab-ci.yml, .circleci/, Jenkinsfile, .buildkite/,
          azure-pipelines.yml, .pre-commit-config.yaml), deploy config (deploy/, k8s/, helm/,
          terraform/, *.tf, Dockerfiles), lockfiles and go.sum, licensing (LICENSE, COPYING,
@@ -222,8 +220,8 @@ workflow issue_to_pr
          a clear duplicate. -> "already_done" (or "refuse"), naming what you found.
       3. Clarity: at most one or two minor guesses, each written into `assumptions`.
          Fail -> "needs_detail" with SPECIFIC questions.
-      4. Size: the plan, tests included, stays in ONE top-level area (the first path segment;
-         root-level files are their own area) and touches at most 10 non-test files. No new dependencies, no breaking
+      4. Size: the plan's non-test files stay in ONE top-level area (the first path segment;
+         root-level files are their own area) and number at most 10. No new dependencies, no breaking
          public-API change, no data migration. Fail -> "split" with 2 to 5 right-sized sub-issues.
       5. Checkable: a test or reproduction can show it is done. Fail -> "needs_detail".
       Only if every check passes -> "build".
@@ -270,12 +268,24 @@ workflow issue_to_pr
       # case pattern's star also matches a slash, so each entry covers every depth it names. A
       # path that starts with a double quote is one git C-quoted (control characters, quotes or
       # backslashes in the name): its real name cannot be matched safely, so it fails closed.
+      # Auth is matched per path segment: a segment that is auth, starts with auth but not
+      # author (auth.go, authz/, authn/, authentication.py), contains oauth, or starts with
+      # authoriz or authoris is off-limits; AUTHORS, author.py and co-author.md are not.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
         _ob=${_ol##*/}
+        _rest=$_ol
+        while :; do
+          case "${_rest%%/*}" in
+            *oauth*|authoriz*|authoris*) return 0 ;;
+            author*) ;;
+            auth*) return 0 ;;
+          esac
+          case "$_rest" in */*) _rest=${_rest#*/} ;; *) break ;; esac
+        done
         case "$_ol" in
           \"*) return 0 ;;
-          *auth*|*secret*|*credential*) return 0 ;;
+          *secret*|*credential*) return 0 ;;
           .github/*|*/.github/*|.circleci/*|*/.circleci/*|.buildkite/*|*/.buildkite/*) return 0 ;;
           deploy/*|*/deploy/*|k8s/*|*/k8s/*|helm/*|*/helm/*|terraform/*|*/terraform/*) return 0 ;;
         esac
@@ -287,8 +297,8 @@ workflow issue_to_pr
         esac
         return 1
       }
-      # A test file is exempt from the size and plan rules, never from off_limits and never from
-      # the one-area rule. Only the languages' own test-file conventions count, on the basename:
+      # A test file is exempt from the size, plan and one-area rules, never from off_limits. Only
+      # the languages' own test-file conventions count, on the basename:
       # *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx),
       # *_test.rs, and a .rs file under a tests/ directory.
       is_test_path() {
@@ -390,9 +400,9 @@ workflow issue_to_pr
       while IFS= read -r p; do
         [ -n "$p" ] || continue
         if off_limits "$p"; then offl="$offl $p"; continue; fi
-        area_of "$p" >> .tracker/plan-areas.txt
         is_test_path "$p" && continue
         n=$((n + 1))
+        area_of "$p" >> .tracker/plan-areas.txt
       done < .tracker/plan-files.txt
       n_areas=$(sort -u .tracker/plan-areas.txt | grep -c . || true)
       if [ -n "$offl" ]; then
@@ -407,7 +417,7 @@ workflow issue_to_pr
         shown=$(sort -u .tracker/plan-areas.txt | tr '\n' ' ' | tr -cd 'A-Za-z0-9._/() -' | cut -c1-200)
         echo "[TriageGate] plan too big: $n non-test files in $n_areas areas" >&2
         set_verdict split "triage-gate: the plan exceeds one focused pull request"
-        set_reply "This looks bigger than one focused pull request: the plan touches $n non-test files across $n_areas top-level areas ($shown). Tracker only opens pull requests that change at most 10 non-test files, all in one area (tests included). Splitting this into smaller issues, one per area, would let each one land on its own."
+        set_reply "This looks bigger than one focused pull request: the plan touches $n non-test files across $n_areas top-level areas ($shown). Tracker only opens pull requests that change at most 10 non-test files, all in one area. Splitting this into smaller issues, one per area, would let each one land on its own."
         printf 'triage-stop\n'
         exit 0
       fi
@@ -443,9 +453,10 @@ workflow issue_to_pr
       - Change only the files in `plan_files`, plus test files. A test file is one named by its
         language's convention: *_test.go, test_*.py or *_test.py, *.test.ts or *.spec.ts (and
         js, jsx, tsx), *_test.rs or a .rs file under tests/. Any other file counts as a non-test
-        file. A gate after you compares your diff with the plan: touching any other non-test
-        file, more than 10 non-test files, or more than one top-level area (tests included)
-        stops the run with no PR. Keep new tests in the same top-level area as the code.
+        file, even under a tests/ directory. A gate after you compares your diff with the plan:
+        touching any other non-test file, more than 10 non-test files, or non-test files in
+        more than one top-level area stops the run with no PR. Test files may live wherever the
+        project keeps its tests.
       - Never touch CI or deploy config (.github/, deploy/, k8s/, helm/, terraform/, Dockerfiles),
         lockfiles or go.sum, licensing, .env or key files, or anything about auth, secrets or
         credentials. Add no dependencies. Do not change git settings or index flags.
@@ -485,12 +496,24 @@ workflow issue_to_pr
       # case pattern's star also matches a slash, so each entry covers every depth it names. A
       # path that starts with a double quote is one git C-quoted (control characters, quotes or
       # backslashes in the name): its real name cannot be matched safely, so it fails closed.
+      # Auth is matched per path segment: a segment that is auth, starts with auth but not
+      # author (auth.go, authz/, authn/, authentication.py), contains oauth, or starts with
+      # authoriz or authoris is off-limits; AUTHORS, author.py and co-author.md are not.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
         _ob=${_ol##*/}
+        _rest=$_ol
+        while :; do
+          case "${_rest%%/*}" in
+            *oauth*|authoriz*|authoris*) return 0 ;;
+            author*) ;;
+            auth*) return 0 ;;
+          esac
+          case "$_rest" in */*) _rest=${_rest#*/} ;; *) break ;; esac
+        done
         case "$_ol" in
           \"*) return 0 ;;
-          *auth*|*secret*|*credential*) return 0 ;;
+          *secret*|*credential*) return 0 ;;
           .github/*|*/.github/*|.circleci/*|*/.circleci/*|.buildkite/*|*/.buildkite/*) return 0 ;;
           deploy/*|*/deploy/*|k8s/*|*/k8s/*|helm/*|*/helm/*|terraform/*|*/terraform/*) return 0 ;;
         esac
@@ -502,8 +525,8 @@ workflow issue_to_pr
         esac
         return 1
       }
-      # A test file is exempt from the size and plan rules, never from off_limits and never from
-      # the one-area rule. Only the languages' own test-file conventions count, on the basename:
+      # A test file is exempt from the size, plan and one-area rules, never from off_limits. Only
+      # the languages' own test-file conventions count, on the basename:
       # *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx),
       # *_test.rs, and a .rs file under a tests/ directory.
       is_test_path() {
@@ -588,9 +611,9 @@ workflow issue_to_pr
       unplanned=""
       while IFS= read -r p; do
         if off_limits "$p"; then offl="$offl $p"; continue; fi
-        area_of "$p" >> .tracker/drift-areas.txt
         is_test_path "$p" && continue
         n=$((n + 1))
+        area_of "$p" >> .tracker/drift-areas.txt
         grep -qxF -- "$p" .tracker/plan-files.txt || unplanned="$unplanned $p"
       done < .tracker/changed-files.txt
       n_areas=$(sort -u .tracker/drift-areas.txt | grep -c . || true)
@@ -625,12 +648,24 @@ workflow issue_to_pr
       # case pattern's star also matches a slash, so each entry covers every depth it names. A
       # path that starts with a double quote is one git C-quoted (control characters, quotes or
       # backslashes in the name): its real name cannot be matched safely, so it fails closed.
+      # Auth is matched per path segment: a segment that is auth, starts with auth but not
+      # author (auth.go, authz/, authn/, authentication.py), contains oauth, or starts with
+      # authoriz or authoris is off-limits; AUTHORS, author.py and co-author.md are not.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
         _ob=${_ol##*/}
+        _rest=$_ol
+        while :; do
+          case "${_rest%%/*}" in
+            *oauth*|authoriz*|authoris*) return 0 ;;
+            author*) ;;
+            auth*) return 0 ;;
+          esac
+          case "$_rest" in */*) _rest=${_rest#*/} ;; *) break ;; esac
+        done
         case "$_ol" in
           \"*) return 0 ;;
-          *auth*|*secret*|*credential*) return 0 ;;
+          *secret*|*credential*) return 0 ;;
           .github/*|*/.github/*|.circleci/*|*/.circleci/*|.buildkite/*|*/.buildkite/*) return 0 ;;
           deploy/*|*/deploy/*|k8s/*|*/k8s/*|helm/*|*/helm/*|terraform/*|*/terraform/*) return 0 ;;
         esac
@@ -642,8 +677,8 @@ workflow issue_to_pr
         esac
         return 1
       }
-      # A test file is exempt from the size and plan rules, never from off_limits and never from
-      # the one-area rule. Only the languages' own test-file conventions count, on the basename:
+      # A test file is exempt from the size, plan and one-area rules, never from off_limits. Only
+      # the languages' own test-file conventions count, on the basename:
       # *_test.go, test_*.py, *_test.py, *.test.(js|jsx|ts|tsx), *.spec.(js|jsx|ts|tsx),
       # *_test.rs, and a .rs file under a tests/ directory.
       is_test_path() {

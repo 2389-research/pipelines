@@ -22,13 +22,13 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
   or `already_done` (`.tracker/triage.json`, with a reply for the issue in
   `.tracker/issue-reply.md`). A deterministic TriageGate accepts only an exact, schema-valid
   `build` whose plan is at most 10 non-test files in one top-level area and touches no
-  off-limits path (CI and deploy config at any depth, anything named auth, secrets, keys,
+  off-limits path (CI and deploy config at any depth, auth, authz, authn, oauth and authorization paths, secrets, keys,
   .env files, credentials, lockfiles, licensing, Dockerfiles). After the change, a DriftGate compares the real diff with the plan and stops
   with a `split` reply if it grew. Verify runs only the tests the change added (Go and Python)
   and is bound as the run's verify oracle (`verify_markers: Verify=validation-pass`). It writes
   `.tracker/verify-status` (`pass` or `deferred`); a deferral also rewrites the verdict to
-  `unverified`, so an unverified change gets no PR. Test files (exempt from the size and plan
-  rules, never from the one-area or off-limits rules) are only the languages' own test-file
+  `unverified`, so an unverified change gets no PR. Test files (exempt from the size, plan and
+  one-area rules, never from the off-limits rules) are only the languages' own test-file
   names, and both gates fail closed on git index flags that hide an edit. ComposeNote writes the PR note with `Fixes <issue url>` first. Its inputs are exactly the
   tracker-runner webhook's keys (`issue_title`, `issue_body`, `issue_url`). It is meant to be
   started only by tracker-runner's GitHub webhook for a trusted filer: do not add it to a
