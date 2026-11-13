@@ -16,6 +16,20 @@ maintainers: see [`RELEASING.md`](./RELEASING.md) for the release-cut convention
 
 ### Added
 
+- `build-and-ship/issue-to-pr.dip`: a webhook-only pipeline that handles a GitHub issue the
+  way a careful first-time contributor would. It reads the repo's own rules, records the tests
+  that already fail, and triages the issue into one of `build`, `needs_detail`, `split`, `refuse`
+  or `already_done` (`.tracker/triage.json`, with a reply for the issue in
+  `.tracker/issue-reply.md`). A deterministic TriageGate accepts only an exact, schema-valid
+  `build` whose plan is at most 10 non-test files in one top-level area and touches no
+  off-limits path (CI and deploy config, auth, secrets, credentials, lockfiles, licensing,
+  Dockerfiles). After the change, a DriftGate compares the real diff with the plan and stops
+  with a `split` reply if it grew. Verify runs only the tests the change added (Go and Python)
+  and is bound as the run's verify oracle (`verify_markers: Verify=validation-pass`).
+  ComposeNote writes the PR note with `Fixes <issue url>` first. Its inputs are exactly the
+  tracker-runner webhook's keys (`issue_title`, `issue_body`, `issue_url`). It is meant to be
+  started only by tracker-runner's GitHub webhook for a trusted filer: do not add it to a
+  hand-submittable catalog such as tracker-runner's `GIT_CATALOG_PATHS`.
 - `build-and-ship/bug-hunter.dip`: declares an input contract,
   `# requires-input: BUG.md | bug.md | ISSUE.md | issue.md`. Once tracker-runner
   ships #821 and bumps its pipelines pin to include this change, it checks the

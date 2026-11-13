@@ -12,6 +12,7 @@ Single-pass build pipelines — the fastest path from a spec or bug report to sh
 | `idea-to-pr.dip` | Free-text idea to a validated change — writes a reviewable spec.md / plan.md / tasks.md first, then builds and validates the P1 slice (left in the working tree; the caller commits it). |
 | `refactor-express.dip` | Incremental refactoring — analyzes code, plans steps where tests stay green at every step, executes with rollback on failure. |
 | `doc-writer.dip` | Documentation generator — explores a codebase and produces README, API reference, architecture guide, and tutorials. |
+| `issue-to-pr.dip` | Webhook-only: a GitHub issue from a trusted filer to one right-sized, verified change, or a specific reply on the issue (triage verdict, size and off-limits gates, plan-drift check). Not for hand submission. |
 
 ## Usage
 
