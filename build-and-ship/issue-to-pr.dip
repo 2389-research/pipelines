@@ -24,9 +24,13 @@ workflow issue_to_pr
   #   issue. The container holds no GitHub API credentials, so it cannot see open PRs.
   # - The run branch's commits are made by the runner, not the agent, so repo commit conventions
   #   such as DCO sign-off are not honored in v1 (follow-up issue in tracker-runner).
-  # - DriftGate measures the actual diff against the triaged plan. The plan lives in the
-  #   workspace, so it detects an honest agent's drift; the size, area and off-limits rules run
-  #   on the real diff and hold even if the plan file is edited.
+  # - DriftGate measures the diff against .tracker/base-commit and detects an HONEST agent's
+  #   drift only. The plan, the base-commit file and .git all live in the agent-writable
+  #   workspace: an agent that commits an off-limits change and then rewrites
+  #   .tracker/base-commit to the new HEAD hides that commit from DriftGate (and from Verify),
+  #   and the runner delivers HEAD. The off-limits, size and area rules are NOT enforced against
+  #   an adversarial agent until the host re-checks the delivered diff against a base SHA it
+  #   recorded outside the workspace (tracker-runner #1050).
   # - Verify is solid for Go and Python only (it runs the tests this change ADDED). Any other
   #   language defers to the repo's own CI, and an unverified change gets no PR.
   start: Start
@@ -240,10 +244,13 @@ workflow issue_to_pr
       R=.tracker/issue-reply.md
       # --- shared gate rules: BEGIN (byte-identical in TriageGate and DriftGate; a test enforces it)
       # Off-limits paths, one list. Matched on the LOWERCASED path; a shell case pattern's star
-      # also matches a slash, so each entry covers every depth it names.
+      # also matches a slash, so each entry covers every depth it names. A path that starts with
+      # a double quote is one git C-quoted (control characters, quotes or backslashes in the
+      # name): its real name cannot be matched safely, so it fails closed as off-limits.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
         case "$_ol" in
+          \"*) return 0 ;;
           .github/*|*/.github/*) return 0 ;;
           *.lock|package-lock.json|*/package-lock.json|go.sum|*/go.sum) return 0 ;;
           license*|*/license*) return 0 ;;
@@ -413,10 +420,13 @@ workflow issue_to_pr
       R=.tracker/issue-reply.md
       # --- shared gate rules: BEGIN (byte-identical in TriageGate and DriftGate; a test enforces it)
       # Off-limits paths, one list. Matched on the LOWERCASED path; a shell case pattern's star
-      # also matches a slash, so each entry covers every depth it names.
+      # also matches a slash, so each entry covers every depth it names. A path that starts with
+      # a double quote is one git C-quoted (control characters, quotes or backslashes in the
+      # name): its real name cannot be matched safely, so it fails closed as off-limits.
       off_limits() {
         _ol=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
         case "$_ol" in
+          \"*) return 0 ;;
           .github/*|*/.github/*) return 0 ;;
           *.lock|package-lock.json|*/package-lock.json|go.sum|*/go.sum) return 0 ;;
           license*|*/license*) return 0 ;;
@@ -468,8 +478,11 @@ workflow issue_to_pr
       fi
       unmeasured="Tracker made a change for this issue but couldn't measure it against the commit it started from, so it won't open a pull request. A maintainer will take a look."
       [ -n "$root" ] || stop refuse "drift-gate: no base commit to measure the change against" "$unmeasured"
-      tracked=$(git diff --name-only --no-renames "$root" -- 2>/dev/null) || stop refuse "drift-gate: git could not diff the change" "$unmeasured"
-      untracked=$(git ls-files --others --exclude-standard 2>/dev/null) || stop refuse "drift-gate: git could not list new files" "$unmeasured"
+      # core.quotePath=false: git's default C-quotes any non-ASCII path ("deploy/tests/\303\251.sh"),
+      # and the leading quote would slip past every anchored off-limits pattern. With it off, only
+      # control characters, quotes and backslashes are still quoted, and off_limits refuses those.
+      tracked=$(git -c core.quotePath=false diff --name-only --no-renames "$root" -- 2>/dev/null) || stop refuse "drift-gate: git could not diff the change" "$unmeasured"
+      untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null) || stop refuse "drift-gate: git could not list new files" "$unmeasured"
       printf '%s\n%s\n' "$tracked" "$untracked" | grep -v '^\.tracker/' | grep -v '^[[:space:]]*$' | sort -u > .tracker/changed-files.txt
       [ -s .tracker/changed-files.txt ] || stop refuse "drift-gate: the build step changed nothing" "Tracker triaged this issue as something it could fix, but its attempt didn't change any files, so there is no pull request. A maintainer will take a look."
       jq -r '.plan_files[]? | strings | ltrimstr("./")' "$T" 2>/dev/null | sort -u > .tracker/plan-files.txt
